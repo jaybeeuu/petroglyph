@@ -39,4 +39,5 @@ Current baseline assumptions captured by these RFCs:
 ## Current Phase
 
 The RFC baseline is accepted.
-Current work is focused on converting the accepted RFC set into target service architecture notes and implementation-shaping ADRs.
+Current work is focused on converting the accepted RFC set into target service architecture notes, implementation-shaping ADRs, and the task-spec prerequisites needed to begin implementation.
+The application user domain is now part of that baseline so task-spec authoring can proceed without treating external identity claims as the application's user model.

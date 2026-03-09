@@ -30,8 +30,9 @@ The API must be authenticated, and clients must be able to acquire and present t
 Before implementing this API, the following decision must be accepted:
 
 - client sync ADR covering snapshot bootstrap, sequence checkpoint usage, monitored-folder filtering, and downstream application of change-feed updates
+- application user-domain ADR covering account ownership, identity linkage, and authorization context
 
-Client implementations should follow that accepted ADR rather than inventing their own sync behavior.
+Client and API implementations should follow those accepted ADRs rather than inventing their own sync or authorization behavior.
 
 ## 3. Client Use Cases
 
@@ -98,8 +99,9 @@ This supports simple recovery after failure: the client stores the last fully ap
 - Clients must implement an authentication flow appropriate to their runtime environment and persist auth state securely enough for repeat use where applicable.
 - Clients must authenticate the acting principal before calling protected API routes.
 - The API must validate presented tokens before returning note metadata, change-feed data, or artifact access.
+- The API must resolve the validated identity to an application account before authorizing access to protected resources.
 - Token validation must include, at minimum, issuer, audience, expiry, and signature checks.
-- Authorization rules may begin with a single-user model, but the API contract must assume explicit validation rather than trusted clients.
+- Authorization rules may begin with a single-user operating model, but they must still rely on explicit application-account state rather than trusted clients or token claims alone.
 
 ## 7. Artifact Access Strategy
 
@@ -148,6 +150,7 @@ Errors should be machine-readable and safe to log.
 - Client note listing and note-detail flows can be completed without direct storage access.
 - A client can authenticate and successfully call protected API endpoints.
 - Protected API endpoints reject missing, expired, malformed, or invalid tokens.
+- Protected API endpoints reject validated identities that are not linked to an allowed application account.
 - Clients do not require knowledge of OneDrive, Microsoft Graph, or raw S3 layout.
 - Invalid or expired sequence/cursor state produces a clear recovery path.
 

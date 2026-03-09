@@ -60,6 +60,7 @@ Use this order unless there is a strong reason to deviate:
 
 - PDF/OCR extraction stack.
 - Terraform environment and module decomposition.
+- Provider credential retention and disconnection lifecycle, if not fully covered by ADR 0011.
 
 
 ## Accepted ADRs
@@ -74,12 +75,13 @@ Use this order unless there is a strong reason to deviate:
 - [0008 Sync Conflict and Local Deletion Policy](0008-sync-conflict-and-local-deletion-policy.md) — `Accepted`
 - [0009 OneDrive Graph Authentication and Secret Storage](0009-onedrive-graph-authentication-and-secret-storage.md) — `Accepted`
 - [0010 Artifact Delivery Mode](0010-artifact-delivery-mode.md) — `Accepted`
+- [0011 Application User Domain and Provider Connection Ownership](0011-application-user-domain-and-provider-connection-ownership.md) — `Accepted`
 
 ## Recommended ADR Order
 
 No additional high-priority ADRs are currently queued before task decomposition.
 
-The accepted sync, ingestion, storage, schema, identity, workflow, auth, local-sync-policy, provider-auth, and artifact-delivery ADRs should be treated as implementation prerequisites for API and CLI work.
+The accepted sync, ingestion, storage, schema, identity, workflow, auth, local-sync-policy, provider-auth, artifact-delivery, and application-user-domain ADRs should be treated as implementation prerequisites for API and CLI work.
 
 ## Template
 
