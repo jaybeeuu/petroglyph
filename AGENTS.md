@@ -10,6 +10,7 @@
 ## 2. Repository Overview
 
 - This repository is a monorepo or a multi-package project with shared libraries, application code, tooling, and tests.
+- The repository should follow a domain-driven design approach with explicit bounded contexts such as ingress, processing, API, CLI sync, identity/account, and infrastructure.
 - Prefer understanding the package or project boundaries before making changes.
 - Most source changes should happen in source directories, configuration, tests, and docs rather than generated output.
 - The package manager used in this repository is `pnpm`.
@@ -41,6 +42,9 @@
 
 - Make minimal, focused changes that match the requested scope.
 - Follow the naming, file layout, test style, and config patterns already used in the area you are editing.
+- Preserve bounded-context boundaries. In particular, keep ingress and processing as separate domains connected through explicit event contracts.
+- Keep types and contract definitions as close as possible to the package that owns the behavior or data they describe.
+- When a package exposes a public contract, publish it from that owning package and have consumers import it from there rather than introducing or expanding a separate catch-all contract package.
 - Avoid broad refactors unless they are required to complete the task.
 - Keep docs, tests, and type definitions in sync with behavior changes.
 - Prefer editing source, config, tests, and docs; only touch built output when the task explicitly requires it.
@@ -88,7 +92,8 @@
 
 - Preserve established content models, manifest shapes, file naming conventions, selectors, and public API contracts unless the task requires a deliberate change.
 - Be careful with cross-package dependencies and consumer-facing behavior.
-- Shared libraries should keep API changes small, typed, and well-tested.
+- Shared libraries or shared-kernel packages should stay narrow and stable. They should only house generic concerns which don't belong to any particular bounded context. Do not move service-owned contracts into them just to make imports look convenient.
+- Service packages should own and publish their own public contracts, including event shapes and client-facing resource models where applicable.
 - Tooling and config changes can affect the whole repository; validate likely consumers after modifying them.
 
 ## 11. Change Safety

@@ -41,3 +41,4 @@ Current baseline assumptions captured by these RFCs:
 The RFC baseline is accepted.
 Current work is focused on converting the accepted RFC set into target service architecture notes, implementation-shaping ADRs, and the task-spec prerequisites needed to begin implementation.
 The application user domain is now part of that baseline so task-spec authoring can proceed without treating external identity claims as the application's user model.
+The repository tooling baseline is also now explicit so workspace scaffolding can proceed without hidden assumptions about test, lint, format, and build tooling.

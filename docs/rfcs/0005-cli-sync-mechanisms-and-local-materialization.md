@@ -24,7 +24,7 @@ This RFC covers:
 
 ### 3.1 Baseline assumptions
 
-- The CLI is the first concrete consumer of the shared notes API.
+- The CLI is the first concrete consumer of the API-owned notes contract.
 - The API provides snapshot bootstrap and incremental change-feed access.
 - The cloud provider remains the single authoritative source of note events.
 

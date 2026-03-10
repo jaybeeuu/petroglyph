@@ -5,7 +5,7 @@
 
 ## Context
 
-The accepted RFCs and ADRs define four related data shapes that cross package and service boundaries:
+The accepted RFCs and ADRs define four related data shapes that cross service and client boundaries:
 
 - note-level metadata
 - version-level metadata
@@ -16,7 +16,7 @@ These shapes will be produced by processing services, stored across S3 and Dynam
 
 ## Decision Drivers
 
-- stable cross-package contracts
+- stable service-owned contracts
 - explicit compatibility rules
 - safe additive evolution
 - low operational complexity for V1
@@ -62,8 +62,9 @@ All document families should include:
 
 - additive optional fields do not require a version bump if existing readers remain valid
 - field removal, required-field addition, or meaning changes do require a version bump
-- API and core packages should support the active version and any immediately previous version when needed for migration
+- the owning writer and any active readers should support the active version and any immediately previous version when needed for migration
 - schema evolution must be documented before implementation changes land
+- document families should be versioned and published by the package that owns them rather than duplicated in a third contract package
 
 ## Consequences
 
@@ -73,6 +74,7 @@ All document families should include:
 - changes can be rolled out incrementally
 - different document families are not forced into lockstep
 - downstream breakage is easier to detect and reason about
+- ownership stays with the service that writes or exposes the contract
 
 ### Negative
 
@@ -83,7 +85,7 @@ All document families should include:
 ## Validation
 
 - every persisted document family contains `schemaVersion`
-- code in shared contract packages validates document family versions explicitly
+- code in the owning package validates document family versions explicitly
 - additive changes do not break existing readers
 - breaking changes require documented compatibility handling
 

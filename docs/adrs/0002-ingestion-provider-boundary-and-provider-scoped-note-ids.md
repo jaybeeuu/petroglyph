@@ -11,9 +11,9 @@ The platform must support OneDrive first while remaining open to future provider
 
 - future provider extensibility
 - isolation of provider-specific SDKs and semantics
-- stable downstream contracts
+- stable ingress-to-processing contracts
 - support for provider-specific identity behavior
-- minimal core-pipeline coupling to OneDrive or Microsoft Graph
+- minimal downstream coupling to OneDrive or Microsoft Graph
 
 ## Considered Options
 
@@ -36,8 +36,8 @@ Chosen option: **Provider adapter boundary plus provider-scoped `noteId`**.
 This means:
 
 - provider adapters retrieve files and write them to staging
-- provider adapters emit normalized lifecycle events
-- core packages do not depend on provider SDK types
+- provider adapters publish normalized lifecycle events from the ingress boundary
+- downstream consumers do not depend on provider SDK types
 - `noteId` includes a provider-scoped namespace
 - each adapter chooses the concrete stable identity strategy inside that namespace
 
@@ -52,7 +52,7 @@ For V1:
 ### Positive
 
 - future providers are easier to add
-- core contracts stay stable and provider-agnostic
+- ingress contracts stay stable and provider-agnostic for downstream consumers
 - providers can choose the most persistent identifier available
 
 ### Negative
@@ -63,9 +63,9 @@ For V1:
 
 ## Validation
 
-- core packages compile without provider SDK imports
-- provider adapter can emit normalized lifecycle events and staging references
-- a second mock provider can be added without changing core contracts
+- processing consumers compile without provider SDK imports
+- provider adapter can emit normalized lifecycle events and staging references through an ingress-owned public contract
+- a second mock provider can be added without changing the published ingress event contract
 
 ## Links
 
