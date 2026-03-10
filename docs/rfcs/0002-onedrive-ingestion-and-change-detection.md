@@ -8,7 +8,7 @@
 ## 1. Summary
 
 Define a reliable ingestion strategy using Microsoft Graph mechanisms to detect PDF updates from the configured OneDrive location and emit idempotent processing events.
-The OneDrive implementation is an adapter that plugs into a provider-agnostic ingestion core so adding future providers stays straightforward.
+The OneDrive implementation is an adapter inside the ingress bounded context so adding future providers stays straightforward without collapsing ingress and processing into one domain.
 The adapter is also responsible for retrieving source PDFs into a neutral staging area so downstream components never depend on provider-specific APIs.
 
 ## 2. Decision Scope
@@ -23,10 +23,10 @@ This RFC covers:
 
 ## 3. Provider Adapter Architecture
 
-- Define a provider-agnostic ingestion contract in core ingestion.
+- Define an ingress-domain public contract for downstream processing.
 - Implement OneDrive-specific behavior in a separate adapter component.
 - Keep Graph-specific types and semantics inside the OneDrive adapter.
-- Emit normalized change events from adapter to core ingestion.
+- Emit normalized change events from the ingress boundary to processing.
 
 ### 3.1 Retrieval and staging responsibility
 
@@ -37,7 +37,7 @@ This RFC covers:
 
 ### 3.2 Internal lifecycle event contract
 
-Adapter output to core ingestion uses internal change event types:
+Adapter output to downstream processing uses ingress-owned change event types:
 
 - `document.created`
 - `document.updated`
@@ -47,7 +47,7 @@ These lifecycle events are provider-agnostic and are consumed by later pipeline 
 
 ### 3.3 Normalized change event direction
 
-Normalized events should carry only ingestion-domain fields required by core processing:
+Normalized events should carry only ingress-domain fields required by downstream processing:
 
 - provider name
 - provider item identity
@@ -58,7 +58,7 @@ Normalized events should carry only ingestion-domain fields required by core pro
 - staged document reference (for non-delete events)
 - change type (`document.created`, `document.updated`, `document.deleted`)
 
-Core ingestion must not depend directly on Graph SDK types.
+Downstream processing must not depend directly on Graph SDK types.
 
 ## 4. Proposed Approach
 
@@ -121,9 +121,9 @@ Possible fallback, but slower and potentially less efficient at scale.
 - New/updated PDFs are detected and emitted exactly-once effectively (at-least-once transport with idempotent processing).
 - Duplicate webhook events do not create duplicate final artifact versions.
 - Reconciliation job can repair missed webhook signals.
-- OneDrive adapter can be replaced by a mock second provider adapter without changes to ingestion core contracts.
-- Ingestion core compiles and tests without direct imports of Graph-specific SDK types.
-- Core processing components can consume staged PDFs and lifecycle events without OneDrive/Graph dependencies.
+- OneDrive adapter can be replaced by a mock second provider adapter without changes to the published ingress event contract.
+- Ingress and processing packages compile and test without direct imports of each other's private types.
+- Processing components can consume staged PDFs and lifecycle events without OneDrive/Graph dependencies.
 - `document.deleted` events are emitted without requiring staged document content.
 
 ## 9. Open Questions

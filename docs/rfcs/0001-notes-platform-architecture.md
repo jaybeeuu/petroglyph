@@ -22,6 +22,7 @@ Current note flow is manual and fragmented:
 
 - Detect note changes from OneDrive reliably.
 - Keep ingestion provider-agnostic so future providers (for example Google Drive and Dropbox) can be added with minimal core changes.
+- Keep bounded contexts explicit so ingress, processing, API, and CLI can evolve behind well-defined contracts.
 - Process PDFs in AWS and generate stable artifact outputs.
 - Keep S3 as system-of-record for original and processed artifacts.
 - Provide a cross-platform CLI to sync artifacts into one or more Obsidian vaults.
@@ -47,7 +48,7 @@ Single operator (you), managing personal notes and vaults.
 2. Provider adapter detects change, retrieves PDF to staging, and emits internal lifecycle event (`document.created`, `document.updated`, or `document.deleted`).
 3. AWS processing consumes staged input or lifecycle event and creates derived artifacts.
 4. Artifacts are versioned/stored in S3.
-5. Shared notes API exposes snapshot and sequential change-feed views for clients.
+5. API domain exposes snapshot and sequential change-feed views for clients.
 6. Local CLI pulls and updates Obsidian vault.
 
 ## 6. High-level Architecture
@@ -58,19 +59,20 @@ Boox -> OneDrive -> Graph delta/webhook -> ingest handler -> processing pipeline
 
 ### 6.1 Components
 
-- **Ingestion core boundary:** provider-agnostic ingestion contracts and normalized change events.
-- **Provider adapter boundary:** OneDrive-specific Graph event and polling/delta reconciliation mapped into normalized ingestion contracts, including source retrieval into staging.
-- **Processing boundary:** PDF to markdown/image extraction pipeline.
+- **Ingress boundary:** provider-agnostic ingestion event contract plus OneDrive-specific adapter behavior, including source retrieval into staging.
+- **Processing boundary:** PDF to markdown/image extraction pipeline that consumes ingress-domain events and publishes processing-owned read models.
 - **Storage boundary:** S3 buckets/prefixes for originals, media, markdown, and manifests.
-- **API boundary:** shared REST API for CLI and site clients, including bootstrap snapshot and incremental change-feed access.
+- **API boundary:** API-owned REST contract for CLI and site clients, including bootstrap snapshot and incremental change-feed access.
 - **Sync boundary:** CLI pull using manifests and local checkpoint state.
 - **Read boundary (future):** private site APIs protected by AWS auth controls.
+- **Shared kernel:** only a narrow set of stable primitives reused unchanged across bounded contexts.
 
 ## 7. Data and Contract Principles
 
 - Use stable note IDs derived from provider identifiers and content metadata.
 - Use idempotency keys based on source item identity + content version indicators.
-- Keep provider-specific payloads isolated in adapter components and emit normalized ingestion events into core workflows.
+- Keep provider-specific payloads isolated in adapter components and emit normalized ingress-domain events into processing workflows.
+- Publish public contracts from the package that owns the boundary and have consumers import from that owner.
 - Version manifest schema explicitly.
 - Treat the snapshot view and sequential change feed as client-facing contracts; keep raw storage layout internal.
 - Support replay and backfill without destructive side effects.
@@ -94,7 +96,7 @@ Boox -> OneDrive -> Graph delta/webhook -> ingest handler -> processing pipeline
 ### Phase 1
 
 - OneDrive ingestion + AWS processing + S3 storage contracts.
-- Shared notes API with snapshot bootstrap and sequential change-feed endpoints.
+- API-owned snapshot bootstrap and sequential change-feed endpoints.
 - Manual pull sync CLI to Obsidian using change tokens/cursors.
 
 ### Phase 2

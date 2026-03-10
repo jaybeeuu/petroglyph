@@ -8,22 +8,26 @@
 
 ## 1. Summary
 
-Define the shared REST API used by clients to access note state, note changes, metadata, and artifacts without exposing provider-specific or raw storage-specific details.
+Define the API-owned REST contract as a first-class public application boundary for accessing note state, note changes, metadata, and artifacts without exposing provider-specific or raw storage-specific details.
+
+The Notes API serves user needs directly.
+CLI, browser, automation, and future consumers are important, but they are consumers of this application-facing API rather than the reason the API exists.
 
 ## 2. Decision Scope
 
 This RFC covers:
 
-- shared client-facing resource model
+- API-owned public resource model
 - bootstrap snapshot and incremental change-feed semantics
 - artifact access patterns
 - pagination, filtering, and token/cursor behavior
-- authentication requirements for API clients
+- authentication and authorization requirements for callers of the API
 - token presentation and validation expectations
 - relationship between the API contract and underlying storage layout
+- the API's role as a first-class public-facing application boundary
 
 This RFC includes authentication as an in-scope concern for the active implementation plan.
-The API must be authenticated, and clients must be able to acquire and present tokens to it.
+The API must be authenticated, and callers must be able to acquire and present tokens to it.
 
 ## 2.1 Implementation prerequisites
 
@@ -33,11 +37,16 @@ Before implementing this API, the following decision must be accepted:
 - application user-domain ADR covering account ownership, identity linkage, and authorization context
 
 Client and API implementations should follow those accepted ADRs rather than inventing their own sync or authorization behavior.
+Consumers should import or generate client contracts from the API boundary rather than redefining them in a separate shared package.
 
-## 3. Client Use Cases
+## 3. User and Consumer Use Cases
 
-Clients may need to:
+The API may need to support:
 
+- direct user-facing application experiences such as listing notes, browsing note history, and retrieving artifacts
+- CLI synchronization and recovery flows
+- future browser-based site experiences
+- automation or integrations that operate against stable application contracts
 - bootstrap local or in-memory state from the current `/notes` view
 - resume synchronization from a stored sequence checkpoint
 - fetch changed artifacts and metadata
@@ -58,6 +67,19 @@ The API should expose resource-oriented endpoints such as:
 - `/notes/{noteId}/versions`
 - `/notes/{noteId}/versions/{versionId}`
 - `/notes/{noteId}/versions/{versionId}/artifacts`
+
+The API owns these client-facing resource shapes even if it reads processing-owned publication models internally.
+It should enforce these shapes through a mapping layer which strips inappropriate internal properties and converts internal types so internal concerns do not leak to end users.
+
+## 4.1 API Position in the Application
+
+The Notes API is a first-class part of the public-facing application.
+
+It is not only an implementation detail for the CLI or other consumers.
+It defines the authenticated application boundary through which user-facing experiences retrieve note state, artifacts, and change information.
+
+Specific consumers such as the CLI, future browser UI, or automation should be treated as consumers of this application boundary.
+The API contract should therefore be designed around stable user-facing capabilities and authorization rules rather than the internal convenience of any one consumer.
 
 ## 5. Read Models
 
@@ -153,6 +175,8 @@ Errors should be machine-readable and safe to log.
 - Protected API endpoints reject validated identities that are not linked to an allowed application account.
 - Clients do not require knowledge of OneDrive, Microsoft Graph, or raw S3 layout.
 - Invalid or expired sequence/cursor state produces a clear recovery path.
+- The API contract is usable as a public application boundary, not only as a private integration surface for the CLI.
+- API resource shapes are defined around stable user-facing capabilities rather than leaked storage or processing models.
 
 ## 12. Open Questions
 

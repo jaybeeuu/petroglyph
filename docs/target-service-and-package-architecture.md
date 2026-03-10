@@ -7,30 +7,30 @@
 
 ## 1. Purpose
 
-Map the accepted RFC set onto concrete package ownership and target AWS service choices so implementation can begin without reopening basic service-boundary decisions.
+Map the accepted RFC set onto concrete bounded contexts, package ownership, and target AWS service choices so implementation can begin without reopening basic service-boundary decisions.
 
 ## 2. Package Layout
 
 Implementation should live in a dedicated repository organized around a top-level `packages/` directory.
+The repository should follow a domain-driven design approach: each package should align to a bounded context, own its internal types, and publish only the public contracts that other packages need.
 
 Initial layout:
 
 - `packages/core`
-  - shared TypeScript contracts
-  - note IDs and lifecycle event types
-  - application user, auth-identity link, and provider-connection contracts
-  - metadata, snapshot, and change-feed schemas
-  - shared validation helpers
+  - narrow shared kernel only
+  - small, stable primitives which do not belong to a bounded context
+  - generic helpers that do not shift contract ownership away from the owning service
 - `packages/api`
   - authenticated REST API implementation
+  - owns client-facing resource contracts for `/notes`, `/notes/changes`, note detail, metadata, versions, and artifacts
   - HTTP handlers for `/notes`, `/notes/changes`, note detail, metadata, versions, and artifacts
 - `packages/ingest-onedrive`
   - OneDrive delta polling adapter
   - provider-specific retrieval into staging
-  - mapping to normalized lifecycle events
+  - owns and publishes the ingress-to-processing event contract it emits
 - `packages/processor`
   - PDF processing and artifact generation
-  - note state updates, sequence allocation, and read-model publication
+  - owns processing inputs, publication models, and sequence-backed read-model writes
 - `packages/cli`
   - local materialization into Obsidian-compatible directory structures
   - checkpoint storage and monitored-folder filtering
@@ -38,6 +38,7 @@ Initial layout:
   - Terraform modules and environment composition for AWS deployment
 
 This starts with a small number of packages. Further splitting is allowed later if one package becomes too broad.
+Public contracts should be imported from the package that owns the corresponding boundary rather than copied into a third package that becomes the default focus of change.
 
 ## 3. Target AWS Services
 
@@ -100,12 +101,16 @@ The accepted baseline is a single global monotonically increasing `sequence` for
 Implementation should allocate that sequence in a single authoritative write path so `/notes/changes` stays globally ordered.
 A simple V1 approach is a DynamoDB-backed atomic counter owned by the processing/publication path.
 
-## 6. Identity and Event Boundaries
+## 6. Domain and Boundary Rules
 
 - External identity providers authenticate users, but do not define the application-owned user model.
-- Application user accounts own authorization context and provider connections.
-- Provider adapters own provider-native identifiers and retrieval.
-- `packages/core` owns normalized `noteId`, lifecycle event, snapshot, and change-record contracts.
+- The application-account domain owns authorization state and provider-connection ownership.
+- The ingress domain owns provider-native identifiers, retrieval, staging references, and the public event contract emitted toward processing.
+- The processing domain owns processing commands, artifact production, sequence allocation, and publication models written into storage.
+- The API domain owns the client-facing REST resource contract even when it reads processing-owned publication models internally.
+- The CLI domain owns local checkpoint and materialization rules.
+- Public contracts should be published by the owning package and consumed from there.
+- `packages/core` should remain a narrow shared kernel rather than the home for service-owned contracts.
 - Processing and API packages must not depend on OneDrive-specific SDK types.
 
 These boundaries are further constrained by [ADR 0005](adrs/0005-onedrive-stable-identity-strategy.md) and [ADR 0011](adrs/0011-application-user-domain-and-provider-connection-ownership.md).
@@ -143,3 +148,4 @@ These are still expected to become ADRs or technical spikes:
 6. `packages/infra`
 
 The order above reflects dependency direction, not necessarily deployment order.
+Starting with `packages/core` does not imply centralizing service contracts there; it only establishes the narrow shared-kernel baseline before service-owned boundaries are implemented.

@@ -10,6 +10,7 @@ The notes platform will live in its own repository. The implementation still nee
 ## Decision Drivers
 
 - clear ownership under a conventional top-level `packages/` directory
+- package layout that supports domain-driven bounded contexts with explicit ownership
 - minimal initial package complexity
 - targeted validation rather than full-repo rebuilds on every change
 - CI design that does not depend on a legacy host repository
@@ -37,6 +38,8 @@ This means:
 
 - packages live under `packages/`
 - the initial package count stays small (`core`, `api`, `ingest-onedrive`, `processor`, `cli`, `infra`)
+- `core` acts as a narrow shared kernel rather than the default home for service-owned contracts
+- service packages publish their own public contracts and consumers import from the owning package
 - `pnpm-workspace.yaml` should include `packages/*`
 - root scripts and CI filters should support targeted build, lint, type-check, and test workflows for changed packages
 - the CI provider can be chosen independently; the required behavior is package-scoped validation rather than a specific vendor
@@ -50,12 +53,14 @@ This means:
 - workspace ownership becomes clearer
 - selective CI remains possible with simple package path filters
 - package boundaries can evolve without moving the whole codebase again later
+- bounded-context ownership stays visible in both code layout and CI targeting
 
 ### Negative
 
 - CI still needs changed-package detection and dependency-aware validation logic
 - initial package split still requires judgment to avoid over-fragmentation
 - a dedicated repository gives up any shared automation that might have existed elsewhere and must define its own baseline scripts
+- teams must resist turning `core` into a dumping ground for every cross-package type
 
 ## Validation
 

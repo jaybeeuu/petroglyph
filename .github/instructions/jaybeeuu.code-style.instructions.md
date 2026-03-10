@@ -21,7 +21,12 @@ If the target repository already has strong local conventions, preserve those fi
 ## Architectural Preferences
 
 - Prefer a TypeScript-first architecture with strict, explicit types at module boundaries.
+- Prefer a domain-driven design approach with explicit bounded contexts and clear ownership of behavior, data, and public contracts.
 - Model domain concepts with named types, interfaces, discriminated unions, and typed result objects.
+- Keep domain types as close as possible to the service or package that owns them.
+- Public contracts should be published by the owning package and consumed from there rather than copied into a separate catch-all contract package.
+- Keep ingress, processing, API, CLI, and infrastructure concerns in separate modules or packages; do not blur domain boundaries for convenience.
+- Use a shared kernel only for small, stable primitives that are truly generic and belong to no particular bounded context. Do not turn it into the default home for service-owned contracts.
 - Keep parsing and validation close to the edge of the system: environment variables, user input, network responses, file contents, front matter, and external API payloads.
 - Reuse existing local utilities for validation, conversion, errors, or state rather than introducing parallel patterns.
 - Prefer small composable modules over large files with mixed responsibilities.
@@ -51,6 +56,7 @@ If the target repository already has strong local conventions, preserve those fi
 - Use consistent suffixes such as `Props`, `Options`, `Context`, and `State` where they improve recognition.
 - Name hooks with a `use` prefix.
 - Name factories and builders with explicit verbs such as `create`, `make`, `build`, `resolve`, `parse`, `compile`, `fetch`, `read`, or `write`.
+- Keep public module surfaces deliberate and owner-oriented: publish contracts from the package that owns the boundary.
 - Keep public module surfaces deliberate. Use `index.ts` files to re-export the intended API clearly.
 - Co-locate related files: component, CSS module, tests, and small feature-specific helpers should sit near each other.
 
@@ -106,6 +112,7 @@ Before finishing, check the change against these questions:
 - Are external inputs validated before use?
 - Are exported APIs and return shapes clearly typed?
 - Are names explicit and domain-oriented?
+- Are bounded-context ownership and service boundaries still clear after the change?
 - Does the code favor clarity over cleverness?
 - Are tests and docs updated where behavior changed?
 - Does the result look consistent with a pragmatic TypeScript-first engineer who values strong boundaries and low-noise design?

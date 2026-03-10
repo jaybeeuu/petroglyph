@@ -14,7 +14,7 @@ Define V1 output contracts and synchronization semantics from AWS processing int
 This RFC covers:
 
 - Processing outputs and storage layout.
-- Snapshot and change-feed schema direction.
+- processing-owned publication records and storage layout.
 - client pull model and local checkpoint/sequence behavior.
 - Delete handling for downstream consumers.
 - Configurable monitored-folder pull behavior for split note domains (for example home vs work).
@@ -79,7 +79,7 @@ If version-specific metadata changes in a meaningful way, a new `versionId` shou
 
 ## 5. Snapshot and Change-Feed Direction
 
-The system should expose two related but distinct read models:
+The processing domain should publish two related but distinct read models for downstream consumption:
 
 - a snapshot/current-state view for bootstrap and recovery
 - a sequential change feed for incremental synchronization
@@ -89,7 +89,7 @@ This RFC does not define multi-source merge behavior.
 
 ### 5.1 Snapshot view
 
-Snapshot entries should include:
+Snapshot publication records should include:
 
 - note ID
 - source metadata
@@ -104,7 +104,7 @@ Deletion is represented logically in the snapshot and metadata rather than by im
 
 ### 5.2 Change-feed view
 
-Each change record should include:
+Each published change record should include:
 
 - monotonically increasing global `sequence`
 - change type (`document.created`, `document.updated`, `document.deleted`)
@@ -116,7 +116,8 @@ Each change record should include:
 The baseline V1 cursor model is the last successfully applied `sequence` value.
 Opaque or encoded tokens may be introduced later, but should resolve to a durable sequence position internally.
 
-Snapshot and change-feed schemas must be versioned and backward-compatible where practical.
+Processing-owned publication schemas must be versioned and backward-compatible where practical.
+The API may project these records into client-facing response models, but the API owns the external REST contract exposed to clients.
 
 ## 6. Client Sync Model (V1)
 

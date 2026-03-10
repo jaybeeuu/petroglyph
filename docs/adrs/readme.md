@@ -62,7 +62,6 @@ Use this order unless there is a strong reason to deviate:
 - Terraform environment and module decomposition.
 - Provider credential retention and disconnection lifecycle, if not fully covered by ADR 0011.
 
-
 ## Accepted ADRs
 
 - [0001 Client Sync Mechanism and Sequence Checkpoint Model](0001-client-sync-mechanism-and-sequence-checkpoint-model.md) — `Accepted`
