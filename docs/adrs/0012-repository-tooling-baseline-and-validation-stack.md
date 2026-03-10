@@ -30,7 +30,7 @@ Without an explicit decision, issue work will drift into inconsistent package-lo
 
 ### Option 1: Vitest + ESLint flat config + Prettier + `tsc`/`tsx` baseline
 
-Use Vitest for unit and mocked integration tests, ESLint flat config for linting, Prettier for formatting, `tsc` for baseline build and type-checking, and `tsx` for local TypeScript execution.
+Use Vitest for unit and mocked integration tests, ESLint flat config based on `@jaybeeuu/eslint-config` for linting, Prettier for formatting, `tsc` for baseline build and type-checking, and `tsx` for local TypeScript execution.
 
 ### Option 2: Jest + ESLint + Prettier + `ts-jest` or transpile-heavy baseline
 
@@ -52,6 +52,8 @@ This means:
 - `tsc` is the default baseline for package build output and type-checking.
 - `tsx` is the default tool for local execution of TypeScript entrypoints and scripts.
 - ESLint flat config is the canonical linting framework.
+- `@jaybeeuu/eslint-config` is the base lint configuration for the repository.
+- The repository should extend that base configuration where needed for Vitest-specific globals and rules, because the current shared config is expected to reflect Jest more completely than Vitest.
 - Prettier is the canonical formatting tool.
 - Vitest is the default runner for unit tests and mocked integration tests.
 - Manual end-to-end checks and local runnable slice verification remain outside the default fast test runner path and should be documented separately.
@@ -65,6 +67,7 @@ This means:
 - repository tooling remains conventional and easy to understand
 - package-local development gets fast feedback loops
 - TypeScript build and runtime behavior are easier to reason about than with a bundle-first default
+- the repository can reuse an existing linting baseline rather than inventing one from scratch
 - linting and formatting decisions are explicit and consistent across packages
 - testing guidance can distinguish fast automated checks from slower local or operator verification
 - CI can run predictable package-filtered `lint`, `typecheck`, and `test` commands
@@ -74,12 +77,13 @@ This means:
 - packages that later need bundling still have to add a bounded-context-specific tool on top of the baseline
 - using ESLint and Prettier together has more moving parts than an all-in-one tool
 - Vitest is a better fit for the chosen stack than Jest, but some developers may be more familiar with Jest defaults
+- the shared ESLint base may need repository-local extension to support Vitest cleanly
 - `tsc` as the default build path may be slower than highly optimized bundlers for some packages
 
 ## Validation
 
 - root workspace config defines the `pnpm` workspace and shared TypeScript baseline
-- root or shared config defines ESLint flat config and Prettier
+- root or shared config defines ESLint flat config based on `@jaybeeuu/eslint-config`, plus any needed Vitest-specific extension, and Prettier
 - package-local scripts use the baseline command shape where relevant
 - GitHub Actions can run package-filtered `lint`, `typecheck`, and `test` commands
 - issue planning for developer setup and testing strategy references the same tooling decisions

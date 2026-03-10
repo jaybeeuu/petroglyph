@@ -75,12 +75,13 @@ Use this order unless there is a strong reason to deviate:
 - [0009 OneDrive Graph Authentication and Secret Storage](0009-onedrive-graph-authentication-and-secret-storage.md) — `Accepted`
 - [0010 Artifact Delivery Mode](0010-artifact-delivery-mode.md) — `Accepted`
 - [0011 Application User Domain and Provider Connection Ownership](0011-application-user-domain-and-provider-connection-ownership.md) — `Accepted`
+- [0012 Repository Tooling Baseline and Validation Stack](0012-repository-tooling-baseline-and-validation-stack.md) — `Accepted`
 
 ## Recommended ADR Order
 
 No additional high-priority ADRs are currently queued before task decomposition.
 
-The accepted sync, ingestion, storage, schema, identity, workflow, auth, local-sync-policy, provider-auth, artifact-delivery, and application-user-domain ADRs should be treated as implementation prerequisites for API and CLI work.
+The accepted sync, ingestion, storage, schema, identity, workflow, auth, local-sync-policy, provider-auth, artifact-delivery, application-user-domain, and tooling-baseline ADRs should be treated as implementation prerequisites for API and CLI work.
 
 ## Template
 
