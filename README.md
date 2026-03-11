@@ -83,6 +83,21 @@ Current assumptions include:
 - a single-user operational model in V1, with clean boundaries for future multi-user expansion
 - an application-owned user/account model rather than treating external identity claims as the entire user model
 
+## CI Checks
+
+Every pull request runs automated validation in GitHub Actions. The workflow runs the same root commands you use locally:
+
+| CI step        | Local command       | What it checks                           |
+| -------------- | ------------------- | ---------------------------------------- |
+| Format check   | `pnpm format:check` | Prettier formatting across all files     |
+| Lint           | `pnpm lint`         | ESLint rules across all packages         |
+| Type check     | `pnpm typecheck`    | TypeScript type correctness              |
+| Build          | `pnpm build`        | Successful compilation of all packages   |
+
+If a CI step fails, run the matching local command to reproduce the failure and iterate locally before pushing again.
+
+The workflow definition lives at [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
 ## Development Approach
 
 The intended development model is hybrid:
