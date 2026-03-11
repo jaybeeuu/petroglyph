@@ -23,6 +23,7 @@ Follow the `packages/core` pattern to add a new package to the workspace.
      "scripts": {
        "build": "tsc --project tsconfig.build.json",
        "lint": "eslint src",
+       "test": "vitest run --passWithNoTests",
        "typecheck": "tsc --project tsconfig.json --noEmit"
      },
      "engines": {

@@ -6,6 +6,7 @@
   "description": "A notes-processing system for turning handwritten PDFs into structured, syncable notes.",
   "scripts": {
     "build": "pnpm -r run build",
+    "dev": "pnpm -r --parallel run dev",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "pnpm -r run lint",
@@ -26,6 +27,7 @@
     "globals": "^15.9.0",
     "prettier": "^3.3.3",
     "typescript": "^5.5.4",
-    "typescript-eslint": "^8.4.0"
+    "typescript-eslint": "^8.4.0",
+    "vitest": "^4.0.0"
   }
 }
