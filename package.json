@@ -9,7 +9,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "pnpm -r run lint",
-    "test": "pnpm -r run test --if-present",
+    "test": "pnpm -r run --if-present test",
     "typecheck": "pnpm -r run typecheck"
   },
   "engines": {

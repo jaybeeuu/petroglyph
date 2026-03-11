@@ -98,7 +98,7 @@ Choose names and layouts that make ownership and intent obvious.
 - Name hooks with a `use` prefix.
 - Name factories and builders with explicit verbs such as `create`, `make`, `build`, `resolve`, `parse`, `compile`, `fetch`, `read`, or `write`.
 - Keep public module surfaces deliberate and owner-oriented: publish contracts from the package that owns the boundary.
-- Use `index.ts` files to re-export the intended public API clearly where that pattern already fits the project.
+- Use `index.ts` files to re-export the intended public API explicitly. Prefer named re-exports (`export { foo, bar } from "./module.js"`) over barrel re-exports (`export * from "./module.js"`) so the public surface is visible, intentional, and easy to audit.
 - Co-locate related files: component, CSS module, tests, and small feature-specific helpers should sit near each other.
 
 ## UI And Component Style
