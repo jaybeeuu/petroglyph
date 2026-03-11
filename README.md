@@ -32,6 +32,7 @@ These commands run across all packages in the workspace:
 | ------------------- | ---------------------------------------- |
 | `pnpm build`        | Build all packages                       |
 | `pnpm lint`         | Lint all packages                        |
+| `pnpm test`         | Run tests across all packages            |
 | `pnpm typecheck`    | Type-check all packages                  |
 | `pnpm format`       | Format all files with Prettier           |
 | `pnpm format:check` | Check formatting without writing changes |
@@ -85,16 +86,19 @@ Current assumptions include:
 
 ## CI Checks
 
-Every pull request runs automated validation in GitHub Actions. The workflow runs the same root commands you use locally:
+Every pull request runs automated validation in GitHub Actions. The workflow runs five jobs in parallel where possible:
 
-| CI step        | Local command       | What it checks                           |
-| -------------- | ------------------- | ---------------------------------------- |
-| Format check   | `pnpm format:check` | Prettier formatting across all files     |
-| Lint           | `pnpm lint`         | ESLint rules across all packages         |
-| Type check     | `pnpm typecheck`    | TypeScript type correctness              |
-| Build          | `pnpm build`        | Successful compilation of all packages   |
+| CI job         | Local command       | What it checks                                  | Depends on |
+| -------------- | ------------------- | ----------------------------------------------- | ---------- |
+| Build          | `pnpm build`        | Successful compilation of all packages          | —          |
+| Format check   | `pnpm format:check` | Prettier formatting across all files            | —          |
+| Lint           | `pnpm lint`         | ESLint rules across all packages                | —          |
+| Type check     | `pnpm typecheck`    | TypeScript type correctness                     | Build      |
+| Test           | `pnpm test`         | Unit and integration tests across all packages  | Build      |
 
-If a CI step fails, run the matching local command to reproduce the failure and iterate locally before pushing again.
+`build`, `format-check`, and `lint` run in parallel. `typecheck` and `test` start as soon as `build` completes; they reuse the compiled `dist/` output cached from the build job so no package is compiled twice.
+
+If a CI job fails, run the matching local command to reproduce the failure and iterate locally before pushing again.
 
 The workflow definition lives at [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 

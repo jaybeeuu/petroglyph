@@ -7,8 +7,39 @@ on:
   pull_request:
 
 jobs:
-  validate:
-    name: Validate
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Cache build output
+        uses: actions/cache/save@v4
+        with:
+          path: packages/*/dist
+          key: build-${{ runner.os }}-${{ github.sha }}
+
+  format-check:
+    name: Format check
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -32,11 +63,91 @@ jobs:
       - name: Format check
         run: pnpm format:check
 
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Lint
         run: pnpm lint
+
+  typecheck:
+    name: Type check
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore build output
+        uses: actions/cache/restore@v4
+        with:
+          path: packages/*/dist
+          key: build-${{ runner.os }}-${{ github.sha }}
 
       - name: Type check
         run: pnpm typecheck
 
-      - name: Build
-        run: pnpm build
+  test:
+    name: Test
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore build output
+        uses: actions/cache/restore@v4
+        with:
+          path: packages/*/dist
+          key: build-${{ runner.os }}-${{ github.sha }}
+
+      - name: Test
+        run: pnpm test
