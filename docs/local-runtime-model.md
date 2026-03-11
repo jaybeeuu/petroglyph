@@ -7,30 +7,39 @@ and the expected process model for each package.
 ## Principle
 
 Local testability is a first-class implementation requirement.
-Every package must be runnable on a developer machine without requiring a fully deployed AWS stack or real cloud credentials.
+Every package should be runnable on a developer machine for day-to-day development work.
 The local default is mocked auth and lightweight process emulation.
 Connecting to real remote services is an opt-in developer action, not the local default.
 
+Some processing dependencies may have no practical local substitute.
+For example, PDF text extraction will likely rely on a cloud service such as AWS Textract.
+Where that is the case, the package must document which services require real cloud access,
+provide mock or fixture-based paths for unit and mocked-integration testing,
+and treat the cloud-dependent path as an explicit opt-in during local development.
+
 ## What Runs Locally vs. Remotely
 
-| Concern                   | Local development                       | Remote (deployed)           |
-| ------------------------- | --------------------------------------- | --------------------------- |
-| API server                | Node process via `tsx` or `pnpm dev`    | AWS Lambda + API Gateway    |
-| Ingest poller             | Node process via `tsx` or `pnpm dev`    | AWS Lambda + EventBridge    |
-| Processor worker          | Node process via `tsx` or `pnpm dev`    | AWS Lambda + SQS trigger    |
-| CLI                       | Node process via `tsx` or `pnpm dev`    | Installed binary            |
-| Auth token validation     | Mocked (`AUTH_MODE=mock`)               | Microsoft Entra OIDC        |
-| OneDrive Graph access     | File fixtures or manual override        | Live Microsoft Graph API    |
-| S3 storage                | LocalStack (optional) or in-memory stub | AWS S3                      |
-| SQS messaging             | LocalStack (optional) or in-memory stub | AWS SQS                     |
-| DynamoDB state            | LocalStack (optional) or in-memory stub | AWS DynamoDB                |
-| Secrets                   | `.env` file (local only, gitignored)    | AWS Secrets Manager         |
-| Observability             | Console logs                            | CloudWatch Logs and Metrics |
+| Concern                   | Local development                              | Remote (deployed)           |
+| ------------------------- | ---------------------------------------------- | --------------------------- |
+| API server                | Node process via `tsx` or `pnpm dev`           | AWS Lambda + API Gateway    |
+| Ingest poller             | Node process via `tsx` or `pnpm dev`           | AWS Lambda + EventBridge    |
+| Processor worker          | Node process via `tsx` or `pnpm dev`           | AWS Lambda + SQS trigger    |
+| CLI                       | Node process via `tsx` or `pnpm dev`           | Installed binary            |
+| Auth token validation     | Mocked (`AUTH_MODE=mock`)                      | Microsoft Entra OIDC        |
+| OneDrive Graph access     | File fixtures or manual override               | Live Microsoft Graph API    |
+| PDF text extraction       | Mock/fixture path or real AWS Textract (opt-in) | AWS Textract               |
+| S3 storage                | LocalStack (optional) or in-memory stub        | AWS S3                      |
+| SQS messaging             | LocalStack (optional) or in-memory stub        | AWS SQS                     |
+| DynamoDB state            | LocalStack (optional) or in-memory stub        | AWS DynamoDB                |
+| Secrets                   | `.env` file (local only, gitignored)           | AWS Secrets Manager         |
+| Observability             | Console logs                                   | CloudWatch Logs and Metrics |
 
 ## Local Process Model
 
 Each package runs as a plain Node.js process using `tsx` for TypeScript execution.
-No Lambda simulation or serverless framework is required for local development.
+No Lambda simulation or serverless framework is required for the application code itself.
+Packages that depend on cloud services such as AWS Textract must document which paths require real cloud access
+and provide fixture-based alternatives for use in unit and mocked-integration tests.
 
 ### API Package (`packages/api`)
 
@@ -56,6 +65,16 @@ pnpm --filter @petroglyph/ingest-onedrive dev
 
 Consumes ingest events, processes PDFs, and writes artifacts.
 In local development, reads from a local queue stub or directly from a fixture directory.
+
+PDF text extraction is expected to rely on a cloud service such as AWS Textract.
+The processor package must expose a fixture-based path for unit and mocked-integration tests
+so those tests do not require real Textract credentials.
+When developing against real Textract, copy the package env template and set AWS credentials:
+
+```sh
+cp packages/processor/.env.example packages/processor/.env
+# Then edit packages/processor/.env to add AWS_REGION and AWS credentials
+```
 
 ```sh
 pnpm --filter @petroglyph/processor dev
@@ -123,15 +142,17 @@ pnpm --filter @petroglyph/<name> dev
 
 ## Environment Variable Handling
 
-Copy `.env.example` to `.env` at the repository root before starting local development:
+Each package owns its configuration through its own `.env.example` file.
+Copy the root template and the relevant package templates before starting local development:
 
 ```sh
 cp .env.example .env
+# Copy and edit only the packages you are running locally
+cp packages/api/.env.example packages/api/.env
 ```
 
-Edit `.env` to match your local setup.
 The minimum working set for a mocked local session requires no cloud credentials.
-See [docs/environment-variables.md](./environment-variables.md) for details.
+See [docs/environment-variables.md](./environment-variables.md) for the full ownership convention and variable reference.
 
 ## State and Reset
 

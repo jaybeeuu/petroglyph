@@ -1,14 +1,33 @@
 # Environment Variables
 
 All environment variables used by Petroglyph packages are documented here.
-Copy `.env.example` to `.env` in the repository root and fill in the values for your local setup.
-Never commit `.env` to source control.
+Each bounded context owns its own configuration: package-level variables are documented and templated
+in that package's own `.env.example` file.
+Truly workspace-level variables (such as `NODE_ENV`) are documented in the root `.env.example`.
+Never commit `.env` files to source control.
+
+## Ownership Convention
+
+Variables are owned by the package that reads them.
+
+- Workspace-level variables that are genuinely shared across all packages live at the repository root.
+- Package-specific variables live under `packages/<name>/`.
+  Each package provides its own `.env.example` template covering only the variables it owns.
+- To bootstrap local development, copy each relevant `.env.example` to `.env` beside it:
+
+  ```sh
+  cp .env.example .env
+  cp packages/api/.env.example packages/api/.env
+  cp packages/ingest-onedrive/.env.example packages/ingest-onedrive/.env
+  cp packages/processor/.env.example packages/processor/.env
+  # ... and so on for each package you are running locally
+  ```
 
 ## Loading
 
-Packages load environment variables at startup.
-In local development, use a `.env` file at the repository root.
+Packages load their environment variables at startup from their own `.env` file or the host environment.
 In CI and production, set variables through the host environment or secrets manager directly.
+Do not rely on a single monolithic env file shared across all packages.
 
 ## Reference
 
@@ -65,15 +84,26 @@ In CI and production, set variables through the host environment or secrets mana
 
 For a local-only development session using mocked auth and no real AWS services, the minimum working set is:
 
+**Root `.env`:**
+
 ```sh
 NODE_ENV=development
+```
+
+**`packages/api/.env`:**
+
+```sh
 AUTH_MODE=mock
 API_PORT=3000
 LOG_LEVEL=info
+```
+
+**`packages/cli/.env`:**
+
+```sh
 CLI_API_BASE_URL=http://localhost:3000
 ```
 
-This is already the default in `.env.example`.
 No Entra or AWS credentials are needed for a mocked local session.
 
 ## Production and CI

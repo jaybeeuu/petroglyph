@@ -21,9 +21,11 @@ nvm use
 # 2. Install all workspace dependencies
 pnpm install
 
-# 3. Copy the environment variable template
+# 3. Copy the workspace environment variable template
 cp .env.example .env
 # Edit .env if needed. The defaults work for a mocked local session.
+# Each package also provides its own .env.example for package-specific variables.
+# Copy and edit the relevant package .env.example files for the packages you are running locally.
 ```
 
 After bootstrap, verify the setup with:
@@ -57,7 +59,7 @@ This runs the `dev` script across all packages in dependency order.
 
 ### Auth and environment
 
-By default, `AUTH_MODE=mock` is set in `.env.example`.
+By default, `AUTH_MODE=mock` is set in `packages/api/.env.example`.
 This removes the Microsoft Entra dependency from the development loop so no cloud credentials are needed for a local session.
 
 See [docs/local-runtime-model.md](docs/local-runtime-model.md) for the full local process model and a description of what runs locally versus remotely.
@@ -132,9 +134,6 @@ CI runs the same commands as local validation:
 
 If all four pass locally, they should pass in CI.
 Format checks run separately via `pnpm format:check`.
-
-CI uses GitHub Actions.
-See `.github/workflows/ci.yml` for the workflow definition.
 
 ## Code Style
 
