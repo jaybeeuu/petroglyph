@@ -20,7 +20,6 @@
   "license": "ISC",
   "packageManager": "pnpm@10.4.1",
   "devDependencies": {
-    "@eslint/compat": "^1.1.1",
     "@jaybeeuu/eslint-config": "5.0.0",
     "eslint": "^9.9.1",
     "globals": "^15.9.0",

@@ -45,56 +45,7 @@ These commands run across all packages in the workspace:
 | `.prettierrc.json`    | Shared Prettier formatting rules                   |
 | `pnpm-workspace.yaml` | Declares `packages/*` as workspace members         |
 
-### Creating a New Package
-
-Follow the `packages/core` pattern:
-
-1. Create `packages/<name>/` with the following files:
-
-   **`packages/<name>/package.json`**
-
-   ```json
-   {
-     "name": "@petroglyph/<name>",
-     "version": "0.0.0",
-     "private": true,
-     "type": "module",
-     "exports": {
-       ".": {
-         "import": "./dist/index.js",
-         "types": "./dist/index.d.ts"
-       }
-     },
-     "scripts": {
-       "build": "tsc --project tsconfig.json",
-       "lint": "eslint src",
-       "typecheck": "tsc --project tsconfig.json --noEmit"
-     },
-     "engines": {
-       "node": ">=24.0.0"
-     }
-   }
-   ```
-
-   **`packages/<name>/tsconfig.json`**
-
-   ```json
-   {
-     "extends": "../../tsconfig.base.json",
-     "compilerOptions": {
-       "outDir": "dist",
-       "rootDir": "src",
-       "tsBuildInfoFile": "dist/.tsbuildinfo"
-     },
-     "include": ["src"]
-   }
-   ```
-
-   **`packages/<name>/src/index.ts`** — add your entry-point exports here.
-
-2. Run `pnpm install` from the repo root to register the new workspace package.
-
-3. Run `pnpm build` to verify the new package compiles cleanly.
+To add a new package, see [docs/creating-a-package.md](docs/creating-a-package.md).
 
 ## Why This Exists
 
