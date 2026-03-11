@@ -22,6 +22,11 @@ export type {
   VersionId,
 } from "./ids.js";
 export {
+  ApplicationUserIdSchema,
+  NoteIdSchema,
+  ProviderConnectionIdSchema,
+  ProviderIdSchema,
+  VersionIdSchema,
   asApplicationUserId,
   asNoteId,
   asProviderConnectionId,

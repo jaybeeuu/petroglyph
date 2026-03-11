@@ -56,8 +56,9 @@
 - Model domain concepts with named types when that improves clarity. Prefer readable type aliases, interfaces, discriminated unions, and typed result shapes over loose object literals.
 - Avoid `any`, broad casts, and non-null assertions unless there is no practical alternative. If you must use one, keep it narrow and local.
 - Prefer types that describe the real runtime contract.
+- Use Zod to define types for all data that crosses context boundaries or passes between packages. Derive TypeScript types from Zod schemas with `z.infer` so the schema is the single source of truth for both runtime validation and static types.
 - Validate inputs and outputs at the edges of the system. Do not assume user input, front matter, environment variables, file contents, network responses, third-party API payloads, or other external data already match your static types.
-- Parse, validate, and narrow unknown data before it reaches core logic.
+- Parse, validate, and narrow unknown data before it reaches core logic. Use `safeParse` to validate and narrow; do not cast or assume shape without validation at boundaries.
 - Reuse existing repository patterns for validation and typing rather than inventing parallel approaches.
 - Let inference work for local implementation details when it stays obvious, but do not rely on inference where it hides intent or weakens public API clarity.
 - Keep type definitions updated with behavior changes so type-checking remains meaningful across package boundaries.

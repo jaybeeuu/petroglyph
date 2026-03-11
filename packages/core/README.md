@@ -18,7 +18,7 @@ just to make imports convenient.
 
 **Does NOT belong here:**
 
-- Application user, auth identity, or provider connection types — these belong to the identity/account domain package
+- Domain types or types owned by a specific bounded context (e.g. user/account, ingress, processing, API)
 - API request/response shapes owned by a specific service
 - Database models, ORM entities, or persistence schemas
 - Business logic, workflows, or use-case implementations

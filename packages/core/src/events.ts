@@ -1,12 +1,9 @@
 import { z } from "zod";
-import { asApplicationUserId, asNoteId } from "./ids.js";
-
-const noteIdSchema = z.string().transform(asNoteId);
-const applicationUserIdSchema = z.string().transform(asApplicationUserId);
+import { ApplicationUserIdSchema, NoteIdSchema } from "./ids.js";
 
 const noteEventBaseSchema = z.object({
-  noteId: noteIdSchema,
-  userId: applicationUserIdSchema,
+  noteId: NoteIdSchema,
+  userId: ApplicationUserIdSchema,
   occurredAt: z.string(),
 });
 
