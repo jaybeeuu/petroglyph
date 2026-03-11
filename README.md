@@ -20,9 +20,12 @@ The initial use case is an Onyx Boox Note Air workflow:
 ### Bootstrap
 
 ```sh
-nvm use          # switch to Node.js 24 as declared in .nvmrc
-pnpm install     # install all workspace dependencies
+nvm use              # switch to Node.js 24 as declared in .nvmrc
+pnpm install         # install all workspace dependencies
+cp .env.example .env # copy environment variable template
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for a full bootstrap guide, local development workflow, and troubleshooting tips.
 
 ### Workspace Commands
 
@@ -45,6 +48,7 @@ These commands run across all packages in the workspace:
 | `eslint.config.js`    | Root ESLint config using `@jaybeeuu/eslint-config` |
 | `.prettierrc.json`    | Shared Prettier formatting rules                   |
 | `pnpm-workspace.yaml` | Declares `packages/*` as workspace members         |
+| `.env.example`        | Environment variable template for local dev        |
 
 To add a new package, see [docs/creating-a-package.md](docs/creating-a-package.md).
 
