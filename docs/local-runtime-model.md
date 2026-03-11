@@ -19,20 +19,20 @@ and treat the cloud-dependent path as an explicit opt-in during local developmen
 
 ## What Runs Locally vs. Remotely
 
-| Concern                   | Local development                              | Remote (deployed)           |
-| ------------------------- | ---------------------------------------------- | --------------------------- |
-| API server                | Node process via `tsx` or `pnpm dev`           | AWS Lambda + API Gateway    |
-| Ingest poller             | Node process via `tsx` or `pnpm dev`           | AWS Lambda + EventBridge    |
-| Processor worker          | Node process via `tsx` or `pnpm dev`           | AWS Lambda + SQS trigger    |
-| CLI                       | Node process via `tsx` or `pnpm dev`           | Installed binary            |
-| Auth token validation     | Mocked (`AUTH_MODE=mock`)                      | Microsoft Entra OIDC        |
-| OneDrive Graph access     | File fixtures or manual override               | Live Microsoft Graph API    |
-| PDF text extraction       | Mock/fixture path or real AWS Textract (opt-in) | AWS Textract               |
-| S3 storage                | LocalStack (optional) or in-memory stub        | AWS S3                      |
-| SQS messaging             | LocalStack (optional) or in-memory stub        | AWS SQS                     |
-| DynamoDB state            | LocalStack (optional) or in-memory stub        | AWS DynamoDB                |
-| Secrets                   | `.env` file (local only, gitignored)           | AWS Secrets Manager         |
-| Observability             | Console logs                                   | CloudWatch Logs and Metrics |
+| Concern               | Local development                               | Remote (deployed)           |
+| --------------------- | ----------------------------------------------- | --------------------------- |
+| API server            | Node process via `tsx` or `pnpm dev`            | AWS Lambda + API Gateway    |
+| Ingest poller         | Node process via `tsx` or `pnpm dev`            | AWS Lambda + EventBridge    |
+| Processor worker      | Node process via `tsx` or `pnpm dev`            | AWS Lambda + SQS trigger    |
+| CLI                   | Node process via `tsx` or `pnpm dev`            | Installed binary            |
+| Auth token validation | Mocked (`AUTH_MODE=mock`)                       | Microsoft Entra OIDC        |
+| OneDrive Graph access | File fixtures or manual override                | Live Microsoft Graph API    |
+| PDF text extraction   | Mock/fixture path or real AWS Textract (opt-in) | AWS Textract                |
+| S3 storage            | LocalStack (optional) or in-memory stub         | AWS S3                      |
+| SQS messaging         | LocalStack (optional) or in-memory stub         | AWS SQS                     |
+| DynamoDB state        | LocalStack (optional) or in-memory stub         | AWS DynamoDB                |
+| Secrets               | `.env` file (local only, gitignored)            | AWS Secrets Manager         |
+| Observability         | Console logs                                    | CloudWatch Logs and Metrics |
 
 ## Local Process Model
 
@@ -100,6 +100,7 @@ pnpm --filter @petroglyph/cli exec tsx src/index.ts sync
 Early local development uses `AUTH_MODE=mock` to remove the Entra dependency from the development loop.
 
 When mock auth is active:
+
 - The API accepts all requests and treats them as authenticated with a synthetic identity.
 - The CLI skips the OAuth flow and uses a local stub token.
 - No Entra app registration or credentials are needed.
@@ -167,10 +168,10 @@ docker compose down && docker compose up -d
 
 ## Failure Modes
 
-| Symptom                                 | Likely cause                                                  | Fix                                                       |
-| --------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------- |
-| `AUTH_MODE` not recognized              | Variable not set or `.env` not loaded                         | Check `.env` exists and `AUTH_MODE` is set correctly      |
-| API rejects all requests                | `AUTH_MODE=entra` without valid Entra config                  | Switch to `AUTH_MODE=mock` or provide Entra credentials   |
-| AWS SDK call fails with endpoint error  | Missing `AWS_ENDPOINT_URL` when using LocalStack              | Set `AWS_ENDPOINT_URL=http://localhost:4566`              |
-| OneDrive poller fails to authenticate   | Missing `ONEDRIVE_CLIENT_ID` or `ONEDRIVE_CLIENT_SECRET`      | Add credentials to `.env` or use file fixtures            |
-| Port already in use                     | Another process is using `API_PORT`                           | Change `API_PORT` in `.env` or stop the conflicting process |
+| Symptom                                | Likely cause                                             | Fix                                                         |
+| -------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------- |
+| `AUTH_MODE` not recognized             | Variable not set or `.env` not loaded                    | Check `.env` exists and `AUTH_MODE` is set correctly        |
+| API rejects all requests               | `AUTH_MODE=entra` without valid Entra config             | Switch to `AUTH_MODE=mock` or provide Entra credentials     |
+| AWS SDK call fails with endpoint error | Missing `AWS_ENDPOINT_URL` when using LocalStack         | Set `AWS_ENDPOINT_URL=http://localhost:4566`                |
+| OneDrive poller fails to authenticate  | Missing `ONEDRIVE_CLIENT_ID` or `ONEDRIVE_CLIENT_SECRET` | Add credentials to `.env` or use file fixtures              |
+| Port already in use                    | Another process is using `API_PORT`                      | Change `API_PORT` in `.env` or stop the conflicting process |

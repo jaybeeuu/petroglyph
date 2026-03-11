@@ -4,10 +4,10 @@ This guide covers how to bootstrap the repository on a new machine, run packages
 
 ## Prerequisites
 
-| Tool    | Version  | Install                                                               |
-| ------- | -------- | --------------------------------------------------------------------- |
-| Node.js | 24.x     | [nvm](https://github.com/nvm-sh/nvm): `nvm install` or `nvm use`     |
-| pnpm    | 10.x     | `npm install -g pnpm` or [official docs](https://pnpm.io/installation) |
+| Tool    | Version | Install                                                                |
+| ------- | ------- | ---------------------------------------------------------------------- |
+| Node.js | 24.x    | [nvm](https://github.com/nvm-sh/nvm): `nvm install` or `nvm use`       |
+| pnpm    | 10.x    | `npm install -g pnpm` or [official docs](https://pnpm.io/installation) |
 
 The `.nvmrc` file pins Node.js 24.
 Run `nvm use` from the repository root to switch to the correct version automatically.
@@ -69,15 +69,15 @@ See [docs/environment-variables.md](docs/environment-variables.md) for a complet
 
 Run from the repository root:
 
-| Command             | Description                                                       |
-| ------------------- | ----------------------------------------------------------------- |
-| `pnpm build`        | Build all packages                                                |
-| `pnpm lint`         | Lint all packages                                                 |
-| `pnpm typecheck`    | Type-check all packages                                           |
-| `pnpm test`         | Run all package tests                                             |
-| `pnpm dev`          | Start all packages in development mode                            |
-| `pnpm format`       | Format all files with Prettier                                    |
-| `pnpm format:check` | Check formatting without writing changes                          |
+| Command             | Description                              |
+| ------------------- | ---------------------------------------- |
+| `pnpm build`        | Build all packages                       |
+| `pnpm lint`         | Lint all packages                        |
+| `pnpm typecheck`    | Type-check all packages                  |
+| `pnpm test`         | Run all package tests                    |
+| `pnpm dev`          | Start all packages in development mode   |
+| `pnpm format`       | Format all files with Prettier           |
+| `pnpm format:check` | Check formatting without writing changes |
 
 Run a single package command:
 
@@ -89,13 +89,13 @@ pnpm --filter @petroglyph/<name> <script>
 
 Each package should expose the following scripts where applicable:
 
-| Script       | Description                                                                        |
-| ------------ | ---------------------------------------------------------------------------------- |
-| `build`      | Compile TypeScript to `dist/` using `tsc`                                          |
-| `lint`       | Run ESLint over `src/`                                                             |
-| `typecheck`  | Type-check without emitting output                                                 |
-| `test`       | Run unit and mocked integration tests with Vitest                                  |
-| `dev`        | Start the package in development mode using `tsx` for TypeScript execution         |
+| Script      | Description                                                                |
+| ----------- | -------------------------------------------------------------------------- |
+| `build`     | Compile TypeScript to `dist/` using `tsc`                                  |
+| `lint`      | Run ESLint over `src/`                                                     |
+| `typecheck` | Type-check without emitting output                                         |
+| `test`      | Run unit and mocked integration tests with Vitest                          |
+| `dev`       | Start the package in development mode using `tsx` for TypeScript execution |
 
 See [docs/creating-a-package.md](docs/creating-a-package.md) for the canonical package scaffolding template.
 
@@ -124,16 +124,17 @@ Set the appropriate variables in your `.env` and follow the package-level instru
 
 ## CI Alignment
 
-CI runs the same commands as local validation:
+CI runs the same commands as local validation. See [README.md](README.md#ci-checks) for the full CI job breakdown.
 
-1. `pnpm install`
-2. `pnpm typecheck`
+The key local commands that align with CI jobs:
+
+1. `pnpm build`
+2. `pnpm format:check`
 3. `pnpm lint`
-4. `pnpm test`
-5. `pnpm build`
+4. `pnpm typecheck`
+5. `pnpm test`
 
-If all four pass locally, they should pass in CI.
-Format checks run separately via `pnpm format:check`.
+If all five pass locally, they should pass in CI.
 
 ## Code Style
 
@@ -149,10 +150,10 @@ Follow the instructions in [docs/creating-a-package.md](docs/creating-a-package.
 
 ## Troubleshooting
 
-| Symptom                              | Likely cause                                   | Fix                                           |
-| ------------------------------------ | ---------------------------------------------- | --------------------------------------------- |
-| `pnpm: command not found`            | pnpm not installed                             | `npm install -g pnpm`                         |
-| Wrong Node.js version                | nvm not active or `.nvmrc` not loaded          | `nvm use` from the repository root            |
-| `Module not found` in tests          | Packages not built before tests                | `pnpm build` then re-run tests                |
-| Tests fail with missing env variable | `.env` not present or variable not set         | `cp .env.example .env` and fill in values     |
-| Lint errors after adding a package   | Missing `eslint.config.js` extension           | Check `eslint.config.js` includes the package |
+| Symptom                              | Likely cause                           | Fix                                           |
+| ------------------------------------ | -------------------------------------- | --------------------------------------------- |
+| `pnpm: command not found`            | pnpm not installed                     | `npm install -g pnpm`                         |
+| Wrong Node.js version                | nvm not active or `.nvmrc` not loaded  | `nvm use` from the repository root            |
+| `Module not found` in tests          | Packages not built before tests        | `pnpm build` then re-run tests                |
+| Tests fail with missing env variable | `.env` not present or variable not set | `cp .env.example .env` and fill in values     |
+| Lint errors after adding a package   | Missing `eslint.config.js` extension   | Check `eslint.config.js` includes the package |
