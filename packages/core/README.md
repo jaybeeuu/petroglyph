@@ -22,6 +22,8 @@ just to make imports convenient.
 - Database models, ORM entities, or persistence schemas
 - Business logic, workflows, or use-case implementations
 - Ingress or processing pipeline contracts
+- Note lifecycle event schemas — these are owned by the ingress bounded context and defined there
+  (see [ADR 0013](../../docs/adrs/0013-note-event-contract-ownership.md) and issue #7)
 
 ## Exported Families
 

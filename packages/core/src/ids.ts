@@ -21,10 +21,14 @@ export const isProviderId = (v: unknown): v is ProviderId => ProviderIdSchema.sa
 
 export const ProviderConnectionIdSchema = z.string().brand("ProviderConnectionId");
 export type ProviderConnectionId = z.infer<typeof ProviderConnectionIdSchema>;
-export const asProviderConnectionId = (s: string): ProviderConnectionId => ProviderConnectionIdSchema.parse(s);
-export const isProviderConnectionId = (v: unknown): v is ProviderConnectionId => ProviderConnectionIdSchema.safeParse(v).success;
+export const asProviderConnectionId = (s: string): ProviderConnectionId =>
+  ProviderConnectionIdSchema.parse(s);
+export const isProviderConnectionId = (v: unknown): v is ProviderConnectionId =>
+  ProviderConnectionIdSchema.safeParse(v).success;
 
 export const ApplicationUserIdSchema = z.string().brand("ApplicationUserId");
 export type ApplicationUserId = z.infer<typeof ApplicationUserIdSchema>;
-export const asApplicationUserId = (s: string): ApplicationUserId => ApplicationUserIdSchema.parse(s);
-export const isApplicationUserId = (v: unknown): v is ApplicationUserId => ApplicationUserIdSchema.safeParse(v).success;
+export const asApplicationUserId = (s: string): ApplicationUserId =>
+  ApplicationUserIdSchema.parse(s);
+export const isApplicationUserId = (v: unknown): v is ApplicationUserId =>
+  ApplicationUserIdSchema.safeParse(v).success;

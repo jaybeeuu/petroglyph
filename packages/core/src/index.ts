@@ -33,4 +33,3 @@ export type {
   ValidationResult,
 } from "./validation.js";
 export { asSchemaVersion, isCompatibleSchemaVersion } from "./validation.js";
-
