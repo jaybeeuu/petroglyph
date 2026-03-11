@@ -13,67 +13,38 @@ import {
 } from "./ids.js";
 
 describe("brand-cast helpers", () => {
-  it("asNoteId returns the input string as NoteId", () => {
-    expect(asNoteId("note-1")).toBe("note-1");
-  });
-
-  it("asVersionId returns the input string as VersionId", () => {
-    expect(asVersionId("v-1")).toBe("v-1");
-  });
-
-  it("asProviderId returns the input string as ProviderId", () => {
-    expect(asProviderId("github")).toBe("github");
-  });
-
-  it("asProviderConnectionId returns the input string as ProviderConnectionId", () => {
-    expect(asProviderConnectionId("conn-1")).toBe("conn-1");
-  });
-
-  it("asApplicationUserId returns the input string as ApplicationUserId", () => {
-    expect(asApplicationUserId("user-1")).toBe("user-1");
+  it.each([
+    { helperName: "asNoteId", fn: asNoteId, input: "note-1" },
+    { helperName: "asVersionId", fn: asVersionId, input: "v-1" },
+    { helperName: "asProviderId", fn: asProviderId, input: "github" },
+    { helperName: "asProviderConnectionId", fn: asProviderConnectionId, input: "conn-1" },
+    { helperName: "asApplicationUserId", fn: asApplicationUserId, input: "user-1" },
+  ])("$helperName returns the input string as-is", ({ fn, input }) => {
+    expect(fn(input)).toBe(input);
   });
 });
 
 describe("type guards", () => {
-  it("isNoteId returns true for a string", () => {
-    expect(isNoteId("note-1")).toBe(true);
+  it.each([
+    { guardName: "isNoteId", fn: isNoteId },
+    { guardName: "isVersionId", fn: isVersionId },
+    { guardName: "isProviderId", fn: isProviderId },
+    { guardName: "isProviderConnectionId", fn: isProviderConnectionId },
+    { guardName: "isApplicationUserId", fn: isApplicationUserId },
+  ])("$guardName returns true for a string", ({ fn }) => {
+    expect(fn("test-value")).toBe(true);
   });
 
-  it("isNoteId returns false for a non-string", () => {
-    expect(isNoteId(42)).toBe(false);
-    expect(isNoteId(null)).toBe(false);
-    expect(isNoteId({})).toBe(false);
-  });
-
-  it("isVersionId returns true for a string", () => {
-    expect(isVersionId("v-1")).toBe(true);
-  });
-
-  it("isVersionId returns false for a non-string", () => {
-    expect(isVersionId(42)).toBe(false);
-  });
-
-  it("isProviderId returns true for a string", () => {
-    expect(isProviderId("github")).toBe(true);
-  });
-
-  it("isProviderId returns false for a non-string", () => {
-    expect(isProviderId(false)).toBe(false);
-  });
-
-  it("isProviderConnectionId returns true for a string", () => {
-    expect(isProviderConnectionId("conn-1")).toBe(true);
-  });
-
-  it("isProviderConnectionId returns false for a non-string", () => {
-    expect(isProviderConnectionId(undefined)).toBe(false);
-  });
-
-  it("isApplicationUserId returns true for a string", () => {
-    expect(isApplicationUserId("user-1")).toBe(true);
-  });
-
-  it("isApplicationUserId returns false for a non-string", () => {
-    expect(isApplicationUserId([])).toBe(false);
+  it.each([
+    { guardName: "isNoteId", fn: isNoteId },
+    { guardName: "isVersionId", fn: isVersionId },
+    { guardName: "isProviderId", fn: isProviderId },
+    { guardName: "isProviderConnectionId", fn: isProviderConnectionId },
+    { guardName: "isApplicationUserId", fn: isApplicationUserId },
+  ])("$guardName returns false for non-string values", ({ fn }) => {
+    expect(fn(42)).toBe(false);
+    expect(fn(null)).toBe(false);
+    expect(fn({})).toBe(false);
+    expect(fn(undefined)).toBe(false);
   });
 });

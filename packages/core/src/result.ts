@@ -1,11 +1,11 @@
-export type Ok<Value> = { ok: true; value: Value };
-export type Fail<Failure> = { ok: false; failure: Failure };
-export type Result<Value, Failure> = Ok<Value> | Fail<Failure>;
+export type Success<Value> = { ok: true; value: Value };
+export type Failure<Reason> = { ok: false; failure: Reason };
+export type Result<Value, Reason> = Success<Value> | Failure<Reason>;
 
-export const ok = <Value>(value: Value): Result<Value, never> => ({ ok: true, value });
-export const fail = <Failure>(failure: Failure): Result<never, Failure> => ({ ok: false, failure });
+export const ok = <Value>(value: Value): Success<Value> => ({ ok: true, value });
+export const fail = <Reason>(reason: Reason): Failure<Reason> => ({ ok: false, failure: reason });
 
-export const isOk = <Value, Failure>(result: Result<Value, Failure>): result is Ok<Value> =>
+export const isOk = <Value, Reason>(result: Result<Value, Reason>): result is Success<Value> =>
   result.ok;
-export const isFail = <Value, Failure>(result: Result<Value, Failure>): result is Fail<Failure> =>
+export const isFail = <Value, Reason>(result: Result<Value, Reason>): result is Failure<Reason> =>
   !result.ok;

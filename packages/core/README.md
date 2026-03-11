@@ -14,11 +14,11 @@ just to make imports convenient.
 - Branded ID types and their cast/guard helpers
 - Generic `Result` type and combinators
 - Validation error shapes and schema-version helpers
-- Note lifecycle event unions and guards
-- Application user and auth identity domain types
+- Note lifecycle event schemas and guards
 
 **Does NOT belong here:**
 
+- Application user, auth identity, or provider connection types — these belong to the identity/account domain package
 - API request/response shapes owned by a specific service
 - Database models, ORM entities, or persistence schemas
 - Business logic, workflows, or use-case implementations
@@ -28,7 +28,8 @@ just to make imports convenient.
 
 ### `ids`
 
-Branded string types to prevent accidental ID mix-ups at compile time.
+Branded string types to prevent accidental ID mix-ups at compile time. Each brand groups its
+type, cast helper, and type guard together.
 
 ```ts
 import { asNoteId, isNoteId, type NoteId } from "@petroglyph/core";
@@ -42,7 +43,8 @@ Each has a corresponding `as*` cast helper and `is*` type guard.
 
 ### `result`
 
-Discriminated-union `Result<Value, Failure>` for explicit error handling without exceptions.
+Discriminated-union `Result<Value, Reason>` for explicit error handling without exceptions.
+`ok()` returns `Success<Value>` and `fail()` returns `Failure<Reason>`.
 
 ```ts
 import { fail, isOk, ok, type Result } from "@petroglyph/core";
@@ -75,22 +77,23 @@ isCompatibleSchemaVersion(1, 2); // false
 
 ### `events`
 
-Note lifecycle event union and `isNoteEvent` type guard for narrowing unknown payloads at ingress.
+Zod schemas for note lifecycle events. Use schemas for runtime parsing and validation; derive
+TypeScript types with `z.infer`. The `isNoteEvent` guard uses `NoteEventSchema.safeParse` internally.
 
 ```ts
-import { isNoteEvent, type NoteEvent } from "@petroglyph/core";
+import { NoteEventSchema, isNoteEvent, type NoteEvent } from "@petroglyph/core";
 
-function handle(payload: unknown): void {
-  if (isNoteEvent(payload)) {
-    // payload is NoteEvent
-    console.log(payload.type, payload.noteId);
-  }
+// Parse and validate an unknown payload
+const result = NoteEventSchema.safeParse(payload);
+if (result.success) {
+  console.log(result.data.type, result.data.noteId);
+}
+
+// Simple boolean guard
+if (isNoteEvent(payload)) {
+  console.log(payload.type, payload.noteId);
 }
 ```
-
-### `user-and-auth`
-
-Core identity domain types: `ApplicationUser`, `ExternalAuthIdentity`, `ProviderConnection`.
 
 ## Development
 

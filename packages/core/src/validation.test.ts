@@ -7,9 +7,7 @@ describe("ValidationResult", () => {
   it("accepts an ok result with a value", () => {
     const result: ValidationResult<string> = ok("valid");
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value).toBe("valid");
-    }
+    expect(result.value).toBe("valid");
   });
 
   it("accepts a fail result with ValidationFailure", () => {
@@ -17,10 +15,8 @@ describe("ValidationResult", () => {
       errors: [{ path: "name", message: "required" }],
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.failure.errors).toHaveLength(1);
-      expect(result.failure.errors[0]).toEqual({ path: "name", message: "required" });
-    }
+    expect(result.failure.errors).toHaveLength(1);
+    expect(result.failure.errors[0]).toEqual({ path: "name", message: "required" });
   });
 });
 

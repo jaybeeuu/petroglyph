@@ -1,50 +1,41 @@
-import type { ApplicationUserId, NoteId } from "./ids.js";
+import { z } from "zod";
+import { asApplicationUserId, asNoteId } from "./ids.js";
 
-export interface NoteCreatedEvent {
-  type: "note:created";
-  noteId: NoteId;
-  userId: ApplicationUserId;
-  occurredAt: string;
-}
+const noteIdSchema = z.string().transform(asNoteId);
+const applicationUserIdSchema = z.string().transform(asApplicationUserId);
 
-export interface NoteUpdatedEvent {
-  type: "note:updated";
-  noteId: NoteId;
-  userId: ApplicationUserId;
-  occurredAt: string;
-}
+const noteEventBaseSchema = z.object({
+  noteId: noteIdSchema,
+  userId: applicationUserIdSchema,
+  occurredAt: z.string(),
+});
 
-export interface NoteDeletedEvent {
-  type: "note:deleted";
-  noteId: NoteId;
-  userId: ApplicationUserId;
-  occurredAt: string;
-}
+export const NoteCreatedEventSchema = noteEventBaseSchema.extend({
+  type: z.literal("note:created"),
+});
+export type NoteCreatedEvent = z.infer<typeof NoteCreatedEventSchema>;
 
-export interface NoteVersionCreatedEvent {
-  type: "note:version:created";
-  noteId: NoteId;
-  userId: ApplicationUserId;
-  occurredAt: string;
-}
+export const NoteUpdatedEventSchema = noteEventBaseSchema.extend({
+  type: z.literal("note:updated"),
+});
+export type NoteUpdatedEvent = z.infer<typeof NoteUpdatedEventSchema>;
 
-export type NoteEvent =
-  | NoteCreatedEvent
-  | NoteUpdatedEvent
-  | NoteDeletedEvent
-  | NoteVersionCreatedEvent;
+export const NoteDeletedEventSchema = noteEventBaseSchema.extend({
+  type: z.literal("note:deleted"),
+});
+export type NoteDeletedEvent = z.infer<typeof NoteDeletedEventSchema>;
 
-const NOTE_EVENT_TYPES = new Set<string>([
-  "note:created",
-  "note:updated",
-  "note:deleted",
-  "note:version:created",
+export const NoteVersionCreatedEventSchema = noteEventBaseSchema.extend({
+  type: z.literal("note:version:created"),
+});
+export type NoteVersionCreatedEvent = z.infer<typeof NoteVersionCreatedEventSchema>;
+
+export const NoteEventSchema = z.discriminatedUnion("type", [
+  NoteCreatedEventSchema,
+  NoteUpdatedEventSchema,
+  NoteDeletedEventSchema,
+  NoteVersionCreatedEventSchema,
 ]);
+export type NoteEvent = z.infer<typeof NoteEventSchema>;
 
-export const isNoteEvent = (v: unknown): v is NoteEvent => {
-  if (typeof v !== "object" || v === null || !("type" in v)) {
-    return false;
-  }
-  const { type } = v as { type: unknown };
-  return typeof type === "string" && NOTE_EVENT_TYPES.has(type);
-};
+export const isNoteEvent = (v: unknown): v is NoteEvent => NoteEventSchema.safeParse(v).success;
