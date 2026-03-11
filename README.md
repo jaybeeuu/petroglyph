@@ -32,6 +32,7 @@ These commands run across all packages in the workspace:
 | ------------------- | ---------------------------------------- |
 | `pnpm build`        | Build all packages                       |
 | `pnpm lint`         | Lint all packages                        |
+| `pnpm test`         | Run tests across all packages            |
 | `pnpm typecheck`    | Type-check all packages                  |
 | `pnpm format`       | Format all files with Prettier           |
 | `pnpm format:check` | Check formatting without writing changes |
@@ -82,6 +83,24 @@ Current assumptions include:
 - a cross-platform CLI as the first consumer
 - a single-user operational model in V1, with clean boundaries for future multi-user expansion
 - an application-owned user/account model rather than treating external identity claims as the entire user model
+
+## CI Checks
+
+Every pull request runs automated validation in GitHub Actions. The workflow runs five jobs in parallel where possible:
+
+| CI job       | Local command       | What it checks                                 | Depends on |
+| ------------ | ------------------- | ---------------------------------------------- | ---------- |
+| Build        | `pnpm build`        | Successful compilation of all packages         | —          |
+| Format check | `pnpm format:check` | Prettier formatting across all files           | —          |
+| Lint         | `pnpm lint`         | ESLint rules across all packages               | —          |
+| Type check   | `pnpm typecheck`    | TypeScript type correctness                    | Build      |
+| Test         | `pnpm test`         | Unit and integration tests across all packages | Build      |
+
+`build`, `format-check`, and `lint` run in parallel. `typecheck` and `test` start as soon as `build` completes; they reuse the compiled `dist/` output cached from the build job so no package is compiled twice.
+
+If a CI job fails, run the matching local command to reproduce the failure and iterate locally before pushing again.
+
+The workflow definition lives at [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Development Approach
 
