@@ -37,6 +37,7 @@
 - Keep commits focused and easy to review.
 - Avoid mixing unrelated project or package changes unless the task requires a cross-cutting change.
 - If a task changes behavior across packages or projects, describe the cross-project impact clearly in the PR or task update.
+- Prefer rebasing over merging when integrating upstream changes into a branch. Use `git rebase` rather than `git merge` to keep history linear and easy to follow. Only rebase branches that have not been shared with others; never rebase a branch once someone else has pulled or based work on it.
 
 ## 5. Working Rules
 
