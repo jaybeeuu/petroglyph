@@ -88,13 +88,13 @@ Current assumptions include:
 
 Every pull request runs automated validation in GitHub Actions. The workflow runs five jobs in parallel where possible:
 
-| CI job         | Local command       | What it checks                                  | Depends on |
-| -------------- | ------------------- | ----------------------------------------------- | ---------- |
-| Build          | `pnpm build`        | Successful compilation of all packages          | —          |
-| Format check   | `pnpm format:check` | Prettier formatting across all files            | —          |
-| Lint           | `pnpm lint`         | ESLint rules across all packages                | —          |
-| Type check     | `pnpm typecheck`    | TypeScript type correctness                     | Build      |
-| Test           | `pnpm test`         | Unit and integration tests across all packages  | Build      |
+| CI job       | Local command       | What it checks                                 | Depends on |
+| ------------ | ------------------- | ---------------------------------------------- | ---------- |
+| Build        | `pnpm build`        | Successful compilation of all packages         | —          |
+| Format check | `pnpm format:check` | Prettier formatting across all files           | —          |
+| Lint         | `pnpm lint`         | ESLint rules across all packages               | —          |
+| Type check   | `pnpm typecheck`    | TypeScript type correctness                    | Build      |
+| Test         | `pnpm test`         | Unit and integration tests across all packages | Build      |
 
 `build`, `format-check`, and `lint` run in parallel. `typecheck` and `test` start as soon as `build` completes; they reuse the compiled `dist/` output cached from the build job so no package is compiled twice.
 
