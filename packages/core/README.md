@@ -14,7 +14,6 @@ just to make imports convenient.
 - Branded ID types and their cast/guard helpers
 - Generic `Result` type and combinators
 - Validation error shapes and schema-version helpers
-- Note lifecycle event schemas and guards
 
 **Does NOT belong here:**
 
@@ -73,26 +72,6 @@ const result: ValidationResult<string> = fail({
 
 isCompatibleSchemaVersion(2, 2); // true
 isCompatibleSchemaVersion(1, 2); // false
-```
-
-### `events`
-
-Zod schemas for note lifecycle events. Use schemas for runtime parsing and validation; derive
-TypeScript types with `z.infer`. The `isNoteEvent` guard uses `NoteEventSchema.safeParse` internally.
-
-```ts
-import { NoteEventSchema, isNoteEvent, type NoteEvent } from "@petroglyph/core";
-
-// Parse and validate an unknown payload
-const result = NoteEventSchema.safeParse(payload);
-if (result.success) {
-  console.log(result.data.type, result.data.noteId);
-}
-
-// Simple boolean guard
-if (isNoteEvent(payload)) {
-  console.log(payload.type, payload.noteId);
-}
 ```
 
 ## Development

@@ -1,20 +1,4 @@
 export type {
-  NoteCreatedEvent,
-  NoteDeletedEvent,
-  NoteEvent,
-  NoteUpdatedEvent,
-  NoteVersionCreatedEvent,
-} from "./events.js";
-export {
-  NoteCreatedEventSchema,
-  NoteDeletedEventSchema,
-  NoteEventSchema,
-  NoteUpdatedEventSchema,
-  NoteVersionCreatedEventSchema,
-  isNoteEvent,
-} from "./events.js";
-
-export type {
   ApplicationUserId,
   NoteId,
   ProviderConnectionId,
