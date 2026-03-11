@@ -13,9 +13,13 @@
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
     "lint": "eslint src",
+    "test": "vitest run",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "engines": {
     "node": ">=24.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.18"
   }
 }
