@@ -10,6 +10,43 @@ The initial use case is an Onyx Boox Note Air workflow:
 4. processed outputs are made available through an authenticated API
 5. a cross-platform CLI syncs the resulting notes into a local Obsidian vault
 
+## Getting Started
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) 24 or later (use [nvm](https://github.com/nvm-sh/nvm): `nvm use`)
+- [pnpm](https://pnpm.io/) 10 or later
+
+### Bootstrap
+
+```sh
+nvm use          # switch to Node.js 24 as declared in .nvmrc
+pnpm install     # install all workspace dependencies
+```
+
+### Workspace Commands
+
+These commands run across all packages in the workspace:
+
+| Command             | Description                              |
+| ------------------- | ---------------------------------------- |
+| `pnpm build`        | Build all packages                       |
+| `pnpm lint`         | Lint all packages                        |
+| `pnpm typecheck`    | Type-check all packages                  |
+| `pnpm format`       | Format all files with Prettier           |
+| `pnpm format:check` | Check formatting without writing changes |
+
+### Shared Configuration
+
+| File                  | Purpose                                            |
+| --------------------- | -------------------------------------------------- |
+| `tsconfig.base.json`  | Shared TypeScript config for ESM packages          |
+| `eslint.config.js`    | Root ESLint config using `@jaybeeuu/eslint-config` |
+| `.prettierrc.json`    | Shared Prettier formatting rules                   |
+| `pnpm-workspace.yaml` | Declares `packages/*` as workspace members         |
+
+To add a new package, see [docs/creating-a-package.md](docs/creating-a-package.md).
+
 ## Why This Exists
 
 The current handwritten-note workflow is useful but fragmented.
@@ -94,10 +131,9 @@ This repository does not yet contain the full package implementation described i
 
 The next implementation phase will focus on:
 
-- core contracts and domain types
-- application user and provider-connection foundations
-- local setup and local test strategy
-- ingestion, processing, API, and CLI task-spec breakdown
+- local runtime orchestration
+- mocked auth flows and Entra integration
+- ingestion, processing, API, and CLI runtime behavior
 
 ## License
 
