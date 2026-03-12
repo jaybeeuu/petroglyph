@@ -4,7 +4,7 @@ import {
   AuthIdentityIdSchema,
   ProviderConnectionIdSchema,
   ProviderIdSchema,
-} from "./ids.js";
+} from "@petroglyph/core";
 
 export const AccountStatusSchema = z.enum(["active", "disabled"]);
 export type AccountStatus = z.infer<typeof AccountStatusSchema>;
