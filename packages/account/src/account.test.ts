@@ -3,8 +3,6 @@ import {
   AccountStatusSchema,
   ApplicationUserSchema,
   AuthIdentitySchema,
-  ConnectionStatusSchema,
-  ProviderConnectionSchema,
 } from "./account.js";
 
 const validTimestamp = "2026-03-11T12:00:00.000Z";
@@ -94,46 +92,5 @@ describe("AuthIdentitySchema", () => {
 
   it("rejects missing required fields", () => {
     expect(AuthIdentitySchema.safeParse({ id: "identity-1" }).success).toBe(false);
-  });
-});
-
-describe("ConnectionStatusSchema", () => {
-  it.each([{ value: "active" }, { value: "disconnected" }, { value: "error" }])(
-    "accepts '$value'",
-    ({ value }) => {
-      expect(ConnectionStatusSchema.safeParse(value).success).toBe(true);
-    },
-  );
-
-  it("rejects unknown status values", () => {
-    expect(ConnectionStatusSchema.safeParse("pending").success).toBe(false);
-  });
-});
-
-describe("ProviderConnectionSchema", () => {
-  it("parses a valid active connection", () => {
-    const result = ProviderConnectionSchema.safeParse({
-      id: "conn-1",
-      userId: "user-1",
-      providerId: "onedrive",
-      status: "active",
-      createdAt: validTimestamp,
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects missing required fields", () => {
-    expect(ProviderConnectionSchema.safeParse({ id: "conn-1" }).success).toBe(false);
-  });
-
-  it("rejects an invalid connection status", () => {
-    const result = ProviderConnectionSchema.safeParse({
-      id: "conn-1",
-      userId: "user-1",
-      providerId: "onedrive",
-      status: "unknown",
-      createdAt: validTimestamp,
-    });
-    expect(result.success).toBe(false);
   });
 });
