@@ -32,3 +32,9 @@ export const asApplicationUserId = (s: string): ApplicationUserId =>
   ApplicationUserIdSchema.parse(s);
 export const isApplicationUserId = (v: unknown): v is ApplicationUserId =>
   ApplicationUserIdSchema.safeParse(v).success;
+
+export const AuthIdentityIdSchema = z.string().brand("AuthIdentityId");
+export type AuthIdentityId = z.infer<typeof AuthIdentityIdSchema>;
+export const asAuthIdentityId = (s: string): AuthIdentityId => AuthIdentityIdSchema.parse(s);
+export const isAuthIdentityId = (v: unknown): v is AuthIdentityId =>
+  AuthIdentityIdSchema.safeParse(v).success;

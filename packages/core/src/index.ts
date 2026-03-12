@@ -1,5 +1,6 @@
 export type {
   ApplicationUserId,
+  AuthIdentityId,
   NoteId,
   ProviderConnectionId,
   ProviderId,
@@ -7,16 +8,19 @@ export type {
 } from "./ids.js";
 export {
   ApplicationUserIdSchema,
+  AuthIdentityIdSchema,
   NoteIdSchema,
   ProviderConnectionIdSchema,
   ProviderIdSchema,
   VersionIdSchema,
   asApplicationUserId,
+  asAuthIdentityId,
   asNoteId,
   asProviderConnectionId,
   asProviderId,
   asVersionId,
   isApplicationUserId,
+  isAuthIdentityId,
   isNoteId,
   isProviderConnectionId,
   isProviderId,
