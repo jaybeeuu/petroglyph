@@ -1,4 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
-  "exclude": ["dist"]
+  "exclude": ["dist"],
+  "compilerOptions": {
+    "paths": {
+      "@petroglyph/core": ["../core/src/index.ts"]
+    }
+  }
 }

@@ -1,19 +1,12 @@
 import { describe, expect, it } from "vitest";
-import {
-  AccountStatusSchema,
-  ApplicationUserSchema,
-  AuthIdentitySchema,
-} from "./account.js";
+import { AccountStatusSchema, ApplicationUserSchema, AuthIdentitySchema } from "./account.js";
 
 const validTimestamp = "2026-03-11T12:00:00.000Z";
 
 describe("AccountStatusSchema", () => {
-  it.each([{ value: "active" }, { value: "disabled" }])(
-    "accepts '$value'",
-    ({ value }) => {
-      expect(AccountStatusSchema.safeParse(value).success).toBe(true);
-    },
-  );
+  it.each([{ value: "active" }, { value: "disabled" }])("accepts '$value'", ({ value }) => {
+    expect(AccountStatusSchema.safeParse(value).success).toBe(true);
+  });
 
   it("rejects unknown status values", () => {
     expect(AccountStatusSchema.safeParse("suspended").success).toBe(false);
