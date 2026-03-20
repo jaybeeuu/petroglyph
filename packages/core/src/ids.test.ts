@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   asApplicationUserId,
+  asAuthIdentityId,
   asNoteId,
   asProviderConnectionId,
   asProviderId,
   asVersionId,
   isApplicationUserId,
+  isAuthIdentityId,
   isNoteId,
   isProviderConnectionId,
   isProviderId,
@@ -19,6 +21,7 @@ describe("brand-cast helpers", () => {
     { helperName: "asProviderId", fn: asProviderId, input: "github" },
     { helperName: "asProviderConnectionId", fn: asProviderConnectionId, input: "conn-1" },
     { helperName: "asApplicationUserId", fn: asApplicationUserId, input: "user-1" },
+    { helperName: "asAuthIdentityId", fn: asAuthIdentityId, input: "identity-1" },
   ])("$helperName returns the input string as-is", ({ fn, input }) => {
     expect(fn(input)).toBe(input);
   });
@@ -31,6 +34,7 @@ describe("type guards", () => {
     { guardName: "isProviderId", fn: isProviderId },
     { guardName: "isProviderConnectionId", fn: isProviderConnectionId },
     { guardName: "isApplicationUserId", fn: isApplicationUserId },
+    { guardName: "isAuthIdentityId", fn: isAuthIdentityId },
   ])("$guardName returns true for a string", ({ fn }) => {
     expect(fn("test-value")).toBe(true);
   });
@@ -41,6 +45,7 @@ describe("type guards", () => {
     { guardName: "isProviderId", fn: isProviderId },
     { guardName: "isProviderConnectionId", fn: isProviderConnectionId },
     { guardName: "isApplicationUserId", fn: isApplicationUserId },
+    { guardName: "isAuthIdentityId", fn: isAuthIdentityId },
   ])("$guardName returns false for non-string values", ({ fn }) => {
     expect(fn(42)).toBe(false);
     expect(fn(null)).toBe(false);
