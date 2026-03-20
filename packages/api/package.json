@@ -1,0 +1,36 @@
+{
+  "name": "@petroglyph/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Authenticated REST API for the Petroglyph notes platform.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "dev": "tsx --env-file=.env src/server.ts",
+    "lint": "eslint src",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.11",
+    "@petroglyph/account": "workspace:*",
+    "@petroglyph/core": "workspace:*",
+    "hono": "^4.12.8",
+    "jose": "^6.2.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.3",
+    "vitest": "^4.0.18"
+  }
+}

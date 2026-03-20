@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "exclude": ["dist"],
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "paths": {
+      "@petroglyph/core": ["../core/src/index.ts"],
+      "@petroglyph/account": ["../account/src/index.ts"]
+    }
+  }
+}
