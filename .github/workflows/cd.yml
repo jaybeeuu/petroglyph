@@ -78,7 +78,9 @@ jobs:
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
             -backend-config="key=petroglyph/terraform.tfstate" \
-            -backend-config="region=eu-west-2"
+            -backend-config="region=eu-west-2" \
+            -backend-config="dynamodb_table=petroglyph-terraform-locks" \
+            -backend-config="encrypt=true"
       - name: Terraform workspace
         working-directory: packages/infra
         run: |
