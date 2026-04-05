@@ -22,7 +22,7 @@ export class PetroglyphSettingTab extends PluginSettingTab {
           .setPlaceholder("http://localhost:3000")
           .setValue(this.plugin.data.apiBaseUrl)
           .onChange(async (value) => {
-            this.plugin.data.apiBaseUrl = value;
+            this.plugin.setApiBaseUrl(value);
             await this.plugin.savePluginData();
           }),
       );
@@ -34,9 +34,7 @@ export class PetroglyphSettingTab extends PluginSettingTab {
         .setDesc(`Logged in as @${username}`)
         .addButton((btn) =>
           btn.setButtonText("Disconnect").onClick(async () => {
-            this.plugin.data = {
-              apiBaseUrl: this.plugin.data.apiBaseUrl,
-            };
+            this.plugin.clearCredentials();
             await this.plugin.savePluginData();
             new Notice("Disconnected");
             this.display();

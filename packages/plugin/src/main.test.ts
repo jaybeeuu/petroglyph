@@ -13,10 +13,14 @@ vi.mock("obsidian", () => ({
 
 const { Notice } = await import("obsidian");
 
-async function makePlugin() {
+async function makePlugin(initialData?: Record<string, unknown>) {
   const { PetroglyphPlugin } = await import("./main.js");
 
   const savedData: Record<string, unknown> = {};
+  if (initialData !== undefined) {
+    savedData["data"] = initialData;
+  }
+
   const plugin = new PetroglyphPlugin(
     {} as App,
     {} as PluginManifest,
@@ -44,7 +48,6 @@ describe("handleAuthCallback", () => {
 
   it("saves jwt, refreshToken and username on success and shows notice", async () => {
     const { plugin } = await makePlugin();
-    plugin.data.apiBaseUrl = "http://localhost:3000";
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -86,6 +89,77 @@ describe("handleAuthCallback", () => {
 
     expect(Notice).toHaveBeenCalledWith("Login failed");
   });
+
+  it("shows 'Login failed' notice when response body is missing fields", async () => {
+    const { plugin } = await makePlugin();
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ jwt: "token" }),
+    });
+
+    await plugin.handleAuthCallback({ code: "abc", state: "xyz" });
+
+    expect(plugin.data.jwt).toBeUndefined();
+    expect(Notice).toHaveBeenCalledWith("Login failed");
+  });
+});
+
+describe("openAuthUrl", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("opens the auth URL in a new tab on success", async () => {
+    const { plugin } = await makePlugin();
+    vi.stubGlobal("window", { open: vi.fn() });
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ url: "https://github.com/login/oauth/authorize?..." }),
+    });
+
+    await plugin.openAuthUrl();
+
+    expect(window.open).toHaveBeenCalledWith(
+      "https://github.com/login/oauth/authorize?...",
+      "_blank",
+    );
+  });
+
+  it("shows notice when response is not ok", async () => {
+    const { plugin } = await makePlugin();
+
+    global.fetch = vi.fn().mockResolvedValue({ ok: false });
+
+    await plugin.openAuthUrl();
+
+    expect(Notice).toHaveBeenCalledWith("Failed to get auth URL");
+  });
+
+  it("shows notice when response body has no url field", async () => {
+    const { plugin } = await makePlugin();
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ notUrl: 42 }),
+    });
+
+    await plugin.openAuthUrl();
+
+    expect(Notice).toHaveBeenCalledWith("Failed to get auth URL");
+  });
+
+  it("shows notice on fetch error", async () => {
+    const { plugin } = await makePlugin();
+
+    global.fetch = vi.fn().mockRejectedValue(new Error("network error"));
+
+    await plugin.openAuthUrl();
+
+    expect(Notice).toHaveBeenCalledWith("Failed to get auth URL");
+  });
 });
 
 describe("loadPluginData / savePluginData", () => {
@@ -94,23 +168,10 @@ describe("loadPluginData / savePluginData", () => {
   });
 
   it("merges saved data with defaults", async () => {
-    const { PetroglyphPlugin } = await import("./main.js");
-    const plugin = new PetroglyphPlugin(
-      {} as App,
-      {} as PluginManifest,
-    );
-
-    plugin.loadData = vi.fn(async () => ({
+    const { plugin } = await makePlugin({
       apiBaseUrl: "https://custom.api",
       username: "bob",
-    }));
-    plugin.saveData = vi.fn();
-    plugin.registerObsidianProtocolHandler = vi.fn();
-    plugin.addSettingTab = vi.fn();
-    // @ts-expect-error — minimal stub
-    plugin.app = {};
-
-    await plugin.loadPluginData();
+    });
 
     expect(plugin.data.apiBaseUrl).toBe("https://custom.api");
     expect(plugin.data.username).toBe("bob");
@@ -124,7 +185,7 @@ describe("loadPluginData / savePluginData", () => {
 
   it("persists data via saveData", async () => {
     const { plugin } = await makePlugin();
-    plugin.data.username = "carol";
+    plugin.setCredentials("jwt-token", "refresh-token", "carol");
     await plugin.savePluginData();
     expect(plugin.saveData).toHaveBeenCalledWith(
       expect.objectContaining({ username: "carol" }),
