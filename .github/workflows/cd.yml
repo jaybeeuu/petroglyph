@@ -26,8 +26,8 @@ jobs:
           key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-store-
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run build
-      - run: pnpm run test
+      - run: pnpm build
+      - run: pnpm test
 
   package:
     needs: [build]
@@ -53,7 +53,8 @@ jobs:
           path: packages/api/lambda.zip
 
   deploy:
-    needs: [build, package]
+    needs: [package]
+    environment: production
     runs-on: ubuntu-latest
     env:
       AWS_REGION: eu-west-2
@@ -67,14 +68,17 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Upload lambda.zip to S3
+      - name: Upload lambda zip to S3
         run: |
-          aws s3 cp packages/api/lambda.zip s3://${{ secrets.TF_STATE_BUCKET }}/lambda.zip
+          aws s3 cp packages/api/lambda.zip s3://${{ secrets.LAMBDA_ARTIFACT_BUCKET }}/lambda-${{ github.sha }}.zip
       - uses: hashicorp/setup-terraform@v3
       - name: Terraform init
         working-directory: packages/infra
         run: |
-          terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=petroglyph/terraform.tfstate" \
+            -backend-config="region=eu-west-2"
       - name: Terraform workspace
         working-directory: packages/infra
         run: |
@@ -83,11 +87,5 @@ jobs:
         working-directory: packages/infra
         run: |
           terraform apply -auto-approve \
-            -var="api_zip_s3_bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -var="api_zip_s3_key=lambda.zip"
-      - name: Update Lambda function code
-        run: |
-          aws lambda update-function-code \
-            --function-name petroglyph-api-production \
-            --s3-bucket ${{ secrets.TF_STATE_BUCKET }} \
-            --s3-key lambda.zip
+            -var="api_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
+            -var="api_zip_s3_key=lambda-${{ github.sha }}.zip"

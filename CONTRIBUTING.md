@@ -123,6 +123,18 @@ Tests or scripts that connect to real AWS, Entra, or OneDrive services are opt-i
 They are not part of `pnpm test` and must be run explicitly.
 Set the appropriate variables in your `.env` and follow the package-level instructions in each package's `LOCAL.md` (when present).
 
+## CD Secrets
+
+The CD workflow (`.github/workflows/cd.yml`) requires three GitHub Actions secrets to be configured on the repository:
+
+| Secret                  | Description                                                   |
+| ----------------------- | ------------------------------------------------------------- |
+| `AWS_ROLE_ARN`          | ARN of the IAM role assumed via OIDC for deployments          |
+| `TF_STATE_BUCKET`       | S3 bucket name used to store Terraform remote state           |
+| `LAMBDA_ARTIFACT_BUCKET`| S3 bucket name used to store Lambda deployment ZIP artifacts  |
+
+`TF_STATE_BUCKET` and `LAMBDA_ARTIFACT_BUCKET` may point to the same bucket or separate buckets depending on your infrastructure setup.
+
 ## CI Alignment
 
 CI runs the same commands as local validation. The workflow is defined in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and triggers on push and pull requests targeting `main`. Each check runs in a parallel job after a shared `install` job warms the pnpm store cache.
