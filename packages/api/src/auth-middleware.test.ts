@@ -10,6 +10,7 @@ vi.mock("./db.js", () => ({
 
 import { app } from "./app.js";
 import { authMiddleware, type AppVariables } from "./auth-middleware.js";
+import { resetKeyCache } from "./jwt.js";
 
 describe("auth middleware", () => {
   let privateKey: CryptoKey;
@@ -27,6 +28,7 @@ describe("auth middleware", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    resetKeyCache();
   });
 
   async function makeValidToken(

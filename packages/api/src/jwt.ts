@@ -22,9 +22,21 @@ async function fetchPublicKeyPem(): Promise<string> {
   return key;
 }
 
+let cachedKeyPromise: Promise<CryptoKey> | null = null;
+
+function getPublicKey(): Promise<CryptoKey> {
+  if (!cachedKeyPromise) {
+    cachedKeyPromise = fetchPublicKeyPem().then((pem) => importSPKI(pem, "RS256"));
+  }
+  return cachedKeyPromise;
+}
+
+export function resetKeyCache(): void {
+  cachedKeyPromise = null;
+}
+
 export async function verifyJwt(token: string): Promise<JwtClaims> {
-  const pem = await fetchPublicKeyPem();
-  const publicKey = await importSPKI(pem, "RS256");
+  const publicKey = await getPublicKey();
 
   const { payload } = await jwtVerify(token, publicKey, {
     algorithms: ["RS256"],
