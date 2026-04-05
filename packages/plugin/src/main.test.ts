@@ -239,6 +239,10 @@ describe("clearCredentials", () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("removes jwt, refreshToken, and username", async () => {
     const { plugin } = await makePlugin({
       jwt: "jwt-token",
@@ -277,6 +281,22 @@ describe("clearCredentials", () => {
     plugin.clearCredentials();
 
     expect(plugin.data.apiBaseUrl).toBe("https://custom.api");
+  });
+
+  it("clears the status poll interval", async () => {
+    const clearIntervalMock = vi.fn();
+    vi.stubGlobal("window", {
+      ...makeWindowStub(),
+      setInterval: vi.fn().mockReturnValue(77),
+      clearInterval: clearIntervalMock,
+    });
+
+    const { plugin } = await makePlugin();
+    plugin.startStatusPolling();
+
+    plugin.clearCredentials();
+
+    expect(clearIntervalMock).toHaveBeenCalledWith(77);
   });
 });
 
@@ -727,6 +747,21 @@ describe("status polling lifecycle", () => {
 
     vi.advanceTimersByTime(60_000 * 10);
     expect(pollStatusSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not start a second interval when startStatusPolling is called twice", async () => {
+    const setIntervalMock = vi.fn().mockReturnValue(99);
+    vi.stubGlobal("window", {
+      ...makeWindowStub(),
+      setInterval: setIntervalMock,
+    });
+
+    const { plugin } = await makePlugin();
+
+    plugin.startStatusPolling();
+    plugin.startStatusPolling();
+
+    expect(setIntervalMock).toHaveBeenCalledOnce();
   });
 
   it("clears polling interval on unload", async () => {

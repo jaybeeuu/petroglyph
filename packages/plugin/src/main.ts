@@ -38,6 +38,10 @@ export class PetroglyphPlugin extends Plugin {
   }
 
   clearCredentials(): void {
+    if (this._statusPollIntervalId !== null) {
+      window.clearInterval(this._statusPollIntervalId);
+      this._statusPollIntervalId = null;
+    }
     this._data = { apiBaseUrl: this._data.apiBaseUrl, oneDriveConnected: false };
   }
 
