@@ -1,0 +1,273 @@
+# Authentication & Identity
+
+This document describes how authentication and identity work across Petroglyph — covering the plugin's login session, OneDrive access, and how both are managed throughout the application lifecycle.
+
+---
+
+## Overview
+
+There are three distinct auth surfaces:
+
+| Surface | Protocol | Purpose |
+|---|---|---|
+| **Plugin → Cloud API** | GitHub OAuth + internal JWT | User identity and session management |
+| **Cloud Service → OneDrive** | Microsoft OAuth 2.0 (delegated) | Reading files from OneDrive via Microsoft Graph |
+| **Sync Profiles** | — | Per-user configuration stored in DynamoDB, shared across devices |
+
+These surfaces are intentionally decoupled. Logging in with GitHub does not grant OneDrive access; connecting OneDrive is a separate step. This separation makes it straightforward to add other source providers (Dropbox, Google Drive) or other identity providers (Microsoft, email) in future phases.
+
+---
+
+## 1. Plugin Login — GitHub OAuth
+
+The plugin uses GitHub as an identity provider to authenticate the user against the cloud API. The GitHub token is used only to verify identity; the cloud API owns the session from that point on.
+
+### Flow
+
+```mermaid
+sequenceDiagram
+    participant Plugin
+    participant CloudAPI as Cloud API
+    participant GitHub
+
+    Plugin->>CloudAPI: "Connect" clicked
+    CloudAPI-->>Plugin: redirect URL returned
+    Plugin->>GitHub: open browser (OAuth authorise URL)
+    GitHub-->>CloudAPI: user grants consent
+    GitHub-->>Plugin: obsidian://petroglyph/auth/callback?code=...
+    Plugin->>CloudAPI: POST /auth/callback {code}
+    CloudAPI->>GitHub: GET /user (GitHub API)
+    GitHub-->>CloudAPI: user profile
+    Note over CloudAPI: create/lookup user<br/>issue JWT + refresh token
+    CloudAPI-->>Plugin: { accessToken, refreshToken }
+    Note over Plugin: store both in plugin settings
+```
+
+1. Plugin opens browser to GitHub's OAuth authorisation URL.
+2. User grants consent on GitHub.
+3. GitHub redirects to `obsidian://petroglyph/auth/callback?code=...`.
+4. Obsidian's URI handler fires; plugin sends the code to `POST /auth/callback` on the cloud API.
+5. Cloud API exchanges the code for a GitHub access token, calls `GET /user` to retrieve the user's GitHub ID and username.
+6. Cloud API creates (or looks up) the user record in DynamoDB. The GitHub token is discarded.
+7. Cloud API issues:
+   - A short-lived **JWT** (access token, signed with a server secret, TTL ~1 hour).
+   - A long-lived **refresh token** (opaque, stored hashed in DynamoDB, TTL ~90 days).
+8. Plugin stores both tokens in its settings.
+
+### Session Lifecycle
+
+GitHub OAuth App tokens do not expire — they stay valid until the user revokes access in their GitHub settings. The GitHub token is used only to verify identity and is **discarded immediately** after step 6 above; it is never stored.
+
+What the service manages is its own session:
+
+- All API calls include the JWT as a Bearer token.
+- When the JWT expires (~1 hour), the plugin calls `POST /auth/refresh` with the refresh token to get a new JWT + new refresh token.
+- Refresh tokens **rotate on use**: each refresh issues a new token and invalidates the previous one. A reused superseded token indicates a replay attack and immediately invalidates all active sessions for the user.
+- Refresh tokens are stored hashed in DynamoDB with a TTL attribute; DynamoDB TTL handles expiry cleanup.
+- When the cloud API refresh token expires, the plugin surfaces a "Re-connect your account" prompt on next open and re-initiates the GitHub OAuth flow.
+
+### GitHub OAuth App Registration
+
+| Field | Value |
+|---|---|
+| Type | GitHub OAuth App (not a GitHub App) |
+| Callback URL | `obsidian://petroglyph/auth/callback` |
+| Scopes | `read:user` |
+
+> The `read:user` scope is used only to retrieve the user's GitHub ID and public profile. No repository access is requested.
+
+The OAuth client secret is stored in **SSM Parameter Store (SecureString)** and accessed by the API Handler Lambda at runtime.
+
+---
+
+## 2. OneDrive Connection — Microsoft OAuth 2.0
+
+Connecting OneDrive is a separate, explicit step after logging in. It uses Microsoft's OAuth 2.0 authorisation code flow with PKCE, targeting delegated permissions.
+
+### Entra ID App Registration
+
+| Field | Value |
+|---|---|
+| Type | Multi-tenant, public client |
+| Supported account types | Personal Microsoft accounts AND work/school accounts |
+| Redirect URI | `obsidian://petroglyph/oauth/callback` |
+| Scopes | `Files.Read offline_access` |
+
+> Supports both personal accounts (outlook.com, hotmail.com, live.com) and work/school accounts (Microsoft 365 / Entra ID). Multi-tenant registration is required for personal account support.
+
+The Entra ID client secret is stored in **SSM Parameter Store (SecureString)**.
+
+### Flow
+
+```mermaid
+sequenceDiagram
+    participant Plugin
+    participant CloudAPI as Cloud API
+    participant Microsoft
+
+    Plugin->>CloudAPI: "Connect OneDrive" clicked
+    CloudAPI-->>Plugin: redirect URL (with PKCE challenge)
+    Plugin->>Microsoft: open browser (Microsoft login URL)
+    Microsoft-->>CloudAPI: user grants consent
+    Microsoft-->>Plugin: obsidian://petroglyph/oauth/callback?code=...
+    Plugin->>CloudAPI: POST /onedrive/connect {code, codeVerifier}
+    CloudAPI->>Microsoft: token exchange
+    Microsoft-->>CloudAPI: access token + refresh token
+    Note over CloudAPI: store tokens in SSM<br/>register Graph subscription
+    CloudAPI-->>Plugin: { connected: true }
+```
+
+1. User clicks **"Connect OneDrive"** in plugin settings.
+2. Plugin requests a redirect URL from the cloud API. The API generates a PKCE `code_verifier` and `code_challenge`, stores the verifier in DynamoDB temporarily, and returns the Microsoft authorisation URL.
+3. Plugin opens the browser to Microsoft login.
+4. User consents. Microsoft redirects to `obsidian://petroglyph/oauth/callback?code=...`.
+5. Plugin sends the code to `POST /onedrive/connect` on the cloud API.
+6. Cloud API completes the PKCE token exchange with Microsoft, receiving an **access token** (TTL ~1 hour) and a **refresh token** (TTL up to 90 days with `offline_access`).
+7. Both tokens are stored in **SSM Parameter Store (SecureString)**.
+8. Cloud API registers a **Microsoft Graph change notification subscription** for the configured OneDrive folder, using the fresh access token.
+9. Plugin is notified the connection is active.
+
+### Token Lifecycle
+
+Access tokens expire approximately every hour. The service uses **lazy refresh**: any Lambda that requires OneDrive access checks the token expiry before use and proactively refreshes if within a threshold window (e.g. expiry < 10 minutes away). After refreshing, the new access and refresh tokens are written back to SSM atomically.
+
+```mermaid
+flowchart TD
+    A[Lambda invoked] --> B[Read access token + expiry from SSM]
+    B --> C{Token valid?}
+    C -- Yes --> G[Call OneDrive API]
+    C -- No: expiring / expired --> D[Call Microsoft token refresh endpoint]
+    D --> E{Refresh succeeded?}
+    E -- Yes --> F[Write new tokens to SSM]
+    F --> G
+    E -- No: refresh token expired / revoked --> H[Mark OneDrive as disconnected in DynamoDB]
+    H --> I[Plugin surfaces 'Reconnect OneDrive' on next open]
+```
+
+### Reconnection
+
+If the refresh token expires or is revoked (e.g. user hasn't synced in 90 days, or revokes access in their Microsoft account settings):
+
+- The cloud service marks the OneDrive connection as `disconnected` in the user's DynamoDB record.
+- On the plugin's next status check, it detects the disconnected state and presents a **"Reconnect OneDrive"** prompt, explaining the reason (expired, revoked, etc.) and offering a button to re-initiate the consent flow.
+
+### Subscription Lifecycle Notifications
+
+Microsoft Graph change notification subscriptions expire every 3 days (maximum). Rather than a standing scheduled renewer, Petroglyph relies on Microsoft's **lifecycle notifications** to handle subscription state reactively.
+
+Microsoft sends lifecycle events to a dedicated `lifecycleNotificationUrl`, handled by the **Lifecycle Notification Lambda** (separate from the webhook receiver):
+
+| Lifecycle event | Action |
+|---|---|
+| `reauthorizationRequired` | Lambda attempts token refresh + subscription renewal automatically using the current OneDrive token. If renewal succeeds, no user action is needed. If it fails, marks OneDrive as `disconnected` in DynamoDB. |
+| `subscriptionRemoved` | Marks OneDrive as `disconnected` in DynamoDB immediately. |
+| `missed` | Logs to CloudWatch; Processor Lambda will catch up on next manual sync. |
+
+In all `disconnected` cases the plugin surfaces a **"Reconnect OneDrive"** prompt on its next `/status` poll, explaining the reason. There is no SNS email alert — the plugin is the primary UI for error surfacing.
+
+---
+
+## 3. Sync Profiles
+
+A **Sync Profile** binds a source (an OneDrive folder) to a destination (an Obsidian vault path) with associated settings. Profiles are stored server-side in DynamoDB so they are available across all plugin instances (e.g. home laptop and work laptop).
+
+### Profile Shape
+
+```typescript
+interface SyncProfile {
+  profileId: string;        // UUID
+  userId: string;           // GitHub user ID
+  name: string;             // e.g. "Work Notes"
+  source: {
+    provider: "onedrive";
+    folderPath: string;     // e.g. "OnyxBoox/Work/"
+    folderId: string;       // Microsoft Graph item ID (stable across renames)
+  };
+  destination: {
+    vaultPath: string;      // e.g. "handwritten/work/"
+  };
+  settings: {
+    conflictMode: "overwrite";            // OneDrive always wins (Phase 1)
+    deletionMode: "sync" | "retain";      // configurable
+  };
+  createdAt: string;        // ISO 8601
+  updatedAt: string;
+}
+```
+
+### Device Behaviour
+
+- Each plugin instance selects **one active profile** from the user's profile list (Phase 1).
+- The active profile ID is stored in the plugin's local settings.
+- Profile *definitions* (source, destination, settings) are always read from the cloud API, ensuring changes propagate across devices without manual reconfiguration.
+- Future phases may allow multiple active profiles per vault.
+
+---
+
+## 4. DynamoDB Schema (Auth-Related Tables)
+
+### `users`
+
+| Attribute | Type | Description |
+|---|---|---|
+| `userId` | String (PK) | GitHub user ID |
+| `githubUsername` | String | GitHub login name |
+| `oneDriveStatus` | String | `connected` \| `disconnected` \| `never_connected` |
+| `oneDriveDisconnectReason` | String? | `expired` \| `revoked` \| `error` |
+| `createdAt` | String | ISO 8601 |
+
+### `refresh_tokens`
+
+| Attribute | Type | Description |
+|---|---|---|
+| `tokenHash` | String (PK) | SHA-256 of the opaque refresh token |
+| `userId` | String | FK to `users` |
+| `expiresAt` | Number | Unix timestamp (also used as DynamoDB TTL) |
+| `replacedBy` | String? | Hash of the token that replaced this one (rotation audit) |
+
+### `sync_profiles`
+
+| Attribute | Type | Description |
+|---|---|---|
+| `profileId` | String (PK) | UUID |
+| `userId` | String (GSI) | FK to `users` |
+| `name` | String | Human-readable profile name |
+| `source` | Map | Provider, folder path, folder ID |
+| `destination` | Map | Vault path |
+| `settings` | Map | Conflict mode, deletion mode |
+| `createdAt` | String | ISO 8601 |
+| `updatedAt` | String | ISO 8601 |
+
+---
+
+## 5. SSM Parameter Store Layout
+
+All parameters use the prefix `/petroglyph/`.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `/petroglyph/github/oauth/client-id` | String | GitHub OAuth App client ID |
+| `/petroglyph/github/oauth/client-secret` | SecureString | GitHub OAuth App client secret |
+| `/petroglyph/jwt/signing-secret` | SecureString | HMAC secret for signing JWTs |
+| `/petroglyph/microsoft/entra/client-id` | String | Entra ID app client ID |
+| `/petroglyph/microsoft/entra/client-secret` | SecureString | Entra ID app client secret |
+| `/petroglyph/onedrive/access-token` | SecureString | Current OneDrive access token |
+| `/petroglyph/onedrive/refresh-token` | SecureString | Current OneDrive refresh token |
+| `/petroglyph/onedrive/token-expiry` | String | ISO 8601 expiry of the access token |
+| `/petroglyph/onedrive/subscription-id` | String | Microsoft Graph subscription ID |
+| `/petroglyph/config/target-branch` | String | Git branch to commit to (e.g. `main`) |
+| `/petroglyph/config/initial-sync` | String | `true` \| `false` — return all existing files when plugin has no change token |
+| `/petroglyph/config/retention-days` | String | Days to retain S3 objects after staging (default: `90`) |
+
+> **Note:** In Phase 3 (multi-user), per-user OneDrive tokens and settings will move to DynamoDB. SSM is appropriate for a single-user personal deployment.
+
+---
+
+## 6. Security Considerations
+
+- **Client secrets** never leave the cloud service. The Entra ID client secret and GitHub OAuth client secret are stored in SSM and only accessed by Lambda functions. The plugin never sees them.
+- **PKCE** is used for the OneDrive OAuth flow, preventing authorisation code interception attacks even though the app is a public client.
+- **Refresh token rotation** detects replay attacks: using a superseded refresh token immediately invalidates all active sessions for the user.
+- **JWT signing secret** is stored in SSM and rotated independently of user sessions; rotation invalidates all active JWTs (users re-authenticate on next API call via the refresh token).
+- **SSM SecureString** parameters are encrypted at rest using AWS KMS. Access is restricted to the Lambda execution roles via IAM.
+- **Obsidian URI handler** validates the `state` parameter (included in the OAuth redirect URL) to prevent CSRF. The state token is a short-lived value stored in the plugin's in-memory state during the flow.

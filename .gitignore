@@ -19,3 +19,6 @@ dist/
 
 # Local environment variables (never commit)
 .env
+
+# Beads / Dolt files (added by bd init)
+.beads-credential-key
