@@ -100,6 +100,22 @@ All Lambda functions use **Node.js 24 / TypeScript**, consistent with the monore
 
 All AWS resources are provisioned with **Terraform**, with state stored remotely in S3 (with DynamoDB locking). Each deployment environment (`staging`, `production`) is a separate Terraform workspace, which isolates state and embeds the environment name into every resource name and tag. The S3 bucket and DynamoDB table that back the remote state are a one-time manual bootstrap prerequisite — see [`packages/infra/README.md`](packages/infra/README.md). SSM parameters are defined as Terraform stubs with `PLACEHOLDER` values; real secrets must be written to each parameter manually after first `terraform apply` before the service will function. The exception is `config/retention-days`, which is pre-seeded to `90` as a safe default.
 
+#### CD Pipeline
+
+Deployments to production are automated via `.github/workflows/cd.yml`, triggered on every push to `main`. The pipeline runs three sequential jobs:
+
+| Job       | Steps                                                                                                    |
+| --------- | -------------------------------------------------------------------------------------------------------- |
+| `build`   | `pnpm install` → `pnpm build` → `pnpm test`                                                             |
+| `package` | `pnpm --filter @petroglyph/api package` → uploads `lambda-<sha>.zip` to S3 (`LAMBDA_ARTIFACT_BUCKET`)  |
+| `deploy`  | Downloads artifact, runs `terraform init` (S3 backend + DynamoDB locking), selects/creates the `production` workspace, runs `terraform apply` with `api_zip_s3_bucket` and `api_zip_s3_key` vars |
+
+AWS access in the `deploy` job uses OIDC — no long-lived credentials are stored. The GitHub Actions role ARN is provided via the `AWS_ROLE_ARN` secret.
+
+The `deploy` job targets the `production` GitHub Actions environment, which can be used to add required reviewers or deployment protection rules.
+
+Required secrets: `AWS_ROLE_ARN`, `TF_STATE_BUCKET`, `LAMBDA_ARTIFACT_BUCKET` — see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
 ---
 
 ### 2. Obsidian Plugin
