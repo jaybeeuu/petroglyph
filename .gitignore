@@ -22,3 +22,10 @@ dist/
 
 # Beads / Dolt files (added by bd init)
 .beads-credential-key
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars.json
+.terraform.tfstate.lock.info
