@@ -6,6 +6,7 @@ import { handleAuthRefresh } from "./auth-refresh.js";
 import { authMiddleware, type AppVariables } from "./auth-middleware.js";
 import { onedriveMiddleware } from "./onedrive-middleware.js";
 import { handleOnedriveAuthUrl } from "./onedrive-auth-url.js";
+import { handleOnedriveConnect } from "./onedrive-connect.js";
 import { handleStatus } from "./status.js";
 import { docClient } from "./db.js";
 
@@ -65,6 +66,8 @@ app.post("/auth/refresh", (c) => handleAuthRefresh(c));
 app.get("/status", (c) => handleStatus(c));
 
 app.get("/onedrive/auth-url", (c) => handleOnedriveAuthUrl(c));
+
+app.post("/onedrive/connect", (c) => handleOnedriveConnect(c));
 
 app.use("/onedrive/*", (c, next) => onedriveMiddleware(c, next));
 
