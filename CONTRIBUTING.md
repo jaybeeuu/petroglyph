@@ -124,7 +124,7 @@ Set the appropriate variables in your `.env` and follow the package-level instru
 
 ## CI Alignment
 
-CI runs the same commands as local validation. See [README.md](README.md#ci-checks) for the full CI job breakdown.
+CI runs the same commands as local validation. The workflow is defined in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and triggers on push and pull requests targeting `main`. Each check runs in a parallel job after a shared `install` job warms the pnpm store cache.
 
 The key local commands that align with CI jobs:
 
