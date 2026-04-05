@@ -98,7 +98,7 @@ All Lambda functions use **Node.js 24 / TypeScript**, consistent with the monore
 
 #### Infrastructure as Code
 
-All AWS resources are provisioned with **Terraform**. SSM parameters are defined as Terraform stubs with `PLACEHOLDER` values; real secrets must be written to each parameter manually after first `terraform apply` before the service will function. The exception is `config/retention-days`, which is pre-seeded to `90` as a safe default.
+All AWS resources are provisioned with **Terraform**, with state stored remotely in S3 (with DynamoDB locking). Each deployment environment (`staging`, `production`) is a separate Terraform workspace, which isolates state and embeds the environment name into every resource name and tag. The S3 bucket and DynamoDB table that back the remote state are a one-time manual bootstrap prerequisite — see [`packages/infra/README.md`](packages/infra/README.md). SSM parameters are defined as Terraform stubs with `PLACEHOLDER` values; real secrets must be written to each parameter manually after first `terraform apply` before the service will function. The exception is `config/retention-days`, which is pre-seeded to `90` as a safe default.
 
 ---
 

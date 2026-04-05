@@ -229,14 +229,16 @@ interface SyncProfile {
 
 | Attribute     | Type         | Description                      |
 | ------------- | ------------ | -------------------------------- |
-| `profileId`   | String (PK)  | UUID                             |
-| `userId`      | String (GSI) | FK to `users`                    |
+| `userId`      | String (PK)  | FK to `users`                    |
+| `profileId`   | String (SK)  | UUID                             |
 | `name`        | String       | Human-readable profile name      |
 | `source`      | Map          | Provider, folder path, folder ID |
 | `destination` | Map          | Vault path                       |
 | `settings`    | Map          | Conflict mode, deletion mode     |
 | `createdAt`   | String       | ISO 8601                         |
 | `updatedAt`   | String       | ISO 8601                         |
+
+`userId` as partition key means all profiles for a user are co-located, making list-by-user the primary key query rather than a GSI scan.
 
 ---
 
