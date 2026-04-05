@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { App, PluginManifest } from "obsidian";
 
 vi.mock("obsidian", () => ({
@@ -12,6 +12,18 @@ vi.mock("obsidian", () => ({
 }));
 
 const { Notice } = await import("obsidian");
+
+function makeTestJwt(exp: number): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ sub: "test", exp })).toString("base64url");
+  return `${header}.${payload}.fakesignature`;
+}
+
+function makeTestJwtWithoutExp(): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ sub: "test" })).toString("base64url");
+  return `${header}.${payload}.fakesignature`;
+}
 
 async function makePlugin(initialData?: Record<string, unknown>) {
   const { PetroglyphPlugin } = await import("./main.js");
@@ -190,5 +202,222 @@ describe("loadPluginData / savePluginData", () => {
     expect(plugin.saveData).toHaveBeenCalledWith(
       expect.objectContaining({ username: "carol" }),
     );
+  });
+});
+
+function makeWindowStub() {
+  return {
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+  };
+}
+
+describe("scheduleRefresh", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("schedules performRefresh 5 minutes before JWT expiry", async () => {
+    const now = 1_700_000_000_000;
+    vi.setSystemTime(now);
+    // expires 30 min from now; delay should be 25 min
+    const expiresInSeconds = now / 1000 + 30 * 60;
+    const jwt = makeTestJwt(expiresInSeconds);
+
+    const { plugin } = await makePlugin();
+    const performRefreshSpy = vi.spyOn(plugin, "performRefresh").mockResolvedValue(undefined);
+
+    plugin.scheduleRefresh(jwt);
+
+    expect(performRefreshSpy).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(25 * 60 * 1000 - 1);
+    expect(performRefreshSpy).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(performRefreshSpy).toHaveBeenCalledOnce();
+  });
+
+  it("does not schedule when JWT payload has no exp field", async () => {
+    const { plugin } = await makePlugin();
+    const performRefreshSpy = vi.spyOn(plugin, "performRefresh").mockResolvedValue(undefined);
+
+    plugin.scheduleRefresh(makeTestJwtWithoutExp());
+
+    vi.advanceTimersByTime(999_999_999);
+    expect(performRefreshSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("performRefresh", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("calls POST /auth/refresh with refreshToken and updates credentials", async () => {
+    const newJwt = makeTestJwt(Math.floor(Date.now() / 1000) + 3600);
+    const { plugin } = await makePlugin({
+      jwt: "old-jwt",
+      refreshToken: "old-refresh",
+      username: "alice",
+    });
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ jwt: newJwt, refreshToken: "new-refresh" }),
+    });
+
+    await plugin.performRefresh();
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:3000/auth/refresh",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ refreshToken: "old-refresh" }),
+      }),
+    );
+    expect(plugin.data.jwt).toBe(newJwt);
+    expect(plugin.data.refreshToken).toBe("new-refresh");
+    expect(plugin.data.username).toBe("alice");
+  });
+
+  it("reschedules refresh after successful token refresh", async () => {
+    const newJwt = makeTestJwt(Math.floor(Date.now() / 1000) + 3600);
+    const { plugin } = await makePlugin({
+      jwt: "old-jwt",
+      refreshToken: "old-refresh",
+      username: "alice",
+    });
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ jwt: newJwt, refreshToken: "new-refresh" }),
+    });
+
+    const scheduleRefreshSpy = vi.spyOn(plugin, "scheduleRefresh").mockImplementation(() => {});
+    await plugin.performRefresh();
+
+    expect(scheduleRefreshSpy).toHaveBeenCalledWith(newJwt);
+  });
+
+  it("does nothing when no refreshToken is stored", async () => {
+    const { plugin } = await makePlugin();
+    global.fetch = vi.fn();
+
+    await plugin.performRefresh();
+
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not update credentials when response is not ok", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "old-jwt",
+      refreshToken: "old-refresh",
+      username: "alice",
+    });
+
+    global.fetch = vi.fn().mockResolvedValue({ ok: false });
+
+    await plugin.performRefresh();
+
+    expect(plugin.data.jwt).toBe("old-jwt");
+  });
+});
+
+describe("onload with JWT", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("schedules refresh when JWT is present in saved data", async () => {
+    const jwt = makeTestJwt(Math.floor(Date.now() / 1000) + 3600);
+    const { PetroglyphPlugin } = await import("./main.js");
+    const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
+    plugin.loadData = vi.fn(async () => ({ jwt, refreshToken: "r", username: "alice", apiBaseUrl: "http://localhost:3000" }));
+    plugin.saveData = vi.fn();
+    plugin.registerObsidianProtocolHandler = vi.fn();
+    plugin.addSettingTab = vi.fn();
+    // @ts-expect-error — minimal stub
+    plugin.app = {};
+
+    const scheduleRefreshSpy = vi.spyOn(plugin, "scheduleRefresh").mockImplementation(() => {});
+
+    await plugin.onload();
+
+    expect(scheduleRefreshSpy).toHaveBeenCalledWith(jwt);
+  });
+
+  it("does not schedule refresh when no JWT in saved data", async () => {
+    const { PetroglyphPlugin } = await import("./main.js");
+    const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
+    plugin.loadData = vi.fn(async () => null);
+    plugin.saveData = vi.fn();
+    plugin.registerObsidianProtocolHandler = vi.fn();
+    plugin.addSettingTab = vi.fn();
+    // @ts-expect-error — minimal stub
+    plugin.app = {};
+
+    const scheduleRefreshSpy = vi.spyOn(plugin, "scheduleRefresh").mockImplementation(() => {});
+
+    await plugin.onload();
+
+    expect(scheduleRefreshSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("onunload", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("cancels pending refresh timeout on unload", async () => {
+    const clearTimeoutMock = vi.fn();
+    vi.stubGlobal("window", {
+      setTimeout: vi.fn().mockReturnValue(42),
+      clearTimeout: clearTimeoutMock,
+    });
+
+    const { plugin } = await makePlugin();
+    plugin.scheduleRefresh(makeTestJwt(Math.floor(Date.now() / 1000) + 3600));
+
+    plugin.onunload();
+
+    expect(clearTimeoutMock).toHaveBeenCalledWith(42);
+  });
+
+  it("does not throw when no pending timeout exists", async () => {
+    vi.stubGlobal("window", {
+      setTimeout: vi.fn(),
+      clearTimeout: vi.fn(),
+    });
+
+    const { plugin } = await makePlugin();
+
+    expect(() => plugin.onunload()).not.toThrow();
   });
 });
