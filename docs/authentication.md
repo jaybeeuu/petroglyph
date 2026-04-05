@@ -67,6 +67,30 @@ What the service manages is its own session:
 - Refresh tokens are stored hashed in DynamoDB with a TTL attribute; DynamoDB TTL handles expiry cleanup.
 - When the cloud API refresh token expires, the plugin surfaces a "Re-connect your account" prompt on next open and re-initiates the GitHub OAuth flow.
 
+### Client-Side JWT Auto-Refresh
+
+Rather than waiting for an API call to fail with `401`, the plugin schedules a proactive refresh before the JWT expires.
+
+**Scheduling**
+
+On `onload` (and again after every successful refresh), the plugin decodes the JWT payload (base64, validated at runtime), reads the `exp` claim, and schedules a `window.setTimeout` to fire **5 minutes before expiry**. The delay is clamped to a minimum of `0` ms so that a token that is already within 5 minutes of expiry refreshes immediately.
+
+On `onunload` the timer is cancelled.
+
+**`POST /auth/refresh` contract**
+
+| | Shape |
+| --- | --- |
+| Request body | `{ "refreshToken": "<opaque-uuid>" }` |
+| Success response (`200`) | `{ "jwt": "<new-jwt>", "refreshToken": "<new-opaque-uuid>" }` |
+| Failure response | `401` (token invalid / expired) or `5xx` (server error) |
+
+On success the plugin calls `setCredentials` with the new `jwt` and `refreshToken`, persists them via `saveData`, and reschedules the next refresh timer.
+
+**Failure behaviour**
+
+If the refresh request returns a non-`2xx` status, or if the response body is malformed (e.g. missing `jwt` field), the plugin **silently discards the error and does not reschedule**. The session expires naturally; the next API call will return `401` and the plugin will surface the "Re-connect your account" prompt at that point.
+
 ### JWT Verification Middleware
 
 All authenticated API routes are protected by `authMiddleware` (`packages/api/src/auth-middleware.ts`). For every request it:

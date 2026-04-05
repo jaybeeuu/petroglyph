@@ -114,7 +114,7 @@ A TypeScript plugin that runs inside Obsidian, responsible for pulling staged fi
   - _Reset Plugin State_ — clears the local change token; plugin re-downloads files still in S3.
   - _Reset Server State_ — calls `POST /sync/reset` (`scope: "server"`); server clears its Graph delta token and file records, re-fetching all OneDrive files on next sync run.
   - _Full Reset_ — both of the above.
-- **Authentication** — GitHub OAuth against the cloud API (via API Gateway).
+- **Authentication** — GitHub OAuth against the cloud API (via API Gateway). The plugin schedules a proactive JWT refresh (via `window.setTimeout`) 5 minutes before the JWT expires; the timer is cancelled on `onunload`. On refresh failure the plugin lets the session expire naturally.
 - **File download** — receives a list of pending files with pre-signed S3 URLs; downloads PDFs directly from S3.
 - **Vault placement** — mirrors the OneDrive folder structure under a configurable root path (default: `handwritten/`). E.g. `OnyxBoox/Meeting Notes/` → `handwritten/OnyxBoox/Meeting Notes/`.
 - **Conflict handling** — OneDrive version always wins; existing vault files are overwritten.
