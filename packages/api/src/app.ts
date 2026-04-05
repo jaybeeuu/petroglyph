@@ -1,12 +1,28 @@
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
+import { handleAuthCallback } from "./auth-callback.js";
+import { authMiddleware, type AppVariables } from "./auth-middleware.js";
 import { docClient } from "./db.js";
 
 const TABLE_NAME =
   process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
 
-const app = new Hono();
+const EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
+  { method: "GET", path: "/auth/url" },
+  { method: "POST", path: "/auth/callback" },
+  { method: "POST", path: "/auth/refresh" },
+];
+
+const app = new Hono<{ Variables: AppVariables }>();
+
+app.use("*", (c, next) => {
+  const isExempt = EXEMPT_ROUTES.some(
+    (route) => route.method === c.req.method && route.path === c.req.path,
+  );
+  if (isExempt) return next();
+  return authMiddleware(c, next);
+});
 
 app.get("/health", (c) => {
   return c.json({ status: "ok" });
@@ -37,5 +53,7 @@ app.get("/auth/url", async (c) => {
 
   return c.json({ url: url.toString() });
 });
+
+app.post("/auth/callback", (c) => handleAuthCallback(c));
 
 export { app };
