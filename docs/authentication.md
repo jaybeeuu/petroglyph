@@ -136,6 +136,18 @@ Unauthenticated requests (missing or invalid JWT) return `401 { "error": "UNAUTH
 
 The plugin uses this response to decide which UI prompts to surface — for example, a **"Reconnect OneDrive"** banner when `oneDrive.connected` is `false`.
 
+**Plugin-side polling**
+
+The plugin polls `GET /status` on a **60-second interval** (`window.setInterval`). The call is guarded — polling only runs when a JWT is present. On a successful response the plugin reads `oneDrive.connected` and persists the value as `oneDriveConnected` via Obsidian's `saveData` API.
+
+Polling starts:
+- On `onload`, if a stored JWT is present.
+- Immediately after a successful GitHub login (`POST /auth/callback`).
+
+Polling is cancelled (interval cleared, ID set to `null`) in:
+- `onunload` — plugin teardown.
+- `clearCredentials` — explicit disconnect from the settings UI.
+
 ### GitHub OAuth App Registration
 
 | Field        | Value                                 |
