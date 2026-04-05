@@ -199,19 +199,20 @@ sequenceDiagram
 
 ### Token Lifecycle
 
-Access tokens expire approximately every hour. The service uses **lazy refresh**: any Lambda that requires OneDrive access checks the token expiry before use and proactively refreshes if within a threshold window (e.g. expiry < 10 minutes away). After refreshing, the new access and refresh tokens are written back to SSM atomically.
+Access tokens expire approximately every hour. The service uses **lazy refresh**: a Hono middleware (`onedriveMiddleware`) mounted on all `/onedrive/*` routes in the API Handler Lambda reads the access token and its expiry from SSM on every request. If the token is within **10 minutes** of expiry (or already expired) it proactively exchanges the refresh token with Microsoft and writes the new access token, refresh token, and expiry back to SSM before the downstream handler runs.
+
+The refreshed (or current) access token is injected into the Hono context as `onedriveAccessToken` for downstream `/onedrive/*` handlers to use.
 
 ```mermaid
 flowchart TD
-    A[Lambda invoked] --> B[Read access token + expiry from SSM]
-    B --> C{Token valid?}
-    C -- Yes --> G[Call OneDrive API]
-    C -- No: expiring / expired --> D[Call Microsoft token refresh endpoint]
+    A[/onedrive/* request] --> B[Read access-token + refresh-token + token-expiry from SSM]
+    B -- SSM error --> Z[Inject undefined token\ncontinue to handler]
+    B --> C{Expiry within 10 min?}
+    C -- No --> G[Inject current access token\ncontinue to handler]
+    C -- Yes / already expired --> D[POST to Microsoft token endpoint]
     D --> E{Refresh succeeded?}
-    E -- Yes --> F[Write new tokens to SSM]
-    F --> G
-    E -- No: refresh token expired / revoked --> H[Mark OneDrive as disconnected in DynamoDB]
-    H --> I[Plugin surfaces 'Reconnect OneDrive' on next open]
+    E -- Yes --> F[Write new tokens to SSM\nInject new access token\ncontinue to handler]
+    E -- No: error --> W[Log error\nInject stale access token\ncontinue to handler]
 ```
 
 ### Reconnection
