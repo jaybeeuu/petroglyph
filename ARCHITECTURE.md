@@ -65,30 +65,30 @@ Onyx Boox Note Air 5C
 
 #### Compute — Lambda Functions
 
-| Function | Trigger | Responsibility |
-|---|---|---|
-| **Webhook Receiver** | API Gateway | Validates MS Graph change notification, returns 200 fast, enqueues job to SQS |
-| **Processor** | SQS | Downloads PDF from OneDrive, uploads to S3, writes file record to DynamoDB, generates Markdown frontmatter stub |
-| **API Handler** | API Gateway | Serves plugin requests: list pending files, issue pre-signed S3 URLs, acknowledge delivery |
-| **Lifecycle Notification Handler** | API Gateway | Handles Microsoft Graph lifecycle events (`subscriptionRemoved`, `reauthorizationRequired`) — attempts automatic renewal where possible; marks OneDrive as disconnected in DynamoDB if recovery fails |
-| **Manual Sync** | CLI invocation (AWS SDK) | Runs a Graph delta query to catch any files missed by webhooks; processes any unsynced files |
+| Function                           | Trigger                  | Responsibility                                                                                                                                                                                        |
+| ---------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Webhook Receiver**               | API Gateway              | Validates MS Graph change notification, returns 200 fast, enqueues job to SQS                                                                                                                         |
+| **Processor**                      | SQS                      | Downloads PDF from OneDrive, uploads to S3, writes file record to DynamoDB, generates Markdown frontmatter stub                                                                                       |
+| **API Handler**                    | API Gateway              | Serves plugin requests: list pending files, issue pre-signed S3 URLs, acknowledge delivery                                                                                                            |
+| **Lifecycle Notification Handler** | API Gateway              | Handles Microsoft Graph lifecycle events (`subscriptionRemoved`, `reauthorizationRequired`) — attempts automatic renewal where possible; marks OneDrive as disconnected in DynamoDB if recovery fails |
+| **Manual Sync**                    | CLI invocation (AWS SDK) | Runs a Graph delta query to catch any files missed by webhooks; processes any unsynced files                                                                                                          |
 
 All Lambda functions use **Node.js 24 / TypeScript**, consistent with the monorepo.
 
 #### Storage
 
-| Service | Purpose |
-|---|---|
-| **S3** | Staged PDFs. Lifecycle rule deletes objects 90 days after staging (configurable via SSM). Purely time-based — no per-file delivery confirmation. |
-| **DynamoDB** | File records (path, S3 key, sequence position for change feed), Graph delta token for sync runs, subscription metadata. |
-| **SSM Parameter Store (SecureString)** | OneDrive OAuth tokens, GitHub App credentials, configuration values. Zero standing cost. |
+| Service                                | Purpose                                                                                                                                          |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **S3**                                 | Staged PDFs. Lifecycle rule deletes objects 90 days after staging (configurable via SSM). Purely time-based — no per-file delivery confirmation. |
+| **DynamoDB**                           | File records (path, S3 key, sequence position for change feed), Graph delta token for sync runs, subscription metadata.                          |
+| **SSM Parameter Store (SecureString)** | OneDrive OAuth tokens, GitHub App credentials, configuration values. Zero standing cost.                                                         |
 
 #### Messaging & Eventing
 
-| Service | Purpose |
-|---|---|
-| **SQS Ingestion Queue** | Decouples webhook receiver from processor. Allows Graph notification to be acknowledged immediately. |
-| **SQS Dead-Letter Queue (DLQ)** | Captures failed processor invocations for inspection and replay. |
+| Service                         | Purpose                                                                                              |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| **SQS Ingestion Queue**         | Decouples webhook receiver from processor. Allows Graph notification to be acknowledged immediately. |
+| **SQS Dead-Letter Queue (DLQ)** | Captures failed processor invocations for inspection and replay.                                     |
 
 #### Observability
 
@@ -111,9 +111,9 @@ A TypeScript plugin that runs inside Obsidian, responsible for pulling staged fi
 - **File sync** — calls `GET /files/changes?after={token}` to retrieve a page of new files as `{ files, nextToken }`. The change token is opaque, stored in plugin local settings per active profile, and advances file-by-file after each successful vault write. With no stored token, behaviour is controlled by the `initial-sync` config flag.
 - **Manual "Sync Now" command** — calls `POST /sync/run` first (triggers a Graph delta query on the server to catch any webhook-missed files), then pages through `GET /files/changes`.
 - **Reset operations** — available from plugin settings and the command palette:
-  - *Reset Plugin State* — clears the local change token; plugin re-downloads files still in S3.
-  - *Reset Server State* — calls `POST /sync/reset` (`scope: "server"`); server clears its Graph delta token and file records, re-fetching all OneDrive files on next sync run.
-  - *Full Reset* — both of the above.
+  - _Reset Plugin State_ — clears the local change token; plugin re-downloads files still in S3.
+  - _Reset Server State_ — calls `POST /sync/reset` (`scope: "server"`); server clears its Graph delta token and file records, re-fetching all OneDrive files on next sync run.
+  - _Full Reset_ — both of the above.
 - **Authentication** — GitHub OAuth against the cloud API (via API Gateway).
 - **File download** — receives a list of pending files with pre-signed S3 URLs; downloads PDFs directly from S3.
 - **Vault placement** — mirrors the OneDrive folder structure under a configurable root path (default: `handwritten/`). E.g. `OnyxBoox/Meeting Notes/` → `handwritten/OnyxBoox/Meeting Notes/`.
@@ -191,16 +191,16 @@ tags:
 
 Designed to be **zero cost at rest**. All charges are usage-based:
 
-| Component | Standing Cost | Usage Cost |
-|---|---|---|
-| Lambda | $0 | Per invocation + GB-seconds |
-| API Gateway (HTTP API) | $0 | Per request |
-| SQS | $0 | Per request (1M free/month) |
-| DynamoDB (on-demand) | $0 | Per read/write unit |
-| S3 | $0 | Per GB stored + requests |
-| SSM Parameter Store | $0 | Standard tier is free |
-| CloudWatch Alarm | ~$0.10/alarm/month | — |
-| SNS email | $0 | First 1K emails/month free |
+| Component              | Standing Cost      | Usage Cost                  |
+| ---------------------- | ------------------ | --------------------------- |
+| Lambda                 | $0                 | Per invocation + GB-seconds |
+| API Gateway (HTTP API) | $0                 | Per request                 |
+| SQS                    | $0                 | Per request (1M free/month) |
+| DynamoDB (on-demand)   | $0                 | Per read/write unit         |
+| S3                     | $0                 | Per GB stored + requests    |
+| SSM Parameter Store    | $0                 | Standard tier is free       |
+| CloudWatch Alarm       | ~$0.10/alarm/month | —                           |
+| SNS email              | $0                 | First 1K emails/month free  |
 
 At personal-project volume, total monthly cost is expected to be **< $1**.
 
@@ -208,16 +208,16 @@ At personal-project volume, total monthly cost is expected to be **< $1**.
 
 ## Key Design Decisions
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| Webhook vs polling | Webhook (Graph change notifications) | Near-realtime, no polling overhead |
-| Webhook + manual sync | Safety net for missed notifications | Reliability without scheduled cost |
-| Plugin architecture | Plugin pulls, cloud stages | Decouples vault writes from cloud service; lets obsidian-git own commits |
-| File transfer | Pre-signed S3 URLs | Avoids proxying bytes through Lambda |
-| Compute | Lambda | Zero cost at rest, scales to zero |
-| State store | DynamoDB | Serverless, zero cost at rest |
-| Secrets | SSM Parameter Store | Free, encrypted, IAM-controlled |
-| IaC | Terraform | Already in use in this repo |
-| Runtime | Node.js 24 / TypeScript | Consistent with monorepo |
-| Subscription renewal | Reactive via Graph lifecycle notifications | No standing scheduler; `reauthorizationRequired` triggers auto-renewal attempt; `subscriptionRemoved` prompts user reconnect via plugin |
-| Error alerting | SQS DLQ + CW Alarm + SNS email | Robust failure capture with near-zero cost |
+| Decision              | Choice                                     | Rationale                                                                                                                               |
+| --------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Webhook vs polling    | Webhook (Graph change notifications)       | Near-realtime, no polling overhead                                                                                                      |
+| Webhook + manual sync | Safety net for missed notifications        | Reliability without scheduled cost                                                                                                      |
+| Plugin architecture   | Plugin pulls, cloud stages                 | Decouples vault writes from cloud service; lets obsidian-git own commits                                                                |
+| File transfer         | Pre-signed S3 URLs                         | Avoids proxying bytes through Lambda                                                                                                    |
+| Compute               | Lambda                                     | Zero cost at rest, scales to zero                                                                                                       |
+| State store           | DynamoDB                                   | Serverless, zero cost at rest                                                                                                           |
+| Secrets               | SSM Parameter Store                        | Free, encrypted, IAM-controlled                                                                                                         |
+| IaC                   | Terraform                                  | Already in use in this repo                                                                                                             |
+| Runtime               | Node.js 24 / TypeScript                    | Consistent with monorepo                                                                                                                |
+| Subscription renewal  | Reactive via Graph lifecycle notifications | No standing scheduler; `reauthorizationRequired` triggers auto-renewal attempt; `subscriptionRemoved` prompts user reconnect via plugin |
+| Error alerting        | SQS DLQ + CW Alarm + SNS email             | Robust failure capture with near-zero cost                                                                                              |
