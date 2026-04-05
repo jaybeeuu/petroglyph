@@ -43,6 +43,7 @@ describe("GET /status", () => {
 
   describe("authenticated request", () => {
     it("returns 200 with github connected status and username", async () => {
+      mockSend.mockResolvedValue({});
       const token = await makeValidToken("user-42", "octocat");
 
       const res = await app.request("/status", {
@@ -57,7 +58,51 @@ describe("GET /status", () => {
       });
     });
 
-    it("returns oneDrive connected: false always", async () => {
+    it("returns oneDrive.connected true when SyncProfile has oneDriveConnected=true", async () => {
+      mockSend.mockResolvedValue({
+        Item: { userId: "user-42", profileId: "default", oneDriveConnected: true },
+      });
+      const token = await makeValidToken("user-42");
+
+      const res = await app.request("/status", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { oneDrive: { connected: boolean } };
+      expect(body.oneDrive.connected).toBe(true);
+    });
+
+    it("returns oneDrive.connected false when no SyncProfile exists", async () => {
+      mockSend.mockResolvedValue({});
+      const token = await makeValidToken();
+
+      const res = await app.request("/status", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { oneDrive: { connected: boolean } };
+      expect(body.oneDrive.connected).toBe(false);
+    });
+
+    it("returns oneDrive.connected false when SyncProfile has oneDriveConnected=false", async () => {
+      mockSend.mockResolvedValue({
+        Item: { userId: "user-42", profileId: "default", oneDriveConnected: false },
+      });
+      const token = await makeValidToken();
+
+      const res = await app.request("/status", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { oneDrive: { connected: boolean } };
+      expect(body.oneDrive.connected).toBe(false);
+    });
+
+    it("returns oneDrive.connected false when DynamoDB throws", async () => {
+      mockSend.mockRejectedValue(new Error("DynamoDB unavailable"));
       const token = await makeValidToken();
 
       const res = await app.request("/status", {
