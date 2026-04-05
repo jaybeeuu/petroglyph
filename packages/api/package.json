@@ -17,7 +17,9 @@
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1024.0",
+    "@aws-sdk/client-ssm": "^3.1024.0",
     "@aws-sdk/lib-dynamodb": "^3.1024.0",
-    "hono": "^4.12.10"
+    "hono": "^4.12.10",
+    "jose": "^6.2.2"
   }
 }
