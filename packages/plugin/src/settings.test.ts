@@ -62,7 +62,7 @@ interface TextStub {
 
 const { Notice } = await import("obsidian");
 
-async function makePlugin(options: { username?: string } = {}) {
+async function makePlugin(options: { username?: string; oneDriveConnected?: boolean } = {}) {
   const { PetroglyphPlugin } = await import("./main.js");
 
   const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
@@ -77,6 +77,10 @@ async function makePlugin(options: { username?: string } = {}) {
 
   if (options.username !== undefined) {
     plugin.setCredentials("jwt-token", "refresh-token", options.username);
+  }
+
+  if (options.oneDriveConnected !== undefined) {
+    plugin.setOneDriveConnected(options.oneDriveConnected);
   }
 
   return plugin;
@@ -126,5 +130,40 @@ describe("PetroglyphSettingTab", () => {
     expect(plugin.data.jwt).toBeUndefined();
     expect(plugin.saveData).toHaveBeenCalled();
     expect(Notice).toHaveBeenCalledWith("Disconnected");
+  });
+});
+
+describe("PetroglyphSettingTab OneDrive section", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    buttonHandlers.clear();
+  });
+
+  it("shows Connect OneDrive button when not connected", async () => {
+    const plugin = await makePlugin();
+    const { PetroglyphSettingTab } = await import("./settings.js");
+    const tab = new PetroglyphSettingTab({} as App, plugin);
+    tab.display();
+    expect(buttonHandlers.has("Connect OneDrive")).toBe(true);
+    expect(buttonHandlers.has("Disconnect")).toBe(false);
+  });
+
+  it("shows connected status and Disconnect button when connected", async () => {
+    const plugin = await makePlugin({ oneDriveConnected: true });
+    const { PetroglyphSettingTab } = await import("./settings.js");
+    const tab = new PetroglyphSettingTab({} as App, plugin);
+    tab.display();
+    expect(buttonHandlers.has("Connect OneDrive")).toBe(false);
+    expect(buttonHandlers.has("Disconnect")).toBe(true);
+  });
+
+  it("Connect OneDrive button click calls openOneDriveAuthUrl", async () => {
+    const plugin = await makePlugin();
+    plugin.openOneDriveAuthUrl = vi.fn().mockResolvedValue(undefined);
+    const { PetroglyphSettingTab } = await import("./settings.js");
+    const tab = new PetroglyphSettingTab({} as App, plugin);
+    tab.display();
+    await buttonHandlers.get("Connect OneDrive")?.();
+    expect(plugin.openOneDriveAuthUrl).toHaveBeenCalled();
   });
 });

@@ -27,6 +27,7 @@ function decodeJwtExpiry(jwt: string): number | null {
 export class PetroglyphPlugin extends Plugin {
   private _data: PluginData = { ...DEFAULT_DATA };
   private _refreshTimeoutId: number | null = null;
+  private _statusPollIntervalId: number | null = null;
 
   get data(): Readonly<PluginData> {
     return this._data;
@@ -42,6 +43,10 @@ export class PetroglyphPlugin extends Plugin {
 
   setApiBaseUrl(url: string): void {
     this._data = { ...this._data, apiBaseUrl: url };
+  }
+
+  setOneDriveConnected(connected: boolean): void {
+    this._data = { ...this._data, oneDriveConnected: connected };
   }
 
   scheduleRefresh(jwt: string): void {
@@ -101,8 +106,24 @@ export class PetroglyphPlugin extends Plugin {
       },
     );
 
+    this.registerObsidianProtocolHandler(
+      "petroglyph/oauth/callback",
+      async (params) => {
+        const code = params["code"];
+        const state = params["state"];
+        if (typeof code !== "string" || typeof state !== "string") {
+          new Notice("OneDrive connection failed: missing code or state");
+          return;
+        }
+        await this.handleOneDriveCallback({ code, state });
+      },
+    );
+
     if (this._data.jwt !== undefined) {
       this.scheduleRefresh(this._data.jwt);
+      this._statusPollIntervalId = window.setInterval(() => {
+        void this.pollStatus();
+      }, 60_000);
     }
   }
 
@@ -110,6 +131,10 @@ export class PetroglyphPlugin extends Plugin {
     if (this._refreshTimeoutId !== null) {
       window.clearTimeout(this._refreshTimeoutId);
       this._refreshTimeoutId = null;
+    }
+    if (this._statusPollIntervalId !== null) {
+      window.clearInterval(this._statusPollIntervalId);
+      this._statusPollIntervalId = null;
     }
   }
 
@@ -121,6 +146,9 @@ export class PetroglyphPlugin extends Plugin {
       if (hasStringProp(raw, "jwt")) saved.jwt = raw.jwt;
       if (hasStringProp(raw, "refreshToken")) saved.refreshToken = raw.refreshToken;
       if (hasStringProp(raw, "username")) saved.username = raw.username;
+      if (typeof raw["oneDriveConnected"] === "boolean") {
+        saved.oneDriveConnected = raw["oneDriveConnected"];
+      }
     }
     this._data = { ...DEFAULT_DATA, ...saved };
   }
@@ -144,6 +172,70 @@ export class PetroglyphPlugin extends Plugin {
       window.open(body.url, "_blank");
     } catch {
       new Notice("Failed to get auth URL");
+    }
+  }
+
+  async openOneDriveAuthUrl(): Promise<void> {
+    try {
+      const headers: Record<string, string> = {};
+      if (this._data.jwt !== undefined) {
+        headers["Authorization"] = `Bearer ${this._data.jwt}`;
+      }
+      const response = await fetch(`${this._data.apiBaseUrl}/onedrive/auth-url`, { headers });
+      if (!response.ok) {
+        new Notice("Failed to get OneDrive auth URL");
+        return;
+      }
+      const body: unknown = await response.json();
+      if (!isRecord(body) || !hasStringProp(body, "url")) {
+        new Notice("Failed to get OneDrive auth URL");
+        return;
+      }
+      window.open(body.url, "_blank");
+    } catch {
+      new Notice("Failed to get OneDrive auth URL");
+    }
+  }
+
+  async handleOneDriveCallback(params: { code: string; state: string }): Promise<void> {
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (this._data.jwt !== undefined) {
+        headers["Authorization"] = `Bearer ${this._data.jwt}`;
+      }
+      const response = await fetch(`${this._data.apiBaseUrl}/onedrive/connect`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(params),
+      });
+      if (!response.ok) {
+        new Notice("OneDrive connection failed");
+        return;
+      }
+      this.setOneDriveConnected(true);
+      await this.savePluginData();
+      new Notice("OneDrive connected");
+    } catch {
+      new Notice("OneDrive connection failed");
+    }
+  }
+
+  async pollStatus(): Promise<void> {
+    if (this._data.jwt === undefined) return;
+    try {
+      const response = await fetch(`${this._data.apiBaseUrl}/status`, {
+        headers: { Authorization: `Bearer ${this._data.jwt}` },
+      });
+      if (!response.ok) return;
+      const body: unknown = await response.json();
+      if (!isRecord(body)) return;
+      const oneDrive = body["oneDrive"];
+      if (isRecord(oneDrive) && typeof oneDrive["connected"] === "boolean") {
+        this._data = { ...this._data, oneDriveConnected: oneDrive["connected"] };
+        await this.savePluginData();
+      }
+    } catch {
+      // Network errors are silently ignored; the next poll will retry.
     }
   }
 

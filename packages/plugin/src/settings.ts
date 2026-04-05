@@ -50,5 +50,26 @@ export class PetroglyphSettingTab extends PluginSettingTab {
           }),
         );
     }
+
+    const { oneDriveConnected } = this.plugin.data;
+    if (oneDriveConnected) {
+      new Setting(containerEl)
+        .setName("OneDrive")
+        .setDesc("OneDrive connected ✓")
+        .addButton((btn) =>
+          btn.setButtonText("Disconnect").onClick(() => {
+            // Placeholder — disconnect not yet implemented
+          }),
+        );
+    } else {
+      new Setting(containerEl)
+        .setName("OneDrive")
+        .setDesc("Connect your OneDrive account")
+        .addButton((btn) =>
+          btn.setButtonText("Connect OneDrive").onClick(async () => {
+            await this.plugin.openOneDriveAuthUrl();
+          }),
+        );
+    }
   }
 }

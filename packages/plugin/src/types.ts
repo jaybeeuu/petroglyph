@@ -3,6 +3,7 @@ export interface PluginData {
   jwt?: string;
   refreshToken?: string;
   username?: string;
+  oneDriveConnected?: boolean;
 }
 
 export interface AuthCallbackParams {
