@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { handleAuthCallback } from "./auth-callback.js";
 import { authMiddleware, type AppVariables } from "./auth-middleware.js";
+import { handleStatus } from "./status.js";
 import { docClient } from "./db.js";
 
 const TABLE_NAME =
@@ -55,5 +56,7 @@ app.get("/auth/url", async (c) => {
 });
 
 app.post("/auth/callback", (c) => handleAuthCallback(c));
+
+app.get("/status", (c) => handleStatus(c));
 
 export { app };
