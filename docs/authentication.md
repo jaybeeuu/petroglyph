@@ -218,12 +218,15 @@ interface SyncProfile {
 
 ### `refresh_tokens`
 
-| Attribute    | Type        | Description                                               |
-| ------------ | ----------- | --------------------------------------------------------- |
-| `tokenHash`  | String (PK) | SHA-256 of the opaque refresh token                       |
-| `userId`     | String      | FK to `users`                                             |
-| `expiresAt`  | Number      | Unix timestamp (also used as DynamoDB TTL)                |
-| `replacedBy` | String?     | Hash of the token that replaced this one (rotation audit) |
+This table is dual-purpose: it holds both long-lived refresh tokens (issued after login) and short-lived OAuth state tokens (issued by `GET /auth/url`). The `type` attribute discriminates between them.
+
+| Attribute    | Type        | Description                                                                              |
+| ------------ | ----------- | ---------------------------------------------------------------------------------------- |
+| `token`      | String (PK) | Raw UUID for `oauth_state`; SHA-256 hash for `refresh_token`                             |
+| `type`       | String      | `oauth_state` \| `refresh_token`                                                         |
+| `userId`     | String?     | FK to `users` (present on `refresh_token` records; absent on `oauth_state`)              |
+| `ttl`        | Number      | Unix timestamp used as DynamoDB TTL (10 minutes for state tokens, ~90 days for sessions) |
+| `replacedBy` | String?     | Hash of the token that replaced this one — `refresh_token` only (rotation audit)         |
 
 ### `sync_profiles`
 
@@ -272,4 +275,4 @@ All parameters use the prefix `/petroglyph/`.
 - **Refresh token rotation** detects replay attacks: using a superseded refresh token immediately invalidates all active sessions for the user.
 - **JWT signing secret** is stored in SSM and rotated independently of user sessions; rotation invalidates all active JWTs (users re-authenticate on next API call via the refresh token).
 - **SSM SecureString** parameters are encrypted at rest using AWS KMS. Access is restricted to the Lambda execution roles via IAM.
-- **Obsidian URI handler** validates the `state` parameter (included in the OAuth redirect URL) to prevent CSRF. The state token is a short-lived value stored in the plugin's in-memory state during the flow.
+- **CSRF protection via server-side state tokens**: `GET /auth/url` generates a UUID state token, stores it in DynamoDB (`refresh_tokens` table, `type=oauth_state`, TTL 10 minutes), and includes it in the GitHub OAuth URL. The callback handler validates the state against DynamoDB rather than plugin in-memory state, so validation survives any plugin restart or context loss during the OAuth redirect.
