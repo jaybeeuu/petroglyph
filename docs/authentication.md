@@ -180,22 +180,25 @@ sequenceDiagram
     Plugin->>Microsoft: open browser (Microsoft login URL)
     Microsoft-->>CloudAPI: user grants consent
     Microsoft-->>Plugin: obsidian://petroglyph/oauth/callback?code=...
-    Plugin->>CloudAPI: POST /onedrive/connect {code, codeVerifier}
-    CloudAPI->>Microsoft: token exchange
+    Plugin->>CloudAPI: POST /onedrive/connect {code, state}
+    Note over CloudAPI: validate & delete state token<br/>(retrieve PKCE verifier from DynamoDB)
+    CloudAPI->>Microsoft: token exchange (code + verifier)
     Microsoft-->>CloudAPI: access token + refresh token
-    Note over CloudAPI: store tokens in SSM<br/>register Graph subscription
-    CloudAPI-->>Plugin: { connected: true }
+    Note over CloudAPI: store 3 tokens in SSM (SecureString)<br/>register Graph subscription (non-blocking)<br/>upsert SyncProfile in DynamoDB
+    CloudAPI-->>Plugin: { status: 'connected' }
 ```
 
 1. User clicks **"Connect OneDrive"** in plugin settings.
 2. Plugin requests a redirect URL from the cloud API. The API generates a PKCE `code_verifier` and `code_challenge`, stores the verifier in DynamoDB temporarily, and returns the Microsoft authorisation URL.
 3. Plugin opens the browser to Microsoft login.
 4. User consents. Microsoft redirects to `obsidian://petroglyph/oauth/callback?code=...`.
-5. Plugin sends the code to `POST /onedrive/connect` on the cloud API.
-6. Cloud API completes the PKCE token exchange with Microsoft, receiving an **access token** (TTL ~1 hour) and a **refresh token** (TTL up to 90 days with `offline_access`).
-7. Both tokens are stored in **SSM Parameter Store (SecureString)**.
-8. Cloud API registers a **Microsoft Graph change notification subscription** for the configured OneDrive folder, using the fresh access token.
-9. Plugin is notified the connection is active.
+5. Plugin sends `{ code, state }` to `POST /onedrive/connect` on the cloud API (JWT-protected).
+6. Cloud API validates the state token against DynamoDB (`type='onedrive_state'`, TTL check) → 401 if invalid or expired. The state record is deleted immediately after lookup (one-time-use), and the PKCE `verifier` is read from it.
+7. Cloud API completes the PKCE token exchange with Microsoft using the code and retrieved verifier, receiving an **access token** (TTL ~1 hour) and a **refresh token** (TTL up to 90 days with `offline_access`). Returns 502 if the exchange fails.
+8. `access_token`, `refresh_token`, and `token-expiry` (ISO 8601) are each stored as **SSM SecureString** parameters (with `Overwrite=true`).
+9. Cloud API attempts to register a **Microsoft Graph change notification subscription** for the user's OneDrive. Failure is non-blocking — a warning is logged and the request continues.
+10. Cloud API upserts a **SyncProfile** in DynamoDB (`PK=userId`, `SK='default'`, `oneDriveConnected=true`).
+11. Returns `{ status: 'connected' }` to the plugin.
 
 ### Token Lifecycle
 
@@ -311,8 +314,9 @@ This table is dual-purpose: it holds both long-lived refresh tokens (issued afte
 | `source`      | Map          | Provider, folder path, folder ID |
 | `destination` | Map          | Vault path                       |
 | `settings`    | Map          | Conflict mode, deletion mode     |
-| `createdAt`   | String       | ISO 8601                         |
-| `updatedAt`   | String       | ISO 8601                         |
+| `createdAt`        | String       | ISO 8601                         |
+| `updatedAt`        | String       | ISO 8601                         |
+| `oneDriveConnected` | Boolean?    | `true` once OneDrive is connected via `POST /onedrive/connect` |
 
 `userId` as partition key means all profiles for a user are co-located, making list-by-user the primary key query rather than a GSI scan.
 
@@ -331,7 +335,7 @@ All parameters use the prefix `/petroglyph/`.
 | `/petroglyph/microsoft/entra/client-secret` | SecureString | Entra ID app client secret                                                    |
 | `/petroglyph/onedrive/access-token`         | SecureString | Current OneDrive access token                                                 |
 | `/petroglyph/onedrive/refresh-token`        | SecureString | Current OneDrive refresh token                                                |
-| `/petroglyph/onedrive/token-expiry`         | String       | ISO 8601 expiry of the access token                                           |
+| `/petroglyph/onedrive/token-expiry`         | SecureString | ISO 8601 expiry of the access token                                           |
 | `/petroglyph/onedrive/subscription-id`      | String       | Microsoft Graph subscription ID                                               |
 | `/petroglyph/config/target-branch`          | String       | Git branch to commit to (e.g. `main`)                                         |
 | `/petroglyph/config/initial-sync`           | String       | `true` \| `false` — return all existing files when plugin has no change token |
