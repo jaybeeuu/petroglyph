@@ -79,7 +79,7 @@ All Lambda functions use **Node.js 24 / TypeScript**, consistent with the monore
 
 | Service                                | Purpose                                                                                                                                          |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **S3**                                 | Staged PDFs. Lifecycle rule deletes objects 90 days after staging (configurable via SSM). Purely time-based — no per-file delivery confirmation. |
+| **S3**                                 | Staged PDFs. Lifecycle rule deletes objects 90 days after staging (configurable via the `retention_days` Terraform variable). Purely time-based — no per-file delivery confirmation. |
 | **DynamoDB**                           | File records (path, S3 key, sequence position for change feed), Graph delta token for sync runs, subscription metadata.                          |
 | **SSM Parameter Store (SecureString)** | OneDrive OAuth tokens, GitHub App credentials, configuration values. Zero standing cost.                                                         |
 
