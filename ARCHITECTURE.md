@@ -98,7 +98,7 @@ All Lambda functions use **Node.js 24 / TypeScript**, consistent with the monore
 
 #### Infrastructure as Code
 
-All AWS resources are provisioned with **Terraform**.
+All AWS resources are provisioned with **Terraform**. SSM parameters are defined as Terraform stubs with `PLACEHOLDER` values; real secrets must be written to each parameter manually after first `terraform apply` before the service will function. The exception is `config/retention-days`, which is pre-seeded to `90` as a safe default.
 
 ---
 
