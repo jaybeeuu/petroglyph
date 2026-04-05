@@ -47,12 +47,13 @@ sequenceDiagram
 2. User grants consent on GitHub.
 3. GitHub redirects to `obsidian://petroglyph/auth/callback?code=...`.
 4. Obsidian's URI handler fires; plugin sends the code to `POST /auth/callback` on the cloud API.
-5. Cloud API exchanges the code for a GitHub access token, calls `GET /user` to retrieve the user's GitHub ID and username.
-6. Cloud API creates (or looks up) the user record in DynamoDB. The GitHub token is discarded.
-7. Cloud API issues:
-   - A short-lived **JWT** (access token, signed with the server's private key, TTL ~1 hour).
-   - A long-lived **refresh token** (opaque, stored hashed in DynamoDB, TTL ~90 days).
-8. Plugin stores `jwt`, `refreshToken`, and `username` via Obsidian's `saveData` API (written to the plugin's local data file — not `localStorage`).
+5. Cloud API validates the state token against DynamoDB and **deletes it immediately** (making it one-time-use) before proceeding with the code exchange.
+6. Cloud API exchanges the code for a GitHub access token, calls `GET /api.github.com/user` to retrieve the user's GitHub ID and username. Any failure from GitHub returns **502** to the plugin.
+7. Cloud API creates (or looks up) the user record in DynamoDB. The GitHub token is discarded.
+8. Cloud API issues:
+   - A short-lived **JWT** (RS256, TTL 1 hour, claims: `iss=petroglyph-api`, `aud=petroglyph-plugin`, `sub=<userId>`, `username=<githubLogin>`).
+   - A long-lived **refresh token** (opaque UUID, stored as **SHA-256 hash** in DynamoDB, TTL ~90 days).
+9. Plugin stores `jwt`, `refreshToken`, and `username` via Obsidian's `saveData` API (written to the plugin's local data file — not `localStorage`).
 
 ### Session Lifecycle
 
@@ -287,4 +288,4 @@ All parameters use the prefix `/petroglyph/`.
 - **Refresh token rotation** detects replay attacks: using a superseded refresh token immediately invalidates all active sessions for the user.
 - **JWT key pair** uses RS256 (asymmetric). The public key is stored in SSM at `/petroglyph/jwt/public-key` (or overridden via `JWT_PUBLIC_KEY` env var) and is imported once at module level (cached for the lifetime of the Lambda process). Rotation of the key pair invalidates all active JWTs; users re-authenticate on the next API call via the refresh token.
 - **SSM SecureString** parameters are encrypted at rest using AWS KMS. Access is restricted to the Lambda execution roles via IAM.
-- **CSRF protection via server-side state tokens**: `GET /auth/url` generates a UUID state token, stores it in DynamoDB (`refresh_tokens` table, `type=oauth_state`, TTL 10 minutes), and includes it in the GitHub OAuth URL. The callback handler validates the state against DynamoDB rather than plugin in-memory state, so validation survives any plugin restart or context loss during the OAuth redirect.
+- **CSRF protection via server-side state tokens**: `GET /auth/url` generates a UUID state token, stores it in DynamoDB (`refresh_tokens` table, `type=oauth_state`, TTL 10 minutes), and includes it in the GitHub OAuth URL. The callback handler validates the state against DynamoDB and **deletes it before exchanging the code** (one-time-use), so the token cannot be replayed even if intercepted after the redirect. Validation survives any plugin restart or context loss during the OAuth redirect.
