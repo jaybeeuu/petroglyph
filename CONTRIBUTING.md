@@ -47,7 +47,7 @@ All four commands should complete without errors on a clean checkout.
 pnpm --filter @petroglyph/<name> dev
 ```
 
-Replace `<name>` with one of: `api`, `ingest-onedrive`, `processor`, `cli`.
+Replace `<name>` with one of: `api`, `ingest-onedrive`, `processor`, `plugin`, `infra`, `core`.
 
 ### Start all packages together
 
