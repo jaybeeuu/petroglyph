@@ -79,6 +79,29 @@ All authenticated API routes are protected by `authMiddleware` (`packages/api/sr
 3. On success, injects `userId` (from `sub`) and `username` into the Hono context variables, making them available to downstream route handlers as `c.var.userId` and `c.var.username`.
 4. On any failure (missing token, invalid signature, expired token, missing claims), returns `401 { "error": "UNAUTHORIZED" }`.
 
+### GET /status — Session Status Check
+
+The plugin periodically calls `GET /status` to determine the current connection state of both GitHub (identity) and OneDrive (file source). The route is JWT-protected via the global `authMiddleware`.
+
+**Response shape:**
+
+```json
+{
+  "github": { "connected": true, "username": "<githubLogin>" },
+  "oneDrive": { "connected": false }
+}
+```
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `github.connected` | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity. |
+| `github.username` | string | The GitHub login extracted from the JWT `username` claim. |
+| `oneDrive.connected` | boolean | `true` if the user's OneDrive token is active; `false` if disconnected or never connected. |
+
+Unauthenticated requests (missing or invalid JWT) return `401 { "error": "UNAUTHORIZED" }` from the auth middleware before the handler is reached.
+
+The plugin uses this response to decide which UI prompts to surface — for example, a **"Reconnect OneDrive"** banner when `oneDrive.connected` is `false`.
+
 ### GitHub OAuth App Registration
 
 | Field        | Value                                 |
