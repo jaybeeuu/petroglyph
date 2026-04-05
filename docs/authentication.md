@@ -83,13 +83,23 @@ On `onunload` the timer is cancelled.
 | --- | --- |
 | Request body | `{ "refreshToken": "<opaque-uuid>" }` |
 | Success response (`200`) | `{ "jwt": "<new-jwt>", "refreshToken": "<new-opaque-uuid>" }` |
-| Failure response | `401` (token invalid / expired) or `5xx` (server error) |
+| Failure response | `400` (missing or non-string `refreshToken`), `401` (token invalid / expired / reuse detected), or `5xx` (server error) |
 
 On success the plugin calls `setCredentials` with the new `jwt` and `refreshToken`, persists them via `saveData`, and reschedules the next refresh timer.
 
 **Failure behaviour**
 
 If the refresh request returns a non-`2xx` status, or if the response body is malformed (e.g. missing `jwt` field), the plugin **silently discards the error and does not reschedule**. The session expires naturally; the next API call will return `401` and the plugin will surface the "Re-connect your account" prompt at that point.
+
+**Server-side `POST /auth/refresh` flow**
+
+1. Validates the request body: `refreshToken` must be present and a string; returns `400` otherwise.
+2. SHA-256 hashes the token and looks it up in DynamoDB `refresh_tokens` by hash. Returns `401` if not found.
+3. Validates the record: `type` must be `refresh_token` and `ttl` must be in the future. Returns `401` otherwise.
+4. Atomically marks the token as superseded using a DynamoDB `UpdateItem` with a `ConditionExpression` (`superseded = false OR attribute_not_exists(superseded)`). This prevents a TOCTOU race where two concurrent requests using the same token could both pass the earlier checks.
+5. If the condition fails (`ConditionalCheckFailedException`), a token reuse attack is assumed: all `refresh_token` records for the user are deleted via a paginated scan, and `401 { "error": "Token reuse detected" }` is returned.
+6. Issues a new RS256 JWT (`iss=petroglyph-api`, `aud=petroglyph-plugin`, `sub=<userId>`, 1-hour expiry).
+7. Generates a new UUID refresh token, stores its SHA-256 hash in DynamoDB (`type=refresh_token`, 90-day TTL), and returns `200 { jwt, refreshToken }`.
 
 ### JWT Verification Middleware
 
@@ -286,6 +296,7 @@ This table is dual-purpose: it holds both long-lived refresh tokens (issued afte
 | `type`       | String      | `oauth_state` \| `refresh_token`                                                         |
 | `userId`     | String?     | FK to `users` (present on `refresh_token` records; absent on `oauth_state`)              |
 | `ttl`        | Number      | Unix timestamp used as DynamoDB TTL (10 minutes for state tokens, ~90 days for sessions) |
+| `superseded` | Boolean?    | `true` once the token has been rotated; used for atomic reuse detection — `refresh_token` only |
 | `replacedBy` | String?     | Hash of the token that replaced this one — `refresh_token` only (rotation audit)         |
 
 ### `sync_profiles`
@@ -332,7 +343,7 @@ All parameters use the prefix `/petroglyph/`.
 
 - **Client secrets** never leave the cloud service. The Entra ID client secret and GitHub OAuth client secret are stored in SSM and only accessed by Lambda functions. The plugin never sees them.
 - **PKCE** is used for the OneDrive OAuth flow, preventing authorisation code interception attacks even though the app is a public client.
-- **Refresh token rotation** detects replay attacks: using a superseded refresh token immediately invalidates all active sessions for the user.
+- **Refresh token rotation** detects replay attacks: using a superseded refresh token immediately purges all active tokens for the user. The superseded flag is set via an atomic DynamoDB `UpdateItem` with a `ConditionExpression`, preventing a TOCTOU race where two concurrent requests with the same token could each pass a read-then-check validation.
 - **JWT key pair** uses RS256 (asymmetric). The public key is stored in SSM at `/petroglyph/jwt/public-key` (or overridden via `JWT_PUBLIC_KEY` env var) and is imported once at module level (cached for the lifetime of the Lambda process). Rotation of the key pair invalidates all active JWTs; users re-authenticate on the next API call via the refresh token.
 - **SSM SecureString** parameters are encrypted at rest using AWS KMS. Access is restricted to the Lambda execution roles via IAM.
 - **CSRF protection via server-side state tokens**: `GET /auth/url` generates a UUID state token, stores it in DynamoDB (`refresh_tokens` table, `type=oauth_state`, TTL 10 minutes), and includes it in the GitHub OAuth URL. The callback handler validates the state against DynamoDB and **deletes it before exchanging the code** (one-time-use), so the token cannot be replayed even if intercepted after the redirect. Validation survives any plugin restart or context loss during the OAuth redirect.
