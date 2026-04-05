@@ -39,6 +39,49 @@ interface CallbackRequestBody {
   state: string;
 }
 
+class UpstreamError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UpstreamError";
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasStringProp<K extends string>(
+  value: Record<string, unknown>,
+  key: K,
+): value is Record<string, unknown> & Record<K, string> {
+  return typeof value[key] === "string";
+}
+
+function hasNumberProp<K extends string>(
+  value: Record<string, unknown>,
+  key: K,
+): value is Record<string, unknown> & Record<K, number> {
+  return typeof value[key] === "number";
+}
+
+function parseGitHubTokenResponse(data: unknown): GitHubTokenResponse {
+  if (!isRecord(data) || !hasStringProp(data, "access_token")) {
+    throw new UpstreamError("Invalid GitHub token response shape");
+  }
+  return { access_token: data.access_token };
+}
+
+function parseGitHubUser(data: unknown): GitHubUser {
+  if (
+    !isRecord(data) ||
+    !hasNumberProp(data, "id") ||
+    !hasStringProp(data, "login")
+  ) {
+    throw new UpstreamError("Invalid GitHub user response shape");
+  }
+  return { id: data.id, login: data.login };
+}
+
 async function lookUpState(state: string): Promise<StateItem | undefined> {
   const result = await docClient.send(
     new GetCommand({
@@ -60,7 +103,13 @@ async function deleteState(state: string): Promise<void> {
 
 async function exchangeCodeForToken(code: string): Promise<string> {
   const clientId = process.env["GITHUB_CLIENT_ID"];
+  if (!clientId) {
+    throw new Error("GITHUB_CLIENT_ID not configured");
+  }
   const clientSecret = process.env["GITHUB_CLIENT_SECRET"];
+  if (!clientSecret) {
+    throw new Error("GITHUB_CLIENT_SECRET not configured");
+  }
 
   const response = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
@@ -71,8 +120,13 @@ async function exchangeCodeForToken(code: string): Promise<string> {
     body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
   });
 
-  const data = (await response.json()) as GitHubTokenResponse;
-  return data.access_token;
+  if (!response.ok) {
+    throw new UpstreamError(
+      `GitHub token exchange failed: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  return parseGitHubTokenResponse(await response.json()).access_token;
 }
 
 async function fetchGitHubUser(accessToken: string): Promise<GitHubUser> {
@@ -83,7 +137,13 @@ async function fetchGitHubUser(accessToken: string): Promise<GitHubUser> {
     },
   });
 
-  return (await response.json()) as GitHubUser;
+  if (!response.ok) {
+    throw new UpstreamError(
+      `GitHub user fetch failed: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  return parseGitHubUser(await response.json());
 }
 
 async function upsertUser(userId: string, username: string): Promise<void> {
@@ -112,6 +172,8 @@ async function issueJwt(userId: string, username: string): Promise<string> {
   return new SignJWT({ username })
     .setProtectedHeader({ alg: "RS256" })
     .setSubject(userId)
+    .setIssuer("petroglyph-api")
+    .setAudience("petroglyph-plugin")
     .setIssuedAt()
     .setExpirationTime("1h")
     .sign(privateKey);
@@ -150,8 +212,17 @@ export async function handleAuthCallback(c: Context): Promise<Response> {
 
   await deleteState(state);
 
-  const accessToken = await exchangeCodeForToken(code);
-  const githubUser = await fetchGitHubUser(accessToken);
+  let accessToken: string;
+  let githubUser: GitHubUser;
+  try {
+    accessToken = await exchangeCodeForToken(code);
+    githubUser = await fetchGitHubUser(accessToken);
+  } catch (err) {
+    if (err instanceof UpstreamError) {
+      return c.json({ error: "GitHub API error" }, 502);
+    }
+    throw err;
+  }
 
   const userId = String(githubUser.id);
   const { login: username } = githubUser;

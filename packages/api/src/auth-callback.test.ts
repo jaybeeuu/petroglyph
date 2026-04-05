@@ -255,7 +255,7 @@ describe("POST /auth/callback", () => {
 
   // ── Behaviour 7: JWT issued RS256 with 1hr expiry ────────────────────────
 
-  it("issues an RS256 JWT with sub=userId and username claim, expiring in ~1 hour", async () => {
+  it("issues an RS256 JWT with sub=userId, iss, aud, and username claim, expiring in ~1 hour", async () => {
     setupDynamoMock(makeStateItem());
     setupFetchMock();
 
@@ -265,11 +265,16 @@ describe("POST /auth/callback", () => {
 
     const body = (await res.json()) as { jwt: string };
     const publicKey = await importSPKI(publicKeyPem, "RS256");
-    const { payload, protectedHeader } = await jwtVerify(body.jwt, publicKey);
+    const { payload, protectedHeader } = await jwtVerify(body.jwt, publicKey, {
+      issuer: "petroglyph-api",
+      audience: "petroglyph-plugin",
+    });
 
     expect(protectedHeader.alg).toBe("RS256");
     expect(payload.sub).toBe(String(GITHUB_USER_ID));
     expect(payload["username"]).toBe(GITHUB_USERNAME);
+    expect(payload.iss).toBe("petroglyph-api");
+    expect(payload.aud).toBe("petroglyph-plugin");
     expect(payload.exp).toBeGreaterThanOrEqual(before + 3600);
     expect(payload.exp).toBeLessThanOrEqual(after + 3600);
   });
@@ -335,5 +340,78 @@ describe("POST /auth/callback", () => {
     expect(typeof body.refreshToken).toBe("string");
     expect(body.refreshToken.length).toBeGreaterThan(0);
     expect(body.username).toBe(GITHUB_USERNAME);
+  });
+
+  // ── Error paths ───────────────────────────────────────────────────────────
+
+  it("returns 502 when GitHub token exchange returns a non-ok response", async () => {
+    setupDynamoMock(makeStateItem());
+    mockFetch.mockImplementation((url: string) => {
+      if (url === "https://github.com/login/oauth/access_token") {
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          json: () => Promise.resolve({ error: "bad_credentials" }),
+        } as Response);
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${String(url)}`));
+    });
+
+    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(502);
+  });
+
+  it("returns 502 when GitHub user fetch returns a non-ok response", async () => {
+    setupDynamoMock(makeStateItem());
+    mockFetch.mockImplementation((url: string) => {
+      if (url === "https://github.com/login/oauth/access_token") {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(makeGitHubTokenResponse()),
+        } as Response);
+      }
+      if (url === "https://api.github.com/user") {
+        return Promise.resolve({
+          ok: false,
+          status: 403,
+          statusText: "Forbidden",
+          json: () => Promise.resolve({ error: "forbidden" }),
+        } as Response);
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${String(url)}`));
+    });
+
+    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(502);
+  });
+
+  it("returns 500 when DynamoDB state lookup fails", async () => {
+    setupDynamoMock(makeStateItem(), { rejectGet: true });
+    setupFetchMock();
+
+    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(500);
+  });
+
+  it("returns 500 when GITHUB_CLIENT_ID is not configured", async () => {
+    setupDynamoMock(makeStateItem());
+    delete process.env["GITHUB_CLIENT_ID"];
+
+    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(500);
+  });
+
+  it("returns 500 when GITHUB_CLIENT_SECRET is not configured", async () => {
+    setupDynamoMock(makeStateItem());
+    delete process.env["GITHUB_CLIENT_SECRET"];
+
+    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(500);
   });
 });
