@@ -56,6 +56,13 @@ describe("handleAuthCallback", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("saves jwt, refreshToken and username on success and shows notice", async () => {
@@ -114,6 +121,28 @@ describe("handleAuthCallback", () => {
 
     expect(plugin.data.jwt).toBeUndefined();
     expect(Notice).toHaveBeenCalledWith("Login failed");
+  });
+
+  it("starts status polling after successful auth callback", async () => {
+    const { plugin } = await makePlugin();
+
+    const pollStatusSpy = vi.spyOn(plugin, "pollStatus").mockResolvedValue(undefined);
+    vi.spyOn(plugin, "scheduleRefresh").mockImplementation(() => {});
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        jwt: "jwt-token",
+        refreshToken: "refresh-token",
+        username: "alice",
+      }),
+    });
+
+    await plugin.handleAuthCallback({ code: "abc", state: "xyz" });
+
+    expect(pollStatusSpy).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(60_000);
+    expect(pollStatusSpy).toHaveBeenCalledOnce();
   });
 });
 
@@ -202,6 +231,52 @@ describe("loadPluginData / savePluginData", () => {
     expect(plugin.saveData).toHaveBeenCalledWith(
       expect.objectContaining({ username: "carol" }),
     );
+  });
+});
+
+describe("clearCredentials", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("removes jwt, refreshToken, and username", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      refreshToken: "refresh-token",
+      username: "alice",
+    });
+
+    plugin.clearCredentials();
+
+    expect(plugin.data.jwt).toBeUndefined();
+    expect(plugin.data.refreshToken).toBeUndefined();
+    expect(plugin.data.username).toBeUndefined();
+  });
+
+  it("resets oneDriveConnected to false", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      refreshToken: "refresh-token",
+      username: "alice",
+      oneDriveConnected: true,
+    });
+
+    plugin.clearCredentials();
+
+    expect(plugin.data.oneDriveConnected).toBe(false);
+  });
+
+  it("preserves apiBaseUrl", async () => {
+    const { plugin } = await makePlugin({
+      apiBaseUrl: "https://custom.api",
+      jwt: "jwt-token",
+      refreshToken: "refresh-token",
+      username: "alice",
+    });
+
+    plugin.clearCredentials();
+
+    expect(plugin.data.apiBaseUrl).toBe("https://custom.api");
   });
 });
 

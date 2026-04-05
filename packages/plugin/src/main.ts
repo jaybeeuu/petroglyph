@@ -38,7 +38,7 @@ export class PetroglyphPlugin extends Plugin {
   }
 
   clearCredentials(): void {
-    this._data = { apiBaseUrl: this._data.apiBaseUrl };
+    this._data = { apiBaseUrl: this._data.apiBaseUrl, oneDriveConnected: false };
   }
 
   setApiBaseUrl(url: string): void {
@@ -47,6 +47,13 @@ export class PetroglyphPlugin extends Plugin {
 
   setOneDriveConnected(connected: boolean): void {
     this._data = { ...this._data, oneDriveConnected: connected };
+  }
+
+  startStatusPolling(): void {
+    if (this._statusPollIntervalId !== null) return;
+    this._statusPollIntervalId = window.setInterval(() => {
+      void this.pollStatus();
+    }, 60_000);
   }
 
   scheduleRefresh(jwt: string): void {
@@ -121,9 +128,7 @@ export class PetroglyphPlugin extends Plugin {
 
     if (this._data.jwt !== undefined) {
       this.scheduleRefresh(this._data.jwt);
-      this._statusPollIntervalId = window.setInterval(() => {
-        void this.pollStatus();
-      }, 60_000);
+      this.startStatusPolling();
     }
   }
 
@@ -231,7 +236,7 @@ export class PetroglyphPlugin extends Plugin {
       if (!isRecord(body)) return;
       const oneDrive = body["oneDrive"];
       if (isRecord(oneDrive) && typeof oneDrive["connected"] === "boolean") {
-        this._data = { ...this._data, oneDriveConnected: oneDrive["connected"] };
+        this.setOneDriveConnected(oneDrive["connected"]);
         await this.savePluginData();
       }
     } catch {
@@ -268,6 +273,7 @@ export class PetroglyphPlugin extends Plugin {
       this.setCredentials(body.jwt, body.refreshToken, body.username);
       await this.savePluginData();
       this.scheduleRefresh(body.jwt);
+      this.startStatusPolling();
       new Notice(`Logged in as @${body.username}`);
     } catch {
       new Notice("Login failed");
