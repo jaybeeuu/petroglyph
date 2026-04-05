@@ -96,6 +96,7 @@ Each package should expose the following scripts where applicable:
 | `typecheck` | Type-check without emitting output                                         |
 | `test`      | Run unit and mocked integration tests with Vitest                          |
 | `dev`       | Start the package in development mode using `tsx` for TypeScript execution |
+| `package`   | Produce a Lambda deployment artifact (`lambda.zip`) via `pnpm build` + staging |
 
 See [docs/creating-a-package.md](docs/creating-a-package.md) for the canonical package scaffolding template.
 

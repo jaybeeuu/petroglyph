@@ -221,3 +221,4 @@ At personal-project volume, total monthly cost is expected to be **< $1**.
 | Runtime               | Node.js 24 / TypeScript                    | Consistent with monorepo                                                                                                                |
 | Subscription renewal  | Reactive via Graph lifecycle notifications | No standing scheduler; `reauthorizationRequired` triggers auto-renewal attempt; `subscriptionRemoved` prompts user reconnect via plugin |
 | Error alerting        | SQS DLQ + CW Alarm + SNS email             | Robust failure capture with near-zero cost                                                                                              |
+| Lambda packaging      | `cp -rL` to dereference symlinks before zip | pnpm stores dependencies as symlinks; Lambda cannot resolve them. The `package` script in `packages/api` stages a fully dereferenced copy before zipping. |
