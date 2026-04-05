@@ -1,3 +1,4 @@
+import { ConditionalCheckFailedException } from "@aws-sdk/client-dynamodb";
 import {
   DeleteCommand,
   GetCommand,
@@ -31,10 +32,6 @@ interface RefreshTokenItem {
 interface UserItem {
   userId: string;
   username: string;
-}
-
-interface RefreshRequestBody {
-  refreshToken: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -72,36 +69,48 @@ async function lookupRefreshToken(
   return isRefreshTokenItem(item) ? item : undefined;
 }
 
-async function markTokenSuperseded(hash: string): Promise<void> {
+async function atomicMarkTokenSuperseded(hash: string): Promise<void> {
   await docClient.send(
     new UpdateCommand({
       TableName: refreshTokensTable(),
       Key: { token: hash },
       UpdateExpression: "SET superseded = :true",
-      ExpressionAttributeValues: { ":true": true },
+      ConditionExpression:
+        "superseded = :false OR attribute_not_exists(superseded)",
+      ExpressionAttributeValues: { ":true": true, ":false": false },
     }),
   );
 }
 
 async function deleteAllUserTokens(userId: string): Promise<void> {
-  const result = await docClient.send(
-    new ScanCommand({
-      TableName: refreshTokensTable(),
-      FilterExpression: "userId = :userId",
-      ExpressionAttributeValues: { ":userId": userId },
-    }),
-  );
-  const items = result.Items ?? [];
-  await Promise.all(
-    items.map((item) =>
-      docClient.send(
-        new DeleteCommand({
-          TableName: refreshTokensTable(),
-          Key: { token: item["token"] as string },
+  let exclusiveStartKey: Record<string, unknown> | undefined;
+  do {
+    const result = await docClient.send(
+      new ScanCommand({
+        TableName: refreshTokensTable(),
+        FilterExpression: "userId = :userId",
+        ExpressionAttributeValues: { ":userId": userId },
+        ...(exclusiveStartKey !== undefined && {
+          ExclusiveStartKey: exclusiveStartKey,
         }),
-      ),
-    ),
-  );
+      }),
+    );
+    const items = result.Items ?? [];
+    await Promise.all(
+      items.map((item) => {
+        if (typeof item["token"] !== "string") return Promise.resolve();
+        return docClient.send(
+          new DeleteCommand({
+            TableName: refreshTokensTable(),
+            Key: { token: item["token"] },
+          }),
+        );
+      }),
+    );
+    exclusiveStartKey = result.LastEvaluatedKey as
+      | Record<string, unknown>
+      | undefined;
+  } while (exclusiveStartKey !== undefined);
 }
 
 async function fetchUser(userId: string): Promise<UserItem | undefined> {
@@ -155,8 +164,12 @@ async function storeNewRefreshToken(
 }
 
 export async function handleAuthRefresh(c: Context): Promise<Response> {
-  const body = await c.req.json<RefreshRequestBody>();
-  const { refreshToken } = body;
+  const body: unknown = await c.req.json();
+  const refreshToken = isRecord(body) ? body["refreshToken"] : undefined;
+
+  if (typeof refreshToken !== "string") {
+    return c.json({ error: "Missing refreshToken" }, 400);
+  }
 
   const hash = createHash("sha256").update(refreshToken).digest("hex");
   const tokenItem = await lookupRefreshToken(hash);
@@ -174,16 +187,19 @@ export async function handleAuthRefresh(c: Context): Promise<Response> {
     return c.json({ error: "Refresh token expired" }, 401);
   }
 
-  if (tokenItem.superseded) {
-    console.warn(
-      "[security] Token reuse detected for userId:",
-      tokenItem.userId,
-    );
-    await deleteAllUserTokens(tokenItem.userId);
-    return c.json({ error: "Token reuse detected" }, 401);
+  try {
+    await atomicMarkTokenSuperseded(hash);
+  } catch (err) {
+    if (err instanceof ConditionalCheckFailedException) {
+      console.warn(
+        "[security] Token reuse detected for userId:",
+        tokenItem.userId,
+      );
+      await deleteAllUserTokens(tokenItem.userId);
+      return c.json({ error: "Token reuse detected" }, 401);
+    }
+    throw err;
   }
-
-  await markTokenSuperseded(hash);
 
   const user = await fetchUser(tokenItem.userId);
   const username = user?.username ?? tokenItem.userId;

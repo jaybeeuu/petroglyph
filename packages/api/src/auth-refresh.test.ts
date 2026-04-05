@@ -1,3 +1,4 @@
+import { ConditionalCheckFailedException } from "@aws-sdk/client-dynamodb";
 import {
   DeleteCommand,
   GetCommand,
@@ -70,12 +71,27 @@ function makeUserItem(): object {
   return { userId: USER_ID, username: USERNAME };
 }
 
+function makeConditionalCheckError(): ConditionalCheckFailedException {
+  return new ConditionalCheckFailedException({
+    message: "The conditional request failed",
+    $metadata: {},
+  });
+}
+
 function setupDynamoMock(options: {
   tokenItem?: object | undefined;
   userItem?: object;
-  scanItems?: object[];
+  scanPages?: object[][];
+  updateShouldFail?: boolean;
 } = {}): void {
-  const { tokenItem, userItem = makeUserItem(), scanItems = [] } = options;
+  const {
+    tokenItem,
+    userItem = makeUserItem(),
+    scanPages = [[]],
+    updateShouldFail = false,
+  } = options;
+
+  let scanPageIndex = 0;
 
   mockSend.mockImplementation((cmd: unknown) => {
     if (cmd instanceof GetCommand) {
@@ -89,9 +105,22 @@ function setupDynamoMock(options: {
       }
       return Promise.resolve({ Item: undefined });
     }
-    if (cmd instanceof UpdateCommand) return Promise.resolve({});
+    if (cmd instanceof UpdateCommand) {
+      if (updateShouldFail) {
+        return Promise.reject(makeConditionalCheckError());
+      }
+      return Promise.resolve({});
+    }
     if (cmd instanceof PutCommand) return Promise.resolve({});
-    if (cmd instanceof ScanCommand) return Promise.resolve({ Items: scanItems });
+    if (cmd instanceof ScanCommand) {
+      const page = scanPages[scanPageIndex] ?? [];
+      const nextPage = scanPages[scanPageIndex + 1];
+      scanPageIndex++;
+      return Promise.resolve({
+        Items: page,
+        LastEvaluatedKey: nextPage !== undefined ? { token: `cursor-${scanPageIndex}` } : undefined,
+      });
+    }
     if (cmd instanceof DeleteCommand) return Promise.resolve({});
     return Promise.resolve({});
   });
@@ -119,6 +148,18 @@ describe("POST /auth/refresh", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  // ── Behaviour: missing/invalid refreshToken body → 400 ───────────────────
+
+  it("returns 400 with 'Missing refreshToken' when refreshToken is absent", async () => {
+    setupDynamoMock();
+
+    const res = await postRefresh({});
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("Missing refreshToken");
   });
 
   // ── Behaviour: token not found → 401 ─────────────────────────────────────
@@ -159,15 +200,18 @@ describe("POST /auth/refresh", () => {
 
   // ── Behaviour: superseded token → 401 + all user tokens deleted ──────────
 
-  it("returns 401 with 'Token reuse detected' and deletes all user tokens when token is superseded", async () => {
+  it("returns 401 with 'Token reuse detected' and deletes all user tokens when conditional update fails", async () => {
     const tokenHashA = "token-hash-a";
     const tokenHashB = "token-hash-b";
 
     setupDynamoMock({
-      tokenItem: makeTokenItem({ superseded: true }),
-      scanItems: [
-        { token: tokenHashA, userId: USER_ID },
-        { token: tokenHashB, userId: USER_ID },
+      tokenItem: makeTokenItem(),
+      updateShouldFail: true,
+      scanPages: [
+        [
+          { token: tokenHashA, userId: USER_ID },
+          { token: tokenHashB, userId: USER_ID },
+        ],
       ],
     });
 
@@ -189,10 +233,25 @@ describe("POST /auth/refresh", () => {
     expect(deletedKeys).toContain(tokenHashB);
   });
 
+  it("returns 401 with 'Token reuse detected' on concurrent token reuse (TOCTOU)", async () => {
+    setupDynamoMock({
+      tokenItem: makeTokenItem(),
+      updateShouldFail: true,
+      scanPages: [[]],
+    });
+
+    const res = await postRefresh({ refreshToken: randomUUID() });
+
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("Token reuse detected");
+  });
+
   it("scans the refresh tokens table by userId when detecting token reuse", async () => {
     setupDynamoMock({
-      tokenItem: makeTokenItem({ superseded: true }),
-      scanItems: [],
+      tokenItem: makeTokenItem(),
+      updateShouldFail: true,
+      scanPages: [[]],
     });
 
     await postRefresh({ refreshToken: randomUUID() });
@@ -212,6 +271,43 @@ describe("POST /auth/refresh", () => {
     ];
     expect(scanCmd.input.TableName).toBe(REFRESH_TOKENS_TABLE);
     expect(scanCmd.input.ExpressionAttributeValues[":userId"]).toBe(USER_ID);
+  });
+
+  it("follows scan pagination when purging all user tokens", async () => {
+    const tokenHashA = "token-hash-a";
+    const tokenHashB = "token-hash-b";
+
+    setupDynamoMock({
+      tokenItem: makeTokenItem(),
+      updateShouldFail: true,
+      scanPages: [
+        [{ token: tokenHashA, userId: USER_ID }],
+        [{ token: tokenHashB, userId: USER_ID }],
+      ],
+    });
+
+    await postRefresh({ refreshToken: randomUUID() });
+
+    const scanCalls = mockSend.mock.calls.filter(
+      ([cmd]) => cmd instanceof ScanCommand,
+    );
+    expect(scanCalls).toHaveLength(2);
+
+    const secondScanCmd = (
+      scanCalls[1] as [{ input: { ExclusiveStartKey?: unknown } }]
+    )[0];
+    expect(secondScanCmd.input.ExclusiveStartKey).toBeDefined();
+
+    const deleteCalls = mockSend.mock.calls.filter(
+      ([cmd]) => cmd instanceof DeleteCommand,
+    );
+    expect(deleteCalls).toHaveLength(2);
+    const deletedKeys = deleteCalls.map(
+      ([cmd]) =>
+        (cmd as { input: { Key: { token: string } } }).input.Key.token,
+    );
+    expect(deletedKeys).toContain(tokenHashA);
+    expect(deletedKeys).toContain(tokenHashB);
   });
 
   // ── Behaviour: valid rotation → 200 with new tokens ──────────────────────
