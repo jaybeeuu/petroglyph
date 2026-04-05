@@ -288,16 +288,17 @@ interface SyncProfile {
 
 ### `refresh_tokens`
 
-This table is dual-purpose: it holds both long-lived refresh tokens (issued after login) and short-lived OAuth state tokens (issued by `GET /auth/url`). The `type` attribute discriminates between them.
+This table is dual-purpose: it holds both long-lived refresh tokens (issued after login) and short-lived OAuth state tokens (issued by `GET /onedrive/auth-url`). The `type` attribute discriminates between them.
 
-| Attribute    | Type        | Description                                                                              |
-| ------------ | ----------- | ---------------------------------------------------------------------------------------- |
-| `token`      | String (PK) | Raw UUID for `oauth_state`; SHA-256 hash for `refresh_token`                             |
-| `type`       | String      | `oauth_state` \| `refresh_token`                                                         |
-| `userId`     | String?     | FK to `users` (present on `refresh_token` records; absent on `oauth_state`)              |
-| `ttl`        | Number      | Unix timestamp used as DynamoDB TTL (10 minutes for state tokens, ~90 days for sessions) |
+| Attribute    | Type        | Description                                                                                    |
+| ------------ | ----------- | ---------------------------------------------------------------------------------------------- |
+| `token`      | String (PK) | Raw UUID for `onedrive_state`; SHA-256 hash for `refresh_token`                                |
+| `type`       | String      | `onedrive_state` \| `refresh_token`                                                            |
+| `verifier`   | String?     | PKCE code verifier — present on `onedrive_state` records; absent on `refresh_token`            |
+| `userId`     | String?     | FK to `users` (present on `refresh_token` records; absent on `onedrive_state`)                 |
+| `ttl`        | Number      | Unix timestamp used as DynamoDB TTL (10 minutes for state tokens, ~90 days for sessions)       |
 | `superseded` | Boolean?    | `true` once the token has been rotated; used for atomic reuse detection — `refresh_token` only |
-| `replacedBy` | String?     | Hash of the token that replaced this one — `refresh_token` only (rotation audit)         |
+| `replacedBy` | String?     | Hash of the token that replaced this one — `refresh_token` only (rotation audit)               |
 
 ### `sync_profiles`
 
