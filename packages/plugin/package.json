@@ -9,5 +9,8 @@
     "lint": "eslint .",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "obsidian": "^1.12.3"
   }
 }
