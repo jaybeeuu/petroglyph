@@ -4,6 +4,7 @@ import { verifyJwt } from "./jwt.js";
 export interface AppVariables {
   userId: string;
   username: string;
+  onedriveAccessToken: string | undefined;
 }
 
 export const authMiddleware: MiddlewareHandler<{

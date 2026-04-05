@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { handleAuthCallback } from "./auth-callback.js";
 import { handleAuthRefresh } from "./auth-refresh.js";
 import { authMiddleware, type AppVariables } from "./auth-middleware.js";
+import { onedriveMiddleware } from "./onedrive-middleware.js";
 import { handleOnedriveAuthUrl } from "./onedrive-auth-url.js";
 import { handleStatus } from "./status.js";
 import { docClient } from "./db.js";
@@ -64,5 +65,7 @@ app.post("/auth/refresh", (c) => handleAuthRefresh(c));
 app.get("/status", (c) => handleStatus(c));
 
 app.get("/onedrive/auth-url", (c) => handleOnedriveAuthUrl(c));
+
+app.use("/onedrive/*", (c, next) => onedriveMiddleware(c, next));
 
 export { app };
