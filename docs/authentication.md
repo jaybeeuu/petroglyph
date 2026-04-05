@@ -39,8 +39,8 @@ sequenceDiagram
     CloudAPI->>GitHub: GET /user (GitHub API)
     GitHub-->>CloudAPI: user profile
     Note over CloudAPI: create/lookup user<br/>issue JWT + refresh token
-    CloudAPI-->>Plugin: { accessToken, refreshToken }
-    Note over Plugin: store both in plugin settings
+    CloudAPI-->>Plugin: { jwt, refreshToken, username }
+    Note over Plugin: store jwt, refreshToken, username<br/>via Obsidian saveData API
 ```
 
 1. Plugin opens browser to GitHub's OAuth authorisation URL.
@@ -50,9 +50,9 @@ sequenceDiagram
 5. Cloud API exchanges the code for a GitHub access token, calls `GET /user` to retrieve the user's GitHub ID and username.
 6. Cloud API creates (or looks up) the user record in DynamoDB. The GitHub token is discarded.
 7. Cloud API issues:
-   - A short-lived **JWT** (access token, signed with a server secret, TTL ~1 hour).
+   - A short-lived **JWT** (access token, signed with the server's private key, TTL ~1 hour).
    - A long-lived **refresh token** (opaque, stored hashed in DynamoDB, TTL ~90 days).
-8. Plugin stores both tokens in its settings.
+8. Plugin stores `jwt`, `refreshToken`, and `username` via Obsidian's `saveData` API (written to the plugin's local data file — not `localStorage`).
 
 ### Session Lifecycle
 
@@ -65,6 +65,18 @@ What the service manages is its own session:
 - Refresh tokens **rotate on use**: each refresh issues a new token and invalidates the previous one. A reused superseded token indicates a replay attack and immediately invalidates all active sessions for the user.
 - Refresh tokens are stored hashed in DynamoDB with a TTL attribute; DynamoDB TTL handles expiry cleanup.
 - When the cloud API refresh token expires, the plugin surfaces a "Re-connect your account" prompt on next open and re-initiates the GitHub OAuth flow.
+
+### JWT Verification Middleware
+
+All authenticated API routes are protected by `authMiddleware` (`packages/api/src/auth-middleware.ts`). For every request it:
+
+1. Reads the `Authorization: Bearer <token>` header. Returns `401` if absent or malformed.
+2. Calls `verifyJwt` (`packages/api/src/jwt.ts`), which:
+   - Reads the RS256 public key from the `JWT_PUBLIC_KEY` environment variable, or falls back to SSM at `JWT_PUBLIC_KEY_SSM_PATH` (default: `/petroglyph/jwt/public-key`).
+   - Caches the imported `CryptoKey` at module level so subsequent requests within the same Lambda process skip the fetch and import.
+   - Verifies the token signature, algorithm (`RS256`), and required claims (`sub`, `username`).
+3. On success, injects `userId` (from `sub`) and `username` into the Hono context variables, making them available to downstream route handlers as `c.var.userId` and `c.var.username`.
+4. On any failure (missing token, invalid signature, expired token, missing claims), returns `401 { "error": "UNAUTHORIZED" }`.
 
 ### GitHub OAuth App Registration
 
@@ -253,7 +265,7 @@ All parameters use the prefix `/petroglyph/`.
 | ------------------------------------------- | ------------ | ----------------------------------------------------------------------------- |
 | `/petroglyph/github/oauth/client-id`        | String       | GitHub OAuth App client ID                                                    |
 | `/petroglyph/github/oauth/client-secret`    | SecureString | GitHub OAuth App client secret                                                |
-| `/petroglyph/jwt/signing-secret`            | SecureString | HMAC secret for signing JWTs                                                  |
+| `/petroglyph/jwt/public-key`                | String       | RS256 public key (PEM) for verifying JWTs                                     |
 | `/petroglyph/microsoft/entra/client-id`     | String       | Entra ID app client ID                                                        |
 | `/petroglyph/microsoft/entra/client-secret` | SecureString | Entra ID app client secret                                                    |
 | `/petroglyph/onedrive/access-token`         | SecureString | Current OneDrive access token                                                 |
@@ -273,6 +285,6 @@ All parameters use the prefix `/petroglyph/`.
 - **Client secrets** never leave the cloud service. The Entra ID client secret and GitHub OAuth client secret are stored in SSM and only accessed by Lambda functions. The plugin never sees them.
 - **PKCE** is used for the OneDrive OAuth flow, preventing authorisation code interception attacks even though the app is a public client.
 - **Refresh token rotation** detects replay attacks: using a superseded refresh token immediately invalidates all active sessions for the user.
-- **JWT signing secret** is stored in SSM and rotated independently of user sessions; rotation invalidates all active JWTs (users re-authenticate on next API call via the refresh token).
+- **JWT key pair** uses RS256 (asymmetric). The public key is stored in SSM at `/petroglyph/jwt/public-key` (or overridden via `JWT_PUBLIC_KEY` env var) and is imported once at module level (cached for the lifetime of the Lambda process). Rotation of the key pair invalidates all active JWTs; users re-authenticate on the next API call via the refresh token.
 - **SSM SecureString** parameters are encrypted at rest using AWS KMS. Access is restricted to the Lambda execution roles via IAM.
 - **CSRF protection via server-side state tokens**: `GET /auth/url` generates a UUID state token, stores it in DynamoDB (`refresh_tokens` table, `type=oauth_state`, TTL 10 minutes), and includes it in the GitHub OAuth URL. The callback handler validates the state against DynamoDB rather than plugin in-memory state, so validation survives any plugin restart or context loss during the OAuth redirect.

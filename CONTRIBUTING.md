@@ -149,6 +149,14 @@ If all five pass locally, they should pass in CI.
 
 Follow the instructions in [docs/creating-a-package.md](docs/creating-a-package.md).
 
+## Plugin Development
+
+The `plugin` package depends on the Obsidian API, which is only available inside a running Obsidian instance.
+Tests use a manual mock at `packages/plugin/src/__mocks__/obsidian.ts` that stubs the Obsidian classes and APIs needed by the plugin.
+Vitest automatically picks up `__mocks__` directories adjacent to the source files, so no explicit `vi.mock` call is needed in test files.
+
+When adding tests that touch new Obsidian APIs, extend the mock first.
+
 ## Troubleshooting
 
 | Symptom                              | Likely cause                           | Fix                                           |
