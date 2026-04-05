@@ -130,7 +130,7 @@ The plugin periodically calls `GET /status` to determine the current connection 
 | ----- | ---- | ----------- |
 | `github.connected` | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity. |
 | `github.username` | string | The GitHub login extracted from the JWT `username` claim. |
-| `oneDrive.connected` | boolean | `true` if the user's OneDrive token is active; `false` if disconnected or never connected. |
+| `oneDrive.connected` | boolean | `true` if the user has an active OneDrive connection (`oneDriveConnected === true` on the `sync_profiles` DynamoDB record); `false` if the record is absent, the field is false, or a DynamoDB error occurs. |
 
 Unauthenticated requests (missing or invalid JWT) return `401 { "error": "UNAUTHORIZED" }` from the auth middleware before the handler is reached.
 
@@ -309,7 +309,7 @@ This table is dual-purpose: it holds both long-lived refresh tokens (issued afte
 | Attribute     | Type         | Description                      |
 | ------------- | ------------ | -------------------------------- |
 | `userId`      | String (PK)  | FK to `users`                    |
-| `profileId`   | String (SK)  | UUID                             |
+| `profileId`   | String (SK)  | Profile identifier. The default profile uses the literal value `"default"`; additional profiles use UUIDs. |
 | `name`        | String       | Human-readable profile name      |
 | `source`      | Map          | Provider, folder path, folder ID |
 | `destination` | Map          | Vault path                       |
