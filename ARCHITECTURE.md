@@ -50,11 +50,6 @@ Onyx Boox Note Air 5C
                                                   │
                                                   ▼
                                          Obsidian Vault
-                                                  │
-                                         obsidian-git / native sync
-                                                  │
-                                                  ▼
-                                          GitHub Repository
 ```
 
 ---
@@ -148,7 +143,7 @@ Lives in this monorepo during initial development. Will be extracted to its own 
 
 ### 3. GitHub Integration
 
-The vault is a GitHub-backed Obsidian repository. The plugin writes files to the local vault; committing to GitHub is handled by **obsidian-git** (or Obsidian's native sync) — the cloud service does not commit to GitHub directly in Phase 1.
+The plugin writes files to the local vault; how the user syncs or backs up their vault is their own concern — the cloud service does not write to the vault directly.
 
 A **GitHub App** (rather than a PAT) is registered for the service. This gives fine-grained repository permissions and a clear audit trail, and prepares the service for any future phase where cloud-side commits are needed.
 
@@ -230,7 +225,7 @@ At personal-project volume, total monthly cost is expected to be **< $1**.
 | --------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
 | Webhook vs polling    | Webhook (Graph change notifications)       | Near-realtime, no polling overhead                                                                                                      |
 | Webhook + manual sync | Safety net for missed notifications        | Reliability without scheduled cost                                                                                                      |
-| Plugin architecture   | Plugin pulls, cloud stages                 | Decouples vault writes from cloud service; lets obsidian-git own commits                                                                |
+| Plugin architecture   | Plugin pulls, cloud stages                 | Decouples vault writes from cloud service                                                                                               |
 | File transfer         | Pre-signed S3 URLs                         | Avoids proxying bytes through Lambda                                                                                                    |
 | Compute               | Lambda                                     | Zero cost at rest, scales to zero                                                                                                       |
 | State store           | DynamoDB                                   | Serverless, zero cost at rest                                                                                                           |
