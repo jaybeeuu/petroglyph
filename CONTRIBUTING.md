@@ -125,7 +125,7 @@ Set the appropriate variables in your `.env` and follow the package-level instru
 
 ## CD Secrets
 
-The CD workflow (`.github/workflows/cd.yml`) requires three GitHub Actions secrets to be configured on the repository:
+The CD workflow (`.github/workflows/cd.yml`) requires three GitHub Actions secrets to be configured on the repository. For full deployment and infrastructure setup instructions, see [docs/ops.md](docs/ops.md).
 
 | Secret                  | Description                                                   |
 | ----------------------- | ------------------------------------------------------------- |
