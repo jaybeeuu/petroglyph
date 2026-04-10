@@ -149,6 +149,8 @@ The key local commands that align with CI jobs:
 
 If all five pass locally, they should pass in CI.
 
+Branch protection on `main` requires all five checks to pass before a pull request can be merged.
+
 ## Code Style
 
 - TypeScript strict mode is on by default.
