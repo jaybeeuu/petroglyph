@@ -10,37 +10,58 @@ Terraform configuration for the Petroglyph AWS infrastructure.
 
 ## Bootstrap (first time only)
 
-The S3 remote state backend and DynamoDB lock table must be created **once** before
-Terraform can manage its own state. Because these resources bootstrap Terraform itself
-they are created manually (or via the AWS CLI) rather than by this configuration.
-
-### Create the state bucket
+The S3 remote state backend, DynamoDB lock table, and Lambda artifact bucket must be
+created **once** before Terraform can manage its own state. Run the bootstrap script:
 
 ```bash
+./scripts/bootstrap.sh --profile petroglyph-admin
+```
+
+The script is idempotent — safe to re-run. It creates all prerequisite resources,
+runs `terraform init`, selects the workspace, applies, and verifies all expected
+resources exist. At the end it prints the values needed as GitHub Actions secrets.
+
+S3 bucket names include the AWS account ID to guarantee global uniqueness, e.g.:
+- `petroglyph-terraform-state-<ACCOUNT_ID>`
+- `petroglyph-lambda-artifacts-<ACCOUNT_ID>`
+
+### Manual bootstrap (reference)
+
+If you need to create the bootstrap resources by hand:
+
+#### Create the state bucket
+
+```bash
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --profile petroglyph-admin)
+
 aws s3api create-bucket \
-  --bucket petroglyph-terraform-state \
+  --bucket petroglyph-terraform-state-${ACCOUNT_ID} \
   --region eu-west-2 \
-  --create-bucket-configuration LocationConstraint=eu-west-2
+  --create-bucket-configuration LocationConstraint=eu-west-2 \
+  --profile petroglyph-admin
 
 # Enable versioning so previous state files are recoverable
 aws s3api put-bucket-versioning \
-  --bucket petroglyph-terraform-state \
-  --versioning-configuration Status=Enabled
+  --bucket petroglyph-terraform-state-${ACCOUNT_ID} \
+  --versioning-configuration Status=Enabled \
+  --profile petroglyph-admin
 
 # Block all public access
 aws s3api put-public-access-block \
-  --bucket petroglyph-terraform-state \
+  --bucket petroglyph-terraform-state-${ACCOUNT_ID} \
   --public-access-block-configuration \
-    BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+    BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true \
+  --profile petroglyph-admin
 
 # Enable default encryption
 aws s3api put-bucket-encryption \
-  --bucket petroglyph-terraform-state \
+  --bucket petroglyph-terraform-state-${ACCOUNT_ID} \
   --server-side-encryption-configuration \
-    '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+    '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}' \
+  --profile petroglyph-admin
 ```
 
-### Create the DynamoDB lock table
+#### Create the DynamoDB lock table
 
 ```bash
 aws dynamodb create-table \
@@ -48,7 +69,8 @@ aws dynamodb create-table \
   --attribute-definitions AttributeName=LockID,AttributeType=S \
   --key-schema AttributeName=LockID,KeyType=HASH \
   --billing-mode PAY_PER_REQUEST \
-  --region eu-west-2
+  --region eu-west-2 \
+  --profile petroglyph-admin
 ```
 
 ## Initialise
