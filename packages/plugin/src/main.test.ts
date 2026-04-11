@@ -2,16 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { App, PluginManifest } from "obsidian";
 
 vi.mock("obsidian", () => ({
-  Notice: vi.fn(),
+  Notice: Notice,
   Plugin: class {
     constructor(_app: unknown, _manifest: unknown) {}
   },
   PluginSettingTab: class {},
   App: class {},
   Setting: class {},
+  normalizePath: (path: string) => path,
 }));
 
-const { Notice } = await import("obsidian");
+const Notice = vi.fn();
 
 function makeTestJwt(exp: number): string {
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
@@ -820,5 +821,349 @@ describe("oauth/callback URI handler registration", () => {
       "petroglyph/oauth/callback",
       expect.any(Function),
     );
+  });
+});
+
+describe("sync poller", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("starts sync polling when oneDrive is connected on load", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+    await plugin.onload();
+
+    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 5 * 60 * 1000);
+  });
+
+  it("does not start sync polling when oneDrive is not connected", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: false,
+    });
+
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+    await plugin.onload();
+
+    const syncCalls = setIntervalSpy.mock.calls.filter(
+      (call) => call[1] === 5 * 60 * 1000,
+    );
+    expect(syncCalls).toHaveLength(0);
+  });
+
+  it("stops sync polling on unload", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+
+    const clearIntervalSpy = vi.spyOn(window, "clearInterval");
+    await plugin.onload();
+    plugin.onunload();
+
+    expect(clearIntervalSpy).toHaveBeenCalled();
+  });
+
+  it("fetches files and writes to vault on sync", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+
+    const mockPdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+    global.fetch = vi.fn((url) => {
+      if (typeof url === "string" && url.includes("/files/changes")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            files: [
+              {
+                fileId: "file-1",
+                s3PresignedUrl: "https://s3.example.com/file.pdf",
+                filename: "note.pdf",
+                createdAt: "2026-04-11T10:00:00Z",
+                pageCount: 3,
+              },
+            ],
+            nextToken: null,
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: async () => mockPdfBytes.buffer,
+      });
+    }) as typeof fetch;
+
+    const mockVault = {
+      adapter: {
+        exists: vi.fn(async () => false),
+        mkdir: vi.fn(async () => {}),
+        writeBinary: vi.fn(async () => {}),
+        write: vi.fn(async () => {}),
+      },
+    };
+
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: mockVault };
+
+    await plugin.performSync();
+
+    expect(mockVault.adapter.writeBinary).toHaveBeenCalledWith(
+      "handwritten/note.pdf",
+      expect.any(Uint8Array),
+    );
+    expect(mockVault.adapter.write).toHaveBeenCalledWith(
+      "handwritten/note.md",
+      expect.stringContaining("source: onedrive"),
+    );
+    expect(mockVault.adapter.write).toHaveBeenCalledWith(
+      "handwritten/note.md",
+      expect.stringContaining("page_count: 3"),
+    );
+  });
+
+  it("advances token after each file write", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+
+    global.fetch = vi.fn((url) => {
+      if (typeof url === "string" && url.includes("/files/changes")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            files: [
+              {
+                fileId: "file-1",
+                s3PresignedUrl: "https://s3.example.com/file1.pdf",
+                filename: "note1.pdf",
+                createdAt: "2026-04-11T10:00:00Z",
+              },
+              {
+                fileId: "file-2",
+                s3PresignedUrl: "https://s3.example.com/file2.pdf",
+                filename: "note2.pdf",
+                createdAt: "2026-04-11T11:00:00Z",
+              },
+            ],
+            nextToken: null,
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(4),
+      });
+    }) as typeof fetch;
+
+    const mockVault = {
+      adapter: {
+        exists: vi.fn(async () => true),
+        mkdir: vi.fn(async () => {}),
+        writeBinary: vi.fn(async () => {}),
+        write: vi.fn(async () => {}),
+      },
+    };
+
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: mockVault };
+
+    await plugin.performSync();
+
+    expect(plugin.saveData).toHaveBeenCalledTimes(2);
+    expect(plugin.data.changeTokens?.["default"]).toBe("file-2");
+  });
+
+  it("handles resetToken flag by clearing stored token", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      changeTokens: { default: "old-token" },
+    });
+
+    global.fetch = vi.fn((url) => {
+      if (typeof url === "string" && url.includes("/files/changes")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            resetToken: true,
+            files: [
+              {
+                fileId: "file-1",
+                s3PresignedUrl: "https://s3.example.com/file1.pdf",
+                filename: "note1.pdf",
+                createdAt: "2026-04-11T10:00:00Z",
+              },
+            ],
+            nextToken: null,
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(4),
+      });
+    }) as typeof fetch;
+
+    const mockVault = {
+      adapter: {
+        exists: vi.fn(async () => true),
+        mkdir: vi.fn(async () => {}),
+        writeBinary: vi.fn(async () => {}),
+        write: vi.fn(async () => {}),
+      },
+    };
+
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: mockVault };
+
+    await plugin.performSync();
+
+    expect(plugin.data.changeTokens?.["default"]).toBe("file-1");
+  });
+
+  it("pages through multiple responses using nextToken", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+
+    let callCount = 0;
+    global.fetch = vi.fn((url) => {
+      if (typeof url === "string" && url.includes("/files/changes")) {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              files: [
+                {
+                  fileId: "file-1",
+                  s3PresignedUrl: "https://s3.example.com/file1.pdf",
+                  filename: "note1.pdf",
+                  createdAt: "2026-04-11T10:00:00Z",
+                },
+              ],
+              nextToken: "page-2-token",
+            }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            files: [
+              {
+                fileId: "file-2",
+                s3PresignedUrl: "https://s3.example.com/file2.pdf",
+                filename: "note2.pdf",
+                createdAt: "2026-04-11T11:00:00Z",
+              },
+            ],
+            nextToken: null,
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(4),
+      });
+    }) as typeof fetch;
+
+    const mockVault = {
+      adapter: {
+        exists: vi.fn(async () => true),
+        mkdir: vi.fn(async () => {}),
+        writeBinary: vi.fn(async () => {}),
+        write: vi.fn(async () => {}),
+      },
+    };
+
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: mockVault };
+
+    await plugin.performSync();
+
+    expect(mockVault.adapter.writeBinary).toHaveBeenCalledTimes(2);
+    expect(plugin.data.changeTokens?.["default"]).toBe("file-2");
+  });
+
+  it("creates missing vault folders before writing files", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+
+    global.fetch = vi.fn((url) => {
+      if (typeof url === "string" && url.includes("/files/changes")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            files: [
+              {
+                fileId: "file-1",
+                s3PresignedUrl: "https://s3.example.com/file.pdf",
+                filename: "subfolder/note.pdf",
+                createdAt: "2026-04-11T10:00:00Z",
+              },
+            ],
+            nextToken: null,
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(4),
+      });
+    }) as typeof fetch;
+
+    const mockVault = {
+      adapter: {
+        exists: vi.fn(async () => false),
+        mkdir: vi.fn(async () => {}),
+        writeBinary: vi.fn(async () => {}),
+        write: vi.fn(async () => {}),
+      },
+    };
+
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: mockVault };
+
+    await plugin.performSync();
+
+    expect(mockVault.adapter.mkdir).toHaveBeenCalledWith("handwritten/subfolder");
+  });
+
+  it("starts sync polling when OneDrive is connected via callback", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+    });
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+    });
+
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+
+    await plugin.handleOneDriveCallback({ code: "auth-code", state: "state" });
+
+    const syncCalls = setIntervalSpy.mock.calls.filter(
+      (call) => call[1] === 5 * 60 * 1000,
+    );
+    expect(syncCalls.length).toBeGreaterThan(0);
   });
 });
