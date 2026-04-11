@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
-# Bootstrap Petroglyph AWS infrastructure.
+# Bootstrap Petroglyph AWS prerequisites for Terraform.
 #
-# Creates the Terraform remote state bucket, DynamoDB lock table, and Lambda
-# artifact bucket, then runs terraform init, workspace setup, plan, apply, and
-# verification checks.  All operations are idempotent — safe to re-run.
+# Creates (or verifies) the resources that must exist *before* Terraform can
+# manage its own backend: the remote state S3 bucket, the DynamoDB lock table,
+# and the Lambda artifact bucket (including a placeholder zip so the first
+# terraform apply has a valid object to reference).
+#
+# This script does NOT run terraform.  After running bootstrap, use
+# `pnpm tf:apply` (or `./scripts/tf-apply.sh`) to initialise Terraform and
+# provision application infrastructure.
+#
+# All operations are idempotent — safe to re-run.
 #
 # Usage:
-#   ./bootstrap.sh [--profile <aws-profile>] [--workspace <terraform-workspace>]
+#   ./bootstrap.sh [--profile <aws-profile>]
 #
 # Defaults:
 #   --profile    petroglyph-admin
-#   --workspace  production
 
 set -euo pipefail
 
 # ── Defaults ────────────────────────────────────────────────────────────────
 
 PROFILE="petroglyph-admin"
-WORKSPACE="production"
 REGION="eu-west-2"
 
 # ── Argument parsing ─────────────────────────────────────────────────────────
@@ -25,7 +30,6 @@ REGION="eu-west-2"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile)   PROFILE="$2";   shift 2 ;;
-    --workspace) WORKSPACE="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -38,24 +42,6 @@ export AWS_PAGER=""
 info()    { echo "▶  $*"; }
 success() { echo "✓  $*"; }
 fail()    { echo "✗  $*" >&2; exit 1; }
-
-assert_eq() {
-  local label="$1" expected="$2" actual="$3"
-  if [[ "$actual" == "$expected" ]]; then
-    success "$label"
-  else
-    fail "$label — expected '$expected', got '$actual'"
-  fi
-}
-
-assert_contains() {
-  local label="$1" needle="$2" haystack="$3"
-  if echo "$haystack" | grep -q "$needle"; then
-    success "$label"
-  else
-    fail "$label — '$needle' not found in output"
-  fi
-}
 
 # ── Step 1: Verify credentials ────────────────────────────────────────────────
 
@@ -132,7 +118,7 @@ else
   success "Lambda artifact bucket created"
 fi
 
-# ── Step 7: Upload placeholder Lambda zip ────────────────────────────────────
+# ── Step 5: Upload placeholder Lambda zip ────────────────────────────────────
 
 PLACEHOLDER_KEY="placeholder/lambda.zip"
 
@@ -155,111 +141,14 @@ with zipfile.ZipFile('$TMPDIR/lambda.zip', 'w') as z:
   success "Placeholder zip uploaded"
 fi
 
-# ── Step 8: Terraform init ────────────────────────────────────────────────────
-
-INFRA_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$INFRA_DIR"
-
-info "Running terraform init..."
-AWS_PROFILE="$PROFILE" terraform init \
-  -backend-config="bucket=$TF_STATE_BUCKET" \
-  -backend-config="key=$TF_STATE_KEY" \
-  -backend-config="region=$REGION" \
-  -backend-config="dynamodb_table=$DYNAMODB_LOCK_TABLE" \
-  -backend-config="encrypt=true" \
-  -reconfigure
-success "Terraform init complete"
-
-# ── Step 6: Workspace ─────────────────────────────────────────────────────────
-
-info "Selecting workspace: $WORKSPACE..."
-AWS_PROFILE="$PROFILE" terraform workspace select "$WORKSPACE" 2>/dev/null \
-  || AWS_PROFILE="$PROFILE" terraform workspace new "$WORKSPACE"
-success "Workspace: $WORKSPACE"
-
-# ── Step 7: Plan (assert no destroys) ────────────────────────────────────────
-
-info "Running terraform plan..."
-PLAN_OUT=$(AWS_PROFILE="$PROFILE" terraform plan \
-  -var="api_zip_s3_bucket=$LAMBDA_ARTIFACT_BUCKET" \
-  -var="api_zip_s3_key=$PLACEHOLDER_KEY" \
-  -no-color 2>&1)
-
-if echo "$PLAN_OUT" | grep -qE "[1-9][0-9]* to destroy"; then
-  fail "Plan contains destroys — aborting. Review the plan:\n$PLAN_OUT"
-fi
-success "Plan contains no destroys"
-
-# ── Step 8: Apply ─────────────────────────────────────────────────────────────
-
-info "Running terraform apply..."
-AWS_PROFILE="$PROFILE" terraform apply \
-  -var="api_zip_s3_bucket=$LAMBDA_ARTIFACT_BUCKET" \
-  -var="api_zip_s3_key=$PLACEHOLDER_KEY" \
-  -auto-approve
-success "Apply complete"
-
-# ── Step 9: Verification ──────────────────────────────────────────────────────
-
-info "Running verification checks..."
-
-# DynamoDB tables (expect 4)
-TABLES=$($AWS dynamodb list-tables --query 'TableNames[?contains(@, `petroglyph`)]' --output text)
-for table in \
-  "petroglyph-file-records-${WORKSPACE}" \
-  "petroglyph-refresh-tokens-${WORKSPACE}" \
-  "petroglyph-sync-profiles-${WORKSPACE}" \
-  "petroglyph-users-${WORKSPACE}"; do
-  assert_contains "DynamoDB table: $table" "$table" "$TABLES"
-done
-
-# S3 bucket
-$AWS s3api head-bucket --bucket "petroglyph-staged-pdfs-${WORKSPACE}" \
-  && success "S3 bucket: petroglyph-staged-pdfs-${WORKSPACE}" \
-  || fail "S3 bucket not found: petroglyph-staged-pdfs-${WORKSPACE}"
-
-# S3 lifecycle rule
-LIFECYCLE=$($AWS s3api get-bucket-lifecycle-configuration \
-  --bucket "petroglyph-staged-pdfs-${WORKSPACE}" --output text 2>&1)
-assert_contains "S3 lifecycle rule enabled" "Enabled" "$LIFECYCLE"
-
-# SSM parameters
-PARAMS=$($AWS ssm get-parameters-by-path \
-  --path /petroglyph/ --recursive \
-  --query 'Parameters[].Name' --output text)
-PARAM_COUNT=$(echo "$PARAMS" | wc -w)
-if [[ "$PARAM_COUNT" -ge 12 ]]; then
-  success "SSM parameters: $PARAM_COUNT found (expected 12)"
-else
-  fail "SSM parameters: expected 12, got $PARAM_COUNT"
-fi
-
-# IAM roles
-for role in \
-  "petroglyph-api-${WORKSPACE}" \
-  "petroglyph-ingest-onedrive-${WORKSPACE}" \
-  "petroglyph-processor-${WORKSPACE}"; do
-  $AWS iam get-role --role-name "$role" --query 'Role.RoleName' --output text &>/dev/null \
-    && success "IAM role: $role" \
-    || fail "IAM role not found: $role"
-done
-
-# ── Step 10: Idempotency check ────────────────────────────────────────────────
-
-info "Idempotency check (second apply)..."
-IDEMPOTENT_OUT=$(AWS_PROFILE="$PROFILE" terraform apply \
-  -var="api_zip_s3_bucket=$LAMBDA_ARTIFACT_BUCKET" \
-  -var="api_zip_s3_key=$PLACEHOLDER_KEY" \
-  -auto-approve \
-  -no-color 2>&1)
-assert_contains "Idempotency" "No changes" "$IDEMPOTENT_OUT"
-
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 echo ""
-echo "════════════════════════════════════════════════════════"
-echo "  Bootstrap complete. Record these values for dv4.13:"
+echo "════════════════════════════════════════════════════════════════"
+echo "  Bootstrap complete."
 echo ""
-echo "  TF_STATE_BUCKET      = $TF_STATE_BUCKET"
+echo "  TF_STATE_BUCKET        = $TF_STATE_BUCKET"
 echo "  LAMBDA_ARTIFACT_BUCKET = $LAMBDA_ARTIFACT_BUCKET"
-echo "════════════════════════════════════════════════════════"
+echo ""
+echo "  Next step: pnpm tf:apply --profile $PROFILE"
+echo "════════════════════════════════════════════════════════════════"
