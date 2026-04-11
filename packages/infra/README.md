@@ -121,3 +121,24 @@ terraform apply
 > Terraform automatically namespaces state files per workspace under
 > `env:/<workspace>/petroglyph/terraform.tfstate` (for non-default workspaces),
 > so each workspace has its own isolated state file in the same bucket.
+
+## Troubleshooting
+
+### Apply fails mid-run → tainted resource
+
+If `terraform apply` fails partway through (e.g. a permissions error on one resource), Terraform marks the partially-created resource as **tainted**. The next `plan` will include a destroy-then-recreate for it, which will trip the bootstrap script's destroy guard.
+
+To recover, untaint the resource and re-run:
+
+```bash
+terraform untaint <resource_address>
+# e.g.:
+terraform untaint aws_lambda_function.petroglyph_api
+./scripts/bootstrap.sh --profile petroglyph-admin
+```
+
+### Lambda concurrency error on new accounts
+
+New AWS accounts have a default regional Lambda concurrency limit of **10**. AWS requires at least 10 concurrency units to remain unreserved, so you cannot set `reserved_concurrent_executions` to 10 on a single function.
+
+The config intentionally omits `reserved_concurrent_executions` for this reason. If you have requested a higher concurrency limit, you can add it back to `lambda_api.tf`.
