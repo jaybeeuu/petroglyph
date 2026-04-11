@@ -68,9 +68,19 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+      - name: Compute artifact content hash
+        id: artifact-hash
+        run: |
+          HASH=$(sha256sum packages/api/lambda.zip | cut -d' ' -f1)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
       - name: Upload lambda zip to S3
         run: |
-          aws s3 cp packages/api/lambda.zip s3://${{ secrets.LAMBDA_ARTIFACT_BUCKET }}/lambda-${{ github.sha }}.zip
+          KEY="lambda-${{ steps.artifact-hash.outputs.hash }}.zip"
+          if aws s3api head-object --bucket ${{ secrets.LAMBDA_ARTIFACT_BUCKET }} --key "$KEY" 2>/dev/null; then
+            echo "Artifact already exists at $KEY — skipping upload"
+          else
+            aws s3 cp packages/api/lambda.zip s3://${{ secrets.LAMBDA_ARTIFACT_BUCKET }}/$KEY
+          fi
       - uses: hashicorp/setup-terraform@v3
       - name: Terraform init
         working-directory: packages/infra
@@ -90,4 +100,4 @@ jobs:
         run: |
           terraform apply -auto-approve \
             -var="api_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
-            -var="api_zip_s3_key=lambda-${{ github.sha }}.zip"
+            -var="api_zip_s3_key=lambda-${{ steps.artifact-hash.outputs.hash }}.zip"

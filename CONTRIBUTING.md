@@ -125,7 +125,7 @@ Set the appropriate variables in your `.env` and follow the package-level instru
 
 ## CD Secrets
 
-The CD workflow (`.github/workflows/cd.yml`) requires three GitHub Actions secrets to be configured on the repository. For full deployment and infrastructure setup instructions, see [docs/ops.md](docs/ops.md).
+The CD workflow (`.github/workflows/cd.yml`) requires three GitHub Actions secrets to be configured on the `production` environment. For full deployment and infrastructure setup instructions, see [docs/ops.md](docs/ops.md).
 
 | Secret                  | Description                                                   |
 | ----------------------- | ------------------------------------------------------------- |
@@ -134,6 +134,19 @@ The CD workflow (`.github/workflows/cd.yml`) requires three GitHub Actions secre
 | `LAMBDA_ARTIFACT_BUCKET`| S3 bucket name used to store Lambda deployment ZIP artifacts  |
 
 `TF_STATE_BUCKET` and `LAMBDA_ARTIFACT_BUCKET` may point to the same bucket or separate buckets depending on your infrastructure setup.
+
+The `deploy` job targets the `production` GitHub Actions environment. Configure that environment so only `main` can deploy, and add any required reviewers or other protection rules there.
+
+## CD Artifact Versioning
+
+Lambda deployment ZIPs are stored in `LAMBDA_ARTIFACT_BUCKET` using a **content-hash key**: `lambda-<sha256>.zip`, where `<sha256>` is the SHA-256 digest of the ZIP file produced by `pnpm --filter @petroglyph/api package`.
+
+This means:
+
+- **No-op deploys**: If a merge to `main` changes no application code (e.g., docs-only or infra-only change), the packaged ZIP is identical to the previous one. The CD workflow detects that the content-hash key already exists in S3 and skips the upload. Terraform sees the same `api_zip_s3_key` as the previous run and produces a no-op `apply` for the Lambda function.
+- **Code changes**: When application code changes, the ZIP content differs, producing a new SHA-256 digest and a new S3 key. Terraform detects the key change and updates the Lambda function.
+
+The content-hash key is computed and exposed as a step output (`steps.artifact-hash.outputs.hash`) in the `deploy` job before the upload and Terraform steps run.
 
 ## CI Alignment
 
