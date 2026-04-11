@@ -17,8 +17,10 @@ resource "aws_lambda_function" "petroglyph_api" {
 
   role = aws_iam_role.petroglyph_api_role.arn
 
-  timeout                        = 30
-  reserved_concurrent_executions = 10
+  timeout = 30
+  # reserved_concurrent_executions omitted — new accounts have a default
+  # regional limit of 10 total, which can't all be reserved for one function.
+  # Set this once you've requested a concurrency limit increase.
 
   environment {
     variables = {

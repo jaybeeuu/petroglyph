@@ -31,6 +31,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 AWS="aws --profile $PROFILE --region $REGION"
+export AWS_PAGER=""
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -131,7 +132,30 @@ else
   success "Lambda artifact bucket created"
 fi
 
-# ── Step 5: Terraform init ────────────────────────────────────────────────────
+# ── Step 7: Upload placeholder Lambda zip ────────────────────────────────────
+
+PLACEHOLDER_KEY="placeholder/lambda.zip"
+
+info "Checking for placeholder Lambda zip in $LAMBDA_ARTIFACT_BUCKET..."
+if $AWS s3api head-object --bucket "$LAMBDA_ARTIFACT_BUCKET" --key "$PLACEHOLDER_KEY" &>/dev/null; then
+  success "Placeholder zip already exists"
+else
+  info "Creating and uploading minimal placeholder Lambda zip..."
+  TMPDIR=$(mktemp -d)
+  cat > "$TMPDIR/index.js" << 'EOF'
+exports.handler = async () => ({ statusCode: 200, body: '{"status":"placeholder"}' });
+EOF
+  python3 -c "
+import zipfile, os
+with zipfile.ZipFile('$TMPDIR/lambda.zip', 'w') as z:
+    z.write('$TMPDIR/index.js', 'index.js')
+"
+  $AWS s3 cp "$TMPDIR/lambda.zip" "s3://$LAMBDA_ARTIFACT_BUCKET/$PLACEHOLDER_KEY"
+  rm -rf "$TMPDIR"
+  success "Placeholder zip uploaded"
+fi
+
+# ── Step 8: Terraform init ────────────────────────────────────────────────────
 
 INFRA_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$INFRA_DIR"
@@ -158,10 +182,10 @@ success "Workspace: $WORKSPACE"
 info "Running terraform plan..."
 PLAN_OUT=$(AWS_PROFILE="$PROFILE" terraform plan \
   -var="api_zip_s3_bucket=$LAMBDA_ARTIFACT_BUCKET" \
-  -var="api_zip_s3_key=placeholder" \
+  -var="api_zip_s3_key=$PLACEHOLDER_KEY" \
   -no-color 2>&1)
 
-if echo "$PLAN_OUT" | grep -q "to destroy"; then
+if echo "$PLAN_OUT" | grep -qE "[1-9][0-9]* to destroy"; then
   fail "Plan contains destroys — aborting. Review the plan:\n$PLAN_OUT"
 fi
 success "Plan contains no destroys"
@@ -171,7 +195,7 @@ success "Plan contains no destroys"
 info "Running terraform apply..."
 AWS_PROFILE="$PROFILE" terraform apply \
   -var="api_zip_s3_bucket=$LAMBDA_ARTIFACT_BUCKET" \
-  -var="api_zip_s3_key=placeholder" \
+  -var="api_zip_s3_key=$PLACEHOLDER_KEY" \
   -auto-approve
 success "Apply complete"
 
@@ -200,8 +224,8 @@ LIFECYCLE=$($AWS s3api get-bucket-lifecycle-configuration \
 assert_contains "S3 lifecycle rule enabled" "Enabled" "$LIFECYCLE"
 
 # SSM parameters
-PARAMS=$($AWS ssm describe-parameters \
-  --parameter-filters Key=Path,Values=/petroglyph/ \
+PARAMS=$($AWS ssm get-parameters-by-path \
+  --path /petroglyph/ --recursive \
   --query 'Parameters[].Name' --output text)
 PARAM_COUNT=$(echo "$PARAMS" | wc -w)
 if [[ "$PARAM_COUNT" -ge 12 ]]; then
@@ -225,7 +249,7 @@ done
 info "Idempotency check (second apply)..."
 IDEMPOTENT_OUT=$(AWS_PROFILE="$PROFILE" terraform apply \
   -var="api_zip_s3_bucket=$LAMBDA_ARTIFACT_BUCKET" \
-  -var="api_zip_s3_key=placeholder" \
+  -var="api_zip_s3_key=$PLACEHOLDER_KEY" \
   -auto-approve \
   -no-color 2>&1)
 assert_contains "Idempotency" "No changes" "$IDEMPOTENT_OUT"
