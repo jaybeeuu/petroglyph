@@ -14,6 +14,7 @@ rm -rf "$STAGING_DIR"
 mkdir -p "$STAGING_DIR"
 
 cp -r "$API_DIR/dist" "$STAGING_DIR/dist"
+cp "$API_DIR/package.json" "$STAGING_DIR/package.json"
 
 if [ -d "$API_DIR/node_modules" ]; then
   cp -rL "$API_DIR/node_modules" "$STAGING_DIR/node_modules"

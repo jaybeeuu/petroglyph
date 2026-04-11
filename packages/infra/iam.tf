@@ -19,6 +19,8 @@ locals {
   dynamodb_arn_prefix = "arn:aws:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table"
 
   ssm_arn_prefix = "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter"
+
+  lambda_log_group_arn_prefix = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda"
 }
 
 # ---------------------------------------------------------------------------
@@ -78,6 +80,15 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
           "${local.ssm_arn_prefix}/petroglyph/jwt/*",
         ]
       },
+      {
+        Sid    = "CloudWatchLogsWrite"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "${local.lambda_log_group_arn_prefix}/petroglyph-api-${terraform.workspace}:*"
+      },
     ]
   })
 }
@@ -116,6 +127,15 @@ resource "aws_iam_role_policy" "petroglyph_ingest_onedrive_policy" {
           "${local.ssm_arn_prefix}/petroglyph/onedrive/*",
           "${local.ssm_arn_prefix}/petroglyph/graph/*",
         ]
+      },
+      {
+        Sid    = "CloudWatchLogsWrite"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "${local.lambda_log_group_arn_prefix}/petroglyph-ingest-onedrive-${terraform.workspace}:*"
       },
     ]
   })
@@ -163,6 +183,15 @@ resource "aws_iam_role_policy" "petroglyph_processor_policy" {
           "s3:DeleteObject",
         ]
         Resource = "${local.staged_bucket_arn}/*"
+      },
+      {
+        Sid    = "CloudWatchLogsWrite"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "${local.lambda_log_group_arn_prefix}/petroglyph-processor-${terraform.workspace}:*"
       },
     ]
   })
