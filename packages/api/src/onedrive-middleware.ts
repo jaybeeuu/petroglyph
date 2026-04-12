@@ -1,10 +1,9 @@
-import { GetParameterCommand, PutParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
+import { GetParameterCommand, PutParameterCommand } from "@aws-sdk/client-ssm";
 import type { MiddlewareHandler } from "hono";
 import type { AppVariables } from "./auth-middleware.js";
+import { ssmClient } from "./ssm.js";
 
-const ssmClient = new SSMClient({});
-
-const TEN_MINUTES_MS = 10 * 60 * 1000;
+export const TEN_MINUTES_MS = 10 * 60 * 1000;
 
 const SSM_ACCESS_TOKEN = "/petroglyph/onedrive/access-token";
 const SSM_TOKEN_EXPIRY = "/petroglyph/onedrive/token-expiry";
@@ -19,13 +18,13 @@ async function readSsmString(name: string): Promise<string> {
   return value;
 }
 
-interface OneDriveParams {
+export interface OneDriveParams {
   accessToken: string;
   tokenExpiry: string;
   refreshToken: string;
 }
 
-async function readOneDriveParams(): Promise<OneDriveParams> {
+export async function readOneDriveParams(): Promise<OneDriveParams> {
   const [accessToken, tokenExpiry, refreshToken] = await Promise.all([
     readSsmString(SSM_ACCESS_TOKEN),
     readSsmString(SSM_TOKEN_EXPIRY),
@@ -58,7 +57,9 @@ function assertMicrosoftTokenResponse(
   }
 }
 
-async function refreshOneDriveToken(currentRefreshToken: string): Promise<string> {
+export async function refreshOneDriveToken(
+  currentRefreshToken: string,
+): Promise<string> {
   const clientId = process.env["MICROSOFT_CLIENT_ID"];
   if (!clientId) throw new Error("MICROSOFT_CLIENT_ID env var not set");
 
@@ -117,25 +118,28 @@ async function refreshOneDriveToken(currentRefreshToken: string): Promise<string
   return access_token;
 }
 
+export async function resolveOneDriveAccessToken(): Promise<string> {
+  const params = await readOneDriveParams();
+  const msUntilExpiry = new Date(params.tokenExpiry).getTime() - Date.now();
+
+  if (msUntilExpiry <= TEN_MINUTES_MS) {
+    try {
+      return await refreshOneDriveToken(params.refreshToken);
+    } catch (err) {
+      console.error("[onedrive-middleware] token refresh failed:", err);
+    }
+  }
+
+  return params.accessToken;
+}
+
 export const onedriveMiddleware: MiddlewareHandler<{
   Variables: AppVariables;
 }> = async (c, next) => {
   let accessToken: string | undefined;
 
   try {
-    const params = await readOneDriveParams();
-    const msUntilExpiry = new Date(params.tokenExpiry).getTime() - Date.now();
-
-    if (msUntilExpiry <= TEN_MINUTES_MS) {
-      try {
-        accessToken = await refreshOneDriveToken(params.refreshToken);
-      } catch (err) {
-        console.error("[onedrive-middleware] token refresh failed:", err);
-        accessToken = params.accessToken;
-      }
-    } else {
-      accessToken = params.accessToken;
-    }
+    accessToken = await resolveOneDriveAccessToken();
   } catch (err) {
     console.error("[onedrive-middleware] SSM read failed:", err);
   }

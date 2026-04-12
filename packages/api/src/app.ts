@@ -7,7 +7,11 @@ import { authMiddleware, type AppVariables } from "./auth-middleware.js";
 import { onedriveMiddleware } from "./onedrive-middleware.js";
 import { handleOnedriveAuthUrl } from "./onedrive-auth-url.js";
 import { handleOnedriveConnect } from "./onedrive-connect.js";
+import { handleOnedriveLifecycle } from "./onedrive-lifecycle.js";
+import { handleFilesChanges } from "./files-changes.js";
 import { handleStatus } from "./status.js";
+import { handleSyncRun } from "./sync-run.js";
+import { handleSyncReset } from "./sync-reset.js";
 import { docClient } from "./db.js";
 
 const TABLE_NAME =
@@ -17,6 +21,7 @@ const EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: "GET", path: "/auth/url" },
   { method: "POST", path: "/auth/callback" },
   { method: "POST", path: "/auth/refresh" },
+  { method: "POST", path: "/onedrive/lifecycle" },
 ];
 
 const app = new Hono<{ Variables: AppVariables }>();
@@ -65,9 +70,17 @@ app.post("/auth/refresh", (c) => handleAuthRefresh(c));
 
 app.get("/status", (c) => handleStatus(c));
 
+app.get("/files/changes", (c) => handleFilesChanges(c));
+
 app.get("/onedrive/auth-url", (c) => handleOnedriveAuthUrl(c));
 
 app.post("/onedrive/connect", (c) => handleOnedriveConnect(c));
+
+app.post("/onedrive/lifecycle", (c) => handleOnedriveLifecycle(c));
+
+app.post("/sync/reset", (c) => handleSyncReset(c));
+
+app.post("/sync/run", (c) => handleSyncRun(c));
 
 app.use("/onedrive/*", (c, next) => onedriveMiddleware(c, next));
 

@@ -6,15 +6,9 @@ import type { AppVariables } from "./auth-middleware.js";
 const mockSsmSend = vi.hoisted(() => vi.fn());
 const mockFetch = vi.hoisted(() => vi.fn());
 
-vi.mock("@aws-sdk/client-ssm", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@aws-sdk/client-ssm")>();
-  return {
-    ...actual,
-    SSMClient: class {
-      send = mockSsmSend;
-    },
-  };
-});
+vi.mock("./ssm.js", () => ({
+  ssmClient: { send: mockSsmSend },
+}));
 
 import { onedriveMiddleware } from "./onedrive-middleware.js";
 
@@ -91,11 +85,13 @@ describe("onedriveMiddleware", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", mockFetch);
     vi.stubEnv("MICROSOFT_CLIENT_ID", "test-client-id");
+    vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     mockSsmSend.mockReset();
     mockFetch.mockReset();
   });
