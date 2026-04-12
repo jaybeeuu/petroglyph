@@ -1,13 +1,17 @@
-import { Notice, Plugin } from "obsidian";
+import { Notice, Plugin, normalizePath } from "obsidian";
 import { PetroglyphSettingTab } from "./settings.js";
-import type { AuthCallbackParams, PluginData } from "./types.js";
+import type { AuthCallbackParams, FileChange, PluginData } from "./types.js";
 import { hasStringProp, isRecord } from "./validate.js";
 
 const DEFAULT_DATA: PluginData = {
   apiBaseUrl: "http://localhost:3000",
+  syncIntervalMinutes: 5,
+  changeTokens: {},
 };
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
+const DEFAULT_PROFILE_ID = "default";
+const VAULT_ROOT = "handwritten";
 
 function decodeJwtExpiry(jwt: string): number | null {
   const parts = jwt.split(".");
@@ -25,9 +29,162 @@ function decodeJwtExpiry(jwt: string): number | null {
 }
 
 export class PetroglyphPlugin extends Plugin {
+  /**
+   * Manually trigger a sync: POST /sync/run, then page GET /files/changes until nextToken is null.
+   * Shows a notice on completion or error.
+   */
+  async syncNow(): Promise<void> {
+    if (this._data.jwt === undefined || !this._data.oneDriveConnected) {
+      new Notice("Not connected. Cannot sync.");
+      return;
+    }
+    try {
+      const headers = { Authorization: `Bearer ${this._data.jwt}` };
+      const runResp = await fetch(`${this._data.apiBaseUrl}/sync/run`, {
+        method: "POST",
+        headers,
+      });
+      if (!runResp.ok) {
+        new Notice("Sync failed: could not start sync");
+        return;
+      }
+      // Now page GET /files/changes until nextToken is null
+      const profileId = DEFAULT_PROFILE_ID;
+      let afterToken = this._data.changeTokens?.[profileId];
+      let hasMore = true;
+      while (hasMore) {
+        const url = new URL(`${this._data.apiBaseUrl}/files/changes`);
+        if (afterToken !== undefined) url.searchParams.set("after", afterToken);
+        const resp = await fetch(url.toString(), { headers });
+        if (!resp.ok) {
+          new Notice("Sync failed: error fetching changes");
+          return;
+        }
+        const body: unknown = await resp.json();
+        if (!isRecord(body)) {
+          new Notice("Sync failed: invalid response");
+          return;
+        }
+        if (body["resetToken"] === true) {
+          this._data = {
+            ...this._data,
+            changeTokens: {
+              ...this._data.changeTokens,
+              [profileId]: undefined as unknown as string,
+            },
+          };
+          delete this._data.changeTokens?.[profileId];
+          await this.savePluginData();
+        }
+        const files = body["files"];
+        if (!Array.isArray(files)) {
+          new Notice("Sync failed: invalid files list");
+          return;
+        }
+        for (const file of files) {
+          if (!isRecord(file)) continue;
+          await this.syncFile(file as unknown as FileChange, profileId);
+        }
+        const nextToken = body["nextToken"];
+        hasMore = typeof nextToken === "string";
+        afterToken = hasMore ? (nextToken as string) : undefined;
+      }
+      new Notice("Sync complete");
+    } catch (e) {
+      new Notice("Sync failed: network or server error");
+    }
+  }
+
+  /**
+   * Reset plugin state: clear local change token for active profileId only.
+   */
+  async resetPluginState(): Promise<void> {
+    const profileId = DEFAULT_PROFILE_ID;
+    if (this._data.changeTokens && this._data.changeTokens[profileId]) {
+      this._data = {
+        ...this._data,
+        changeTokens: {
+          ...this._data.changeTokens,
+          [profileId]: undefined as unknown as string,
+        },
+      };
+      delete this._data.changeTokens?.[profileId];
+      await this.savePluginData();
+    }
+    new Notice("Plugin state reset: local sync token cleared");
+  }
+
+  /**
+   * Reset server state: POST /sync/reset {scope: 'server'}; show confirmation notice.
+   */
+  async resetServerState(): Promise<void> {
+    if (this._data.jwt === undefined) {
+      new Notice("Not logged in. Cannot reset server state.");
+      return;
+    }
+    try {
+      const resp = await fetch(`${this._data.apiBaseUrl}/sync/reset`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${this._data.jwt}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ scope: "server" }),
+      });
+      if (!resp.ok) {
+        new Notice("Server reset failed");
+        return;
+      }
+      new Notice("Server state reset");
+    } catch {
+      new Notice("Server reset failed: network error");
+    }
+  }
+
+  /**
+   * Full reset: POST /sync/reset {scope: 'full'}; clear local token if resetToken in response.
+   */
+  async fullReset(): Promise<void> {
+    if (this._data.jwt === undefined) {
+      new Notice("Not logged in. Cannot perform full reset.");
+      return;
+    }
+    try {
+      const resp = await fetch(`${this._data.apiBaseUrl}/sync/reset`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${this._data.jwt}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ scope: "full" }),
+      });
+      if (!resp.ok) {
+        new Notice("Full reset failed");
+        return;
+      }
+      const body: unknown = await resp.json();
+      if (isRecord(body) && body["resetToken"] === true) {
+        const profileId = DEFAULT_PROFILE_ID;
+        this._data = {
+          ...this._data,
+          changeTokens: {
+            ...this._data.changeTokens,
+            [profileId]: undefined as unknown as string,
+          },
+        };
+        delete this._data.changeTokens?.[profileId];
+        await this.savePluginData();
+      }
+      new Notice("Full reset complete");
+    } catch {
+      new Notice("Full reset failed: network error");
+    }
+  }
+
   private _data: PluginData = { ...DEFAULT_DATA };
   private _refreshTimeoutId: number | null = null;
   private _statusPollIntervalId: number | null = null;
+  private _syncPollIntervalId: number | null = null;
 
   get data(): Readonly<PluginData> {
     return this._data;
@@ -42,7 +199,12 @@ export class PetroglyphPlugin extends Plugin {
       window.clearInterval(this._statusPollIntervalId);
       this._statusPollIntervalId = null;
     }
-    this._data = { apiBaseUrl: this._data.apiBaseUrl, oneDriveConnected: false };
+    if (this._syncPollIntervalId !== null) {
+      window.clearInterval(this._syncPollIntervalId);
+      this._syncPollIntervalId = null;
+    }
+    const { jwt: _j, refreshToken: _rt, username: _u, oneDriveConnected: _oc, oneDriveStatus: _os, ...rest } = this._data;
+    this._data = { ...rest, oneDriveConnected: false };
   }
 
   setApiBaseUrl(url: string): void {
@@ -58,6 +220,14 @@ export class PetroglyphPlugin extends Plugin {
     this._statusPollIntervalId = window.setInterval(() => {
       void this.pollStatus();
     }, 60_000);
+  }
+
+  startSyncPolling(): void {
+    if (this._syncPollIntervalId !== null) return;
+    const intervalMs = (this._data.syncIntervalMinutes ?? 5) * 60 * 1000;
+    this._syncPollIntervalId = window.setInterval(() => {
+      void this.performSync();
+    }, intervalMs);
   }
 
   scheduleRefresh(jwt: string): void {
@@ -99,10 +269,130 @@ export class PetroglyphPlugin extends Plugin {
     }
   }
 
+  async performSync(): Promise<void> {
+    if (this._data.jwt === undefined || !this._data.oneDriveConnected) return;
+
+    try {
+      const profileId = DEFAULT_PROFILE_ID;
+      let afterToken = this._data.changeTokens?.[profileId];
+      let hasMore = true;
+
+      while (hasMore) {
+        const url = new URL(`${this._data.apiBaseUrl}/files/changes`);
+        if (afterToken !== undefined) {
+          url.searchParams.set("after", afterToken);
+        }
+
+        const response = await fetch(url.toString(), {
+          headers: { Authorization: `Bearer ${this._data.jwt}` },
+        });
+
+        if (!response.ok) return;
+
+        const body: unknown = await response.json();
+        if (!isRecord(body)) return;
+
+        if (body["resetToken"] === true) {
+          this._data = {
+            ...this._data,
+            changeTokens: {
+              ...this._data.changeTokens,
+              [profileId]: undefined as unknown as string,
+            },
+          };
+          delete this._data.changeTokens?.[profileId];
+          await this.savePluginData();
+        }
+
+        const files = body["files"];
+        if (!Array.isArray(files)) return;
+
+        for (const file of files) {
+          if (!isRecord(file)) continue;
+          await this.syncFile(file as unknown as FileChange, profileId);
+        }
+
+        const nextToken = body["nextToken"];
+        hasMore = typeof nextToken === "string";
+        afterToken = hasMore ? (nextToken as string) : undefined;
+      }
+    } catch {
+      // Network errors are silently ignored; the next sync will retry.
+    }
+  }
+
+  async syncFile(file: FileChange, profileId: string): Promise<void> {
+    try {
+      const pdfResponse = await fetch(file.s3PresignedUrl);
+      if (!pdfResponse.ok) return;
+
+      const pdfBytes = await pdfResponse.arrayBuffer();
+      const filename = file.filename;
+      const pdfPath = normalizePath(`${VAULT_ROOT}/${filename}`);
+      const mdPath = pdfPath.replace(/\.pdf$/, ".md");
+
+      const pdfFolder = pdfPath.substring(0, pdfPath.lastIndexOf("/"));
+      if (!(await this.app.vault.adapter.exists(pdfFolder))) {
+        await this.app.vault.adapter.mkdir(pdfFolder);
+      }
+
+      await this.app.vault.adapter.writeBinary(pdfPath, new Uint8Array(pdfBytes) as unknown as ArrayBuffer);
+
+      const frontmatter = [
+        "---",
+        "source: onedrive",
+        `synced_at: ${new Date().toISOString()}`,
+        `created_at: ${file.createdAt}`,
+        ...(file.pageCount !== undefined ? [`page_count: ${file.pageCount}`] : []),
+        "tags:",
+        "  - handwritten",
+        "---",
+        "",
+      ].join("\n");
+
+      await this.app.vault.adapter.write(mdPath, frontmatter);
+
+      this._data = {
+        ...this._data,
+        changeTokens: {
+          ...this._data.changeTokens,
+          [profileId]: file.fileId,
+        },
+      };
+      await this.savePluginData();
+    } catch {
+      // File-level errors are silently ignored; sync continues with next file.
+    }
+  }
+
   override async onload(): Promise<void> {
     await this.loadPluginData();
 
     this.addSettingTab(new PetroglyphSettingTab(this.app, this));
+
+    // Register manual commands
+    if (typeof this.addCommand === "function") {
+      this.addCommand({
+        id: "petroglyph-sync-now",
+        name: "Sync Now",
+        callback: () => this.syncNow(),
+      });
+      this.addCommand({
+        id: "petroglyph-reset-plugin-state",
+        name: "Reset Plugin State (local)",
+        callback: () => this.resetPluginState(),
+      });
+      this.addCommand({
+        id: "petroglyph-reset-server-state",
+        name: "Reset Server State (remote)",
+        callback: () => this.resetServerState(),
+      });
+      this.addCommand({
+        id: "petroglyph-full-reset",
+        name: "Full Reset (remote + local)",
+        callback: () => this.fullReset(),
+      });
+    }
 
     this.registerObsidianProtocolHandler(
       "petroglyph/auth/callback",
@@ -133,6 +423,9 @@ export class PetroglyphPlugin extends Plugin {
     if (this._data.jwt !== undefined) {
       this.scheduleRefresh(this._data.jwt);
       this.startStatusPolling();
+      if (this._data.oneDriveConnected) {
+        this.startSyncPolling();
+      }
     }
   }
 
@@ -144,6 +437,10 @@ export class PetroglyphPlugin extends Plugin {
     if (this._statusPollIntervalId !== null) {
       window.clearInterval(this._statusPollIntervalId);
       this._statusPollIntervalId = null;
+    }
+    if (this._syncPollIntervalId !== null) {
+      window.clearInterval(this._syncPollIntervalId);
+      this._syncPollIntervalId = null;
     }
   }
 
@@ -157,6 +454,15 @@ export class PetroglyphPlugin extends Plugin {
       if (hasStringProp(raw, "username")) saved.username = raw.username;
       if (typeof raw["oneDriveConnected"] === "boolean") {
         saved.oneDriveConnected = raw["oneDriveConnected"];
+      }
+      if (typeof raw["syncIntervalMinutes"] === "number") {
+        saved.syncIntervalMinutes = raw["syncIntervalMinutes"];
+      }
+      if (isRecord(raw["changeTokens"])) {
+        saved.changeTokens = raw["changeTokens"] as Record<string, string>;
+      }
+      if (hasStringProp(raw, "oneDriveStatus")) {
+        saved.oneDriveStatus = raw.oneDriveStatus;
       }
     }
     this._data = { ...DEFAULT_DATA, ...saved };
@@ -223,6 +529,7 @@ export class PetroglyphPlugin extends Plugin {
       }
       this.setOneDriveConnected(true);
       await this.savePluginData();
+      this.startSyncPolling();
       new Notice("OneDrive connected");
     } catch {
       new Notice("OneDrive connection failed");
@@ -239,8 +546,13 @@ export class PetroglyphPlugin extends Plugin {
       const body: unknown = await response.json();
       if (!isRecord(body)) return;
       const oneDrive = body["oneDrive"];
-      if (isRecord(oneDrive) && typeof oneDrive["connected"] === "boolean") {
-        this.setOneDriveConnected(oneDrive["connected"]);
+      if (isRecord(oneDrive)) {
+        if (typeof oneDrive["connected"] === "boolean") {
+          this.setOneDriveConnected(oneDrive["connected"]);
+        }
+        if (typeof oneDrive["status"] === "string") {
+          this._data = { ...this._data, oneDriveStatus: oneDrive["status"] };
+        }
         await this.savePluginData();
       }
     } catch {

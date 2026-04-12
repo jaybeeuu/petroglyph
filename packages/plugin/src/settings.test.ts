@@ -4,7 +4,8 @@ import type { App, PluginManifest } from "obsidian";
 const buttonHandlers = new Map<string, () => Promise<void> | void>();
 
 vi.mock("obsidian", () => ({
-  Notice: vi.fn(),
+  Notice: Notice,
+
   Plugin: class {
     constructor(_app: unknown, _manifest: unknown) {}
   },
@@ -60,7 +61,7 @@ interface TextStub {
   onChange(cb: (v: string) => Promise<void> | void): TextStub;
 }
 
-const { Notice } = await import("obsidian");
+const Notice = vi.fn();
 
 async function makePlugin(options: { username?: string; oneDriveConnected?: boolean } = {}) {
   const { PetroglyphPlugin } = await import("./main.js");
@@ -70,7 +71,6 @@ async function makePlugin(options: { username?: string; oneDriveConnected?: bool
   plugin.saveData = vi.fn();
   plugin.registerObsidianProtocolHandler = vi.fn();
   plugin.addSettingTab = vi.fn();
-  // @ts-expect-error — minimal stub
   plugin.app = {};
 
   await plugin.loadPluginData();

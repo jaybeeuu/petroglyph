@@ -27,7 +27,7 @@ export class PetroglyphSettingTab extends PluginSettingTab {
           }),
       );
 
-    const { username } = this.plugin.data;
+    const { username, oneDriveStatus } = this.plugin.data;
     if (username !== undefined) {
       new Setting(containerEl)
         .setName("Account")
@@ -40,6 +40,32 @@ export class PetroglyphSettingTab extends PluginSettingTab {
             this.display();
           }),
         );
+
+      // Manual sync and reset buttons
+      new Setting(containerEl)
+        .setName("Sync Now")
+        .setDesc("Manually trigger a sync now.")
+        .addButton((btn) =>
+          btn.setButtonText("Sync Now").onClick(() => this.plugin.syncNow()),
+        );
+      new Setting(containerEl)
+        .setName("Reset Plugin State")
+        .setDesc("Clear local sync token for this profile only.")
+        .addButton((btn) =>
+          btn.setButtonText("Reset Plugin State").onClick(() => this.plugin.resetPluginState()),
+        );
+      new Setting(containerEl)
+        .setName("Reset Server State")
+        .setDesc("Reset server sync state only.")
+        .addButton((btn) =>
+          btn.setButtonText("Reset Server State").onClick(() => this.plugin.resetServerState()),
+        );
+      new Setting(containerEl)
+        .setName("Full Reset")
+        .setDesc("Reset both server and local sync state.")
+        .addButton((btn) =>
+          btn.setButtonText("Full Reset").onClick(() => this.plugin.fullReset()),
+        );
     } else {
       new Setting(containerEl)
         .setName("GitHub account")
@@ -49,6 +75,16 @@ export class PetroglyphSettingTab extends PluginSettingTab {
             await this.plugin.openAuthUrl();
           }),
         );
+    }
+
+    // OneDrive reconnect_required banner
+    if (oneDriveStatus === "reconnect_required") {
+      const banner = containerEl.createEl("div", { cls: "petroglyph-onedrive-banner" });
+      banner.textContent = "OneDrive connection lost — action required";
+      const btn = banner.createEl("button", { text: "Reconnect OneDrive" });
+      btn.onclick = async () => {
+        await this.plugin.openOneDriveAuthUrl();
+      };
     }
 
     const { oneDriveConnected } = this.plugin.data;
@@ -61,7 +97,7 @@ export class PetroglyphSettingTab extends PluginSettingTab {
             // Placeholder — disconnect not yet implemented
           }),
         );
-    } else {
+    } else if (oneDriveStatus !== "reconnect_required") {
       new Setting(containerEl)
         .setName("OneDrive")
         .setDesc("Connect your OneDrive account")
