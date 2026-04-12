@@ -81,7 +81,7 @@ Implement the OneDrive PKCE OAuth flow. The cloud API exposes `GET /onedrive/aut
 
 ### What to build
 
-Implement the Webhook Receiver Lambda (validates the Microsoft Graph change notification — including the initial validation token handshake — and enqueues a job to SQS) and the Processor Lambda (reads from SQS, downloads the PDF from OneDrive via Graph API, uploads to S3 under a key matching the OneDrive folder structure, writes a `file_records` DynamoDB item with status `pending`). Wire up the SQS DLQ and CloudWatch alarm.
+Implement the Webhook Receiver Lambda (validates the Microsoft Graph change notification — including the initial validation token handshake — and enqueues a job to SQS) and the Processor Lambda (consumes SQS notifications, resolves DriveItem metadata, refreshes tokens via SSM, skips non-PDF/non-downloadable items, downloads PDFs from OneDrive, uploads to S3 under the configured prefix plus OneDrive folder path, and writes file-record status to DynamoDB). The staged-file contract and processing logic are documented in `packages/processor/src/index.ts`. The SQS ingestion queue is configured with a visibility timeout that exceeds the processor Lambda timeout, preventing duplicate processing. Failed processor invocations are sent to the DLQ, which is monitored by a CloudWatch alarm that triggers an SNS email notification on failure. The processor Lambda's environment includes `MICROSOFT_CLIENT_ID` and uses tightly scoped SQS IAM permissions. Webhook route and output updates are reflected in the Terraform configuration.
 
 ### Acceptance criteria
 
@@ -100,18 +100,32 @@ Implement the Webhook Receiver Lambda (validates the Microsoft Graph change noti
 
 ### What to build
 
-The API Handler Lambda exposes `GET /files/changes?after={token}&limit={pageSize}` (returns an ordered page of file records as `{ files: [...], nextToken: string | null }`) and `POST /sync/run` (triggers the delta query Lambda to catch files missed by webhooks). `GET /files/changes` with no `after` token respects the `initial-sync` SSM config flag: if true, returns all files from the beginning; if false, returns an empty first page. The plugin polls `GET /files/changes` on a configurable interval. The "Sync Now" command calls `POST /sync/run` first then fetches changes. For each file in a page: download the PDF via pre-signed S3 URL, write it to the vault at the path defined by the active SyncProfile, create a companion `.md` file with YAML frontmatter, then advance the stored change token. The token is opaque, stored in plugin local settings per active profile, and advances file-by-file after each successful vault write. S3 objects are deleted after 90 days (configurable) via a lifecycle rule — purely time-based, no per-file delivery confirmation.
+The API Handler Lambda exposes `GET /files/changes?after={token}&limit={pageSize}` (returns an ordered page of file records as `{ files: [...], nextToken: string | null }`) and `POST /sync/run` (runs a Microsoft Graph delta query, paging through all changes since the last token stored in SSM, and queues new or changed PDF items as `file_records` in DynamoDB with pending status and placeholder S3 keys; non-PDF items are skipped. Returns the count of queued items. Used to catch files missed by webhooks or for manual sync).
 
-`POST /sync/reset` accepts a `scope` field (`"server"` or `"full"`):
+**GET /files/changes contract:**
+- Accepts an optional `after` cursor (opaque token) and `limit` (page size).
+- Returns `{ files: [...], nextToken: string | null }`.
+- Each file includes a presigned S3 URL for direct download.
+- Paging is cursor-based: use `nextToken` to fetch the next page; when `nextToken` is `null`, all files have been listed.
+- If no `after` token is provided, behaviour is controlled by the `initial-sync` SSM config flag:
+  - If `true`, returns all files from the beginning.
+  - If `false`, returns an empty first page; only new files appear on subsequent syncs.
+- The endpoint enforces authentication and validates all parameters and responses with Zod.
 
-- `"server"` — clears the Graph delta token and deletes file records in DynamoDB so the server re-fetches all OneDrive files on next `POST /sync/run`
-- `"full"` — same as above, and additionally signals the plugin to clear its local change token
+The plugin polls `GET /files/changes` on a configurable interval. The "Sync Now" command calls `POST /sync/run` first then fetches changes. For each file in a page: download the PDF via pre-signed S3 URL, write it to the vault at the path defined by the active SyncProfile, create a companion `.md` file with YAML frontmatter, then advance the stored change token. The token is opaque, stored in plugin local settings per active profile, and advances file-by-file after each successful vault write. S3 objects are deleted after 90 days (configurable) via a lifecycle rule — purely time-based, no per-file delivery confirmation.
+
+Authenticated `POST /sync/reset` accepts a `scope` field (`"server"` or `"full"`) and returns `{ resetToken: boolean }`:
+
+- `"server"` — clears the Graph delta token and deletes file records in DynamoDB so the server re-fetches all OneDrive files on next `POST /sync/run`; response is `{ resetToken: false }`
+- `"full"` — same as above, and additionally signals the plugin to clear its local change token; response is `{ resetToken: true }`
+
+The plugin exposes a **Sync Now** command via command palette and settings that calls `POST /sync/run` then pages `GET /files/changes` to completion.
 
 The plugin settings and command palette expose three reset commands:
 
-- **Reset Plugin State** — clears the local change token; plugin re-downloads whatever is still in S3
-- **Reset Server State** — calls `POST /sync/reset` with `scope: "server"`
-- **Full Reset** — calls `POST /sync/reset` with `scope: "full"` and clears the local change token
+- **Reset Plugin State** (local only) — clears the local change token for the active profile; plugin re-downloads whatever is still in S3. No server call.
+- **Reset Server State** (server only) — calls `POST /sync/reset` with `scope: "server"`; server clears Graph delta token and file records, returns `{ resetToken: false }`
+- **Full Reset** (server + local) — calls `POST /sync/reset` with `scope: "full"`; server clears state and returns `{ resetToken: true }`, plugin clears local token
 
 ### Acceptance criteria
 
@@ -124,8 +138,8 @@ The plugin settings and command palette expose three reset commands:
 - [ ] A file that already exists in the vault is overwritten with the OneDrive version
 - [ ] S3 objects are deleted after 90 days (verifiable via lifecycle rule inspection); default is configurable via SSM
 - [ ] **Reset Plugin State** clears the local change token; next sync re-downloads files still in S3
-- [ ] **Reset Server State** (`POST /sync/reset` `scope: "server"`) causes the server to re-fetch all OneDrive files on next `POST /sync/run`
-- [ ] **Full Reset** clears both server state and plugin token; full end-to-end re-process completes successfully
+- [ ] **Reset Server State** (`POST /sync/reset` `scope: "server"`) returns `{ resetToken: false }` and causes the server to re-fetch all OneDrive files on next `POST /sync/run`
+- [ ] **Full Reset** returns `{ resetToken: true }`, clears both server state and plugin token, and completes a full end-to-end re-process successfully
 
 ---
 
@@ -143,7 +157,9 @@ Implement the Lifecycle Notification Lambda, reachable via a dedicated `lifecycl
 - [ ] If renewal succeeds, `subscriptionActive` remains `true` and the plugin is unaffected
 - [ ] If renewal fails, `oneDriveStatus` becomes `disconnected` in DynamoDB
 - [ ] A `subscriptionRemoved` notification immediately sets `oneDriveStatus: "disconnected"`
-- [ ] The plugin displays a contextual reconnect prompt (with reason) on next status poll after disconnection
+- [ ] The plugin displays a persistent warning banner (`OneDrive connection lost — action required`) and a `Reconnect OneDrive` button on next status poll after `oneDriveStatus: "reconnect_required"` is detected
+- [ ] Clicking the reconnect button re-initiates the OneDrive PKCE connect flow
+- [ ] The banner persists until `oneDriveStatus` returns to `connected`
 - [ ] Completing the reconnect flow from the plugin restores `oneDriveStatus: "connected"` and re-registers the subscription
 
 ---
