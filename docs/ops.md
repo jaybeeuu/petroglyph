@@ -85,7 +85,7 @@ This creates and verifies the following (bucket names embed your AWS account ID 
 | DynamoDB table            | `petroglyph-terraform-locks`                      | Terraform state locking        |
 | S3 bucket                 | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`        | Lambda deployment ZIP artifacts|
 
-Once applied, the following values are needed as GitHub Actions secrets for CD:
+Once applied, the following values are needed as GitHub Actions secrets on the `production` environment for CD:
 
 | Secret                   | Description                                           |
 | ------------------------ | ----------------------------------------------------- |
@@ -93,4 +93,4 @@ Once applied, the following values are needed as GitHub Actions secrets for CD:
 | `TF_STATE_BUCKET`        | `petroglyph-terraform-state-<ACCOUNT_ID>`             |
 | `LAMBDA_ARTIFACT_BUCKET` | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`            |
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md#cd-secrets) for how to configure these secrets.
+Configure the `production` environment so only `main` can deploy, and require deployment review before the `deploy` job proceeds. See [CONTRIBUTING.md](../CONTRIBUTING.md#cd-secrets) for how to configure these secrets.

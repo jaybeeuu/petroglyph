@@ -22,11 +22,14 @@ dist/
 
 # Beads / Dolt files (added by bd init)
 .beads-credential-key
+.ralph-progress.md
 
 # Lambda deployment artifact
 lambda.zip
+test-output.txt
 
 # Terraform
+**/.vitest-terraform/
 **/.terraform/
 *.tfstate
 *.tfstate.backup

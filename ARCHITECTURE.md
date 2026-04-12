@@ -63,8 +63,8 @@ Onyx Boox Note Air 5C
 | Function                           | Trigger                  | Responsibility                                                                                                                                                                                        |
 | ---------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Webhook Receiver**               | API Gateway              | Validates MS Graph change notification, returns 200 fast, enqueues job to SQS                                                                                                                         |
-| **Processor**                      | SQS                      | Downloads PDF from OneDrive, uploads to S3, writes file record to DynamoDB, generates Markdown frontmatter stub                                                                                       |
-| **API Handler**                    | API Gateway              | Serves plugin requests: session status (`GET /status`), OneDrive auth URL (`GET /onedrive/auth-url`), OneDrive connection callback (`POST /onedrive/connect`), list pending files, issue pre-signed S3 URLs, acknowledge delivery. A Hono middleware intercepts all `/onedrive/*` routes to perform lazy token refresh and inject the current OneDrive access token into the request context (see [docs/authentication.md](docs/authentication.md#token-lifecycle)). |
+| **Processor**                      | SQS                      | Consumes queued OneDrive notifications, resolves DriveItem metadata before download, refreshes tokens via the SSM contract, skips non-PDF/non-downloadable items, uploads staged PDFs to S3 under the configured prefix plus OneDrive folder path, and writes file-record status to DynamoDB. See `packages/processor/src/index.ts` for staged-file contract and processing logic. |
+| **API Handler**                    | API Gateway              | Serves plugin requests: session status (`GET /status`), OneDrive auth URL (`GET /onedrive/auth-url`), OneDrive connection callback (`POST /onedrive/connect`), list pending files, issue pre-signed S3 URLs, acknowledge delivery, **manual sync** (`POST /sync/run`), and **sync state reset** (`POST /sync/reset`). The `/sync/run` endpoint is authenticated, reads the OneDrive delta token from SSM, pages through Graph delta responses, and for each new or changed PDF item, creates a `file_records` DynamoDB item with placeholder `s3Key`, queued metadata, and pending status. Non-PDF items are skipped. The endpoint returns the count of queued items. The `/sync/reset` endpoint accepts `{ "scope": "server" \| "full" }` and clears server-side Graph delta token and file records; `scope: "full"` additionally signals the plugin to clear its local change token via the `resetToken` response field. The `/status` endpoint may return `oneDriveStatus: 'reconnect_required'` if user action is needed to restore OneDrive connectivity. A Hono middleware intercepts all `/onedrive/*` routes to perform lazy token refresh and inject the current OneDrive access token into the request context (see [docs/authentication.md](docs/authentication.md#token-lifecycle)). |
 | **Lifecycle Notification Handler** | API Gateway              | Handles Microsoft Graph lifecycle events (`subscriptionRemoved`, `reauthorizationRequired`) — attempts automatic renewal where possible; marks OneDrive as disconnected in DynamoDB if recovery fails |
 | **Manual Sync**                    | CLI invocation (AWS SDK) | Runs a Graph delta query to catch any files missed by webhooks; processes any unsynced files                                                                                                          |
 
@@ -74,7 +74,7 @@ All Lambda functions use **Node.js 24 / TypeScript**, consistent with the monore
 
 | Service                                | Purpose                                                                                                                                          |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **S3**                                 | Staged PDFs. Lifecycle rule deletes objects 90 days after staging (configurable via the `retention_days` Terraform variable). Purely time-based — no per-file delivery confirmation. |
+| **S3**                                 | Staged PDFs. Objects are keyed as `<staged-prefix>/<OneDrive folder path>/<filename>.pdf`, preserving the source folder hierarchy for the plugin. Lifecycle rule deletes objects 90 days after staging (configurable via the `retention_days` Terraform variable). Purely time-based — no per-file delivery confirmation. |
 | **DynamoDB**                           | File records (path, S3 key, sequence position for change feed), Graph delta token for sync runs, subscription metadata, sync profile records (including `oneDriveConnected` flag read by `GET /status`). |
 | **SSM Parameter Store (SecureString)** | OneDrive OAuth tokens, GitHub App credentials, configuration values. Zero standing cost.                                                         |
 
@@ -84,6 +84,8 @@ All Lambda functions use **Node.js 24 / TypeScript**, consistent with the monore
 | ------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | **SQS Ingestion Queue**         | Decouples webhook receiver from processor. Allows Graph notification to be acknowledged immediately. |
 | **SQS Dead-Letter Queue (DLQ)** | Captures failed processor invocations for inspection and replay.                                     |
+
+The Processor Lambda is triggered by the ingestion queue via an SQS event source mapping. The queue is configured with a visibility timeout that safely exceeds the processor Lambda timeout, ensuring failed jobs are not double-processed. Failed deliveries are automatically sent to the DLQ, which is monitored by a CloudWatch alarm. When a message lands in the DLQ, the alarm fires and sends an SNS email notification, providing the operational signal for stuck ingest work. The processor Lambda's environment is wired with `MICROSOFT_CLIENT_ID`, `STAGED_PDFS_BUCKET`, and `STAGED_PDF_PREFIX`; it reuses the existing SSM token contract for lazy OneDrive refresh. Webhook route and output updates are reflected in the Terraform configuration.
 
 #### Observability
 
@@ -105,9 +107,9 @@ Deployments to production are automated via `.github/workflows/cd.yml`, triggere
 | `package` | `pnpm --filter @petroglyph/api package` → uploads `lambda-<sha>.zip` to S3 (`LAMBDA_ARTIFACT_BUCKET`)  |
 | `deploy`  | Downloads artifact, runs `terraform init` (S3 backend + DynamoDB locking), selects/creates the `production` workspace, runs `terraform apply` with `api_zip_s3_bucket` and `api_zip_s3_key` vars |
 
-AWS access in the `deploy` job uses OIDC — no long-lived credentials are stored. The GitHub Actions role ARN is provided via the `AWS_ROLE_ARN` secret.
+AWS access in the `deploy` job uses OIDC — no long-lived credentials are stored. The GitHub Actions role ARN is provided via the `AWS_ROLE_ARN` secret on the `production` environment.
 
-The `deploy` job targets the `production` GitHub Actions environment, which can be used to add required reviewers or deployment protection rules.
+The `deploy` job targets the `production` GitHub Actions environment, which can restrict deploys to `main` and require reviewer approval before production deployment proceeds.
 
 Required secrets: `AWS_ROLE_ARN`, `TF_STATE_BUCKET`, `LAMBDA_ARTIFACT_BUCKET` — see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
@@ -119,15 +121,21 @@ A TypeScript plugin that runs inside Obsidian, responsible for pulling staged fi
 
 #### Behaviour
 
-- **File sync** — calls `GET /files/changes?after={token}` to retrieve a page of new files as `{ files, nextToken }`. The change token is opaque, stored in plugin local settings per active profile, and advances file-by-file after each successful vault write. With no stored token, behaviour is controlled by the `initial-sync` config flag.
-- **Manual "Sync Now" command** — calls `POST /sync/run` first (triggers a Graph delta query on the server to catch any webhook-missed files), then pages through `GET /files/changes`.
-- **Reset operations** — available from plugin settings and the command palette:
-  - _Reset Plugin State_ — clears the local change token; plugin re-downloads files still in S3.
-  - _Reset Server State_ — calls `POST /sync/reset` (`scope: "server"`); server clears its Graph delta token and file records, re-fetching all OneDrive files on next sync run.
-  - _Full Reset_ — both of the above.
+- **File sync** — calls `GET /files/changes?after={token}` to retrieve a page of new files as `{ files, nextToken }`.
+  - The `after` token is an opaque cursor, stored in plugin local settings per active profile, and advances after each successful vault write.
+  - If no token is stored, behaviour is controlled by the `initial-sync` config flag (see below).
+  - Each file record includes a presigned S3 URL for direct download.
+  - Paging is cursor-based: the response includes a `nextToken` if more files remain, or `null` if at the end.
+  - The endpoint enforces authentication and validates all parameters with Zod.
+  - On initial sync, if `initial-sync` is `true`, all files are returned from the beginning; if `false`, the first page is empty and only new files appear on subsequent syncs.
+- **Manual "Sync Now" command** — available via command palette and settings. Calls `POST /sync/run` first (triggers a Graph delta query on the server to catch any webhook-missed files), then pages through `GET /files/changes` as above.
+- **Reset operations** — available via command palette and settings:
+  - _Reset Plugin State_ (local only) — clears the local change token for the active profile; plugin re-downloads files still in S3. No server call.
+  - _Reset Server State_ (server only) — calls authenticated `POST /sync/reset` with `{ "scope": "server" }`; server deletes its stored Graph delta token and default-profile file records, returns `{ "resetToken": false }`, and re-fetches all OneDrive files on the next sync run. Plugin state unchanged.
+  - _Full Reset_ (server + local) — calls the same endpoint with `{ "scope": "full" }`; server clears the same state, returns `{ "resetToken": true }`, and the plugin also clears its local change token.
 - **Authentication** — GitHub OAuth against the cloud API (via API Gateway). The plugin schedules a proactive JWT refresh (via `window.setTimeout`) 5 minutes before the JWT expires; the timer is cancelled on `onunload`. On refresh failure the plugin lets the session expire naturally.
 - **OneDrive connection** — A **"Connect OneDrive"** button in plugin settings calls `GET /onedrive/auth-url` (JWT-protected), opens the returned Microsoft login URL in the browser, and waits for the `obsidian://petroglyph/oauth/callback` URI redirect. The URI handler extracts `code` and `state` then calls `POST /onedrive/connect` (JWT Bearer) to complete the PKCE exchange. On success the plugin sets `oneDriveConnected=true` and persists it via Obsidian's `saveData` API. While connected, the settings tab shows **"OneDrive connected ✓"** and a placeholder Disconnect button.
-- **Status polling** — The plugin polls `GET /status` every 60 seconds (idempotent `setInterval`) whenever a JWT is present. The `oneDrive.connected` value from the response is persisted via `saveData`. The interval is cancelled in `onunload` and `clearCredentials`.
+- **Status polling & reconnect** — The plugin polls `GET /status` every 60 seconds (idempotent `setInterval`) whenever a JWT is present. If the response includes `oneDriveStatus: 'reconnect_required'`, the settings tab displays a persistent warning banner: `OneDrive connection lost — action required`, along with a `Reconnect OneDrive` button. Clicking this button re-initiates the OneDrive PKCE connect flow. The banner persists until status returns to `connected`. The `oneDrive.connected` value from the response is persisted via `saveData`. The interval is cancelled in `onunload` and `clearCredentials`.
 - **File download** — receives a list of pending files with pre-signed S3 URLs; downloads PDFs directly from S3.
 - **Vault placement** — mirrors the OneDrive folder structure under a configurable root path (default: `handwritten/`). E.g. `OnyxBoox/Meeting Notes/` → `handwritten/OnyxBoox/Meeting Notes/`.
 - **Conflict handling** — OneDrive version always wins; existing vault files are overwritten.
@@ -178,7 +186,7 @@ tags:
 
 ### Phase 1 — PDF Sync (current scope)
 
-- Webhook-driven ingestion: OneDrive → S3.
+- Webhook-driven ingestion: OneDrive → SQS → S3, with a DLQ and alarm for failed processor runs. Staged S3 keys preserve the OneDrive folder structure beneath the configured prefix.
 - Plugin polls API, downloads PDFs, writes to vault.
 - Markdown companion with frontmatter from PDF metadata.
 - Manual sync CLI as safety net.
