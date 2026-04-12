@@ -1,7 +1,3 @@
-data "aws_caller_identity" "current" {}
-
-data "aws_region" "current" {}
-
 locals {
   lambda_assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -16,11 +12,13 @@ locals {
 
   staged_bucket_arn = aws_s3_bucket.staged_pdfs.arn
 
-  dynamodb_arn_prefix = "arn:aws:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table"
+  aws_region              = "eu-west-2"
+  file_records_table_name = "petroglyph-file-records-${terraform.workspace}"
+  file_records_table_arn  = "arn:aws:dynamodb:${local.aws_region}:*:table/${local.file_records_table_name}"
 
-  ssm_arn_prefix = "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter"
+  ssm_arn_prefix = "arn:aws:ssm:${local.aws_region}:*:parameter"
 
-  lambda_log_group_arn_prefix = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda"
+  lambda_log_group_arn_prefix = "arn:aws:logs:${local.aws_region}:*:log-group:/aws/lambda"
 }
 
 # ---------------------------------------------------------------------------
@@ -54,9 +52,9 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
           "dynamodb:Query",
         ]
         Resource = [
-          "${local.dynamodb_arn_prefix}/users",
-          "${local.dynamodb_arn_prefix}/refresh_tokens",
-          "${local.dynamodb_arn_prefix}/sync_profiles",
+          aws_dynamodb_table.users.arn,
+          aws_dynamodb_table.refresh_tokens.arn,
+          aws_dynamodb_table.sync_profiles.arn,
         ]
       },
       {
@@ -114,10 +112,10 @@ resource "aws_iam_role_policy" "petroglyph_ingest_onedrive_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "S3PutObject"
+        Sid      = "SQSSendMessage"
         Effect   = "Allow"
-        Action   = "s3:PutObject"
-        Resource = "${local.staged_bucket_arn}/*"
+        Action   = "sqs:SendMessage"
+        Resource = aws_sqs_queue.ingest.arn
       },
       {
         Sid    = "SSMGetParameter"
@@ -162,27 +160,38 @@ resource "aws_iam_role_policy" "petroglyph_processor_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "DynamoDBReadWrite"
+        Sid    = "DynamoDBWriteFileRecords"
         Effect = "Allow"
         Action = [
-          "dynamodb:GetItem",
           "dynamodb:PutItem",
           "dynamodb:UpdateItem",
-          "dynamodb:Query",
         ]
-        Resource = [
-          "${local.dynamodb_arn_prefix}/file_records",
-          "${local.dynamodb_arn_prefix}/sync_profiles",
-        ]
+        Resource = local.file_records_table_arn
       },
       {
-        Sid    = "S3GetDelete"
+        Sid      = "S3PutObject"
+        Effect   = "Allow"
+        Action   = "s3:PutObject"
+        Resource = "${local.staged_bucket_arn}/*"
+      },
+      {
+        Sid    = "SSMReadWriteOnedriveTokens"
         Effect = "Allow"
         Action = [
-          "s3:GetObject",
-          "s3:DeleteObject",
+          "ssm:GetParameter",
+          "ssm:PutParameter",
         ]
-        Resource = "${local.staged_bucket_arn}/*"
+        Resource = "${local.ssm_arn_prefix}/petroglyph/onedrive/*"
+      },
+      {
+        Sid    = "SQSReadIngestQueue"
+        Effect = "Allow"
+        Action = [
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:ReceiveMessage",
+        ]
+        Resource = aws_sqs_queue.ingest.arn
       },
       {
         Sid    = "CloudWatchLogsWrite"

@@ -12,6 +12,26 @@ variable "api_zip_s3_key" {
   type        = string
 }
 
+variable "ingest_onedrive_zip_s3_bucket" {
+  description = "S3 bucket containing the ingest-onedrive Lambda deployment zip"
+  type        = string
+}
+
+variable "ingest_onedrive_zip_s3_key" {
+  description = "S3 key of the ingest-onedrive Lambda deployment zip"
+  type        = string
+}
+
+variable "processor_zip_s3_bucket" {
+  description = "S3 bucket containing the processor Lambda deployment zip"
+  type        = string
+}
+
+variable "processor_zip_s3_key" {
+  description = "S3 key of the processor Lambda deployment zip"
+  type        = string
+}
+
 variable "retention_days" {
   description = "Number of days after which staged PDF objects are expired"
   type        = number

@@ -36,7 +36,7 @@ resource "aws_lambda_function" "petroglyph_api" {
 }
 
 resource "aws_lambda_function_url" "petroglyph_api" {
-  function_name      = aws_lambda_function.petroglyph_api.function_name
+  function_name = aws_lambda_function.petroglyph_api.function_name
   # auth_type will be tightened to AWS_IAM with API Gateway in dv4.7.4
   authorization_type = "NONE"
 }
