@@ -283,6 +283,12 @@ interface SyncProfile {
 }
 ```
 
+### Plugin UI
+
+Profiles can be created, edited, and deleted from the plugin's Obsidian settings panel. Each operation calls the corresponding API endpoint (`POST /profiles`, `PATCH /profiles/:id`, `DELETE /profiles/:id`) and then refreshes the local state via `loadProfiles()`.
+
+On deletion, `activeProfileId` is cleared locally *before* `loadProfiles()` is called. This ordering is deliberate: `loadProfiles()` uses the locally-stored ID as a fallback when the API returns no `active: true` profile, so clearing it first ensures the deleted profile is not silently re-applied by the fallback path.
+
 ### Device Behaviour
 
 - Each plugin instance selects **one active profile** from the user's profile list (Phase 1).
