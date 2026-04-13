@@ -74,7 +74,29 @@ describe("listProfiles", () => {
       TableName: TABLE_NAME,
       KeyConditionExpression: "userId = :userId",
       ExpressionAttributeValues: { ":userId": "user-1" },
+      ExclusiveStartKey: undefined,
     });
+  });
+
+  it("handles multi-page pagination by fetching all pages", async () => {
+    const profile2: SyncProfile = { ...testProfile, profileId: "prof-2" };
+    const lastKey = { userId: "user-1", profileId: "prof-1" };
+    let callCount = 0;
+    const client = makeClient(() => {
+      callCount += 1;
+      if (callCount === 1) {
+        return { Items: [testProfile], LastEvaluatedKey: lastKey };
+      }
+      return { Items: [profile2] };
+    });
+
+    const result = await listProfiles(client, TABLE_NAME, "user-1");
+
+    expect(result).toEqual([testProfile, profile2]);
+    const { send } = client as unknown as { send: ReturnType<typeof vi.fn> };
+    expect(send).toHaveBeenCalledTimes(2);
+    const secondCall = send.mock.calls[1] as [{ input: { ExclusiveStartKey: unknown } }];
+    expect(secondCall[0].input.ExclusiveStartKey).toEqual(lastKey);
   });
 });
 

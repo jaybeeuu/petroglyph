@@ -33,15 +33,27 @@ export async function listProfiles(
   tableName: string,
   userId: string,
 ): Promise<SyncProfile[]> {
-  const result = await client.send(
-    new QueryCommand({
-      TableName: tableName,
-      KeyConditionExpression: "userId = :userId",
-      ExpressionAttributeValues: { ":userId": userId },
-    }),
-  );
+  const items: { [key: string]: unknown }[] = [];
+  let lastEvaluatedKey: { [key: string]: unknown } | undefined;
 
-  return (result.Items ?? []).map((item) => syncProfileSchema.parse(item));
+  do {
+    const result = await client.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "userId = :userId",
+        ExpressionAttributeValues: { ":userId": userId },
+        ExclusiveStartKey: lastEvaluatedKey,
+      }),
+    );
+
+    for (const item of result.Items ?? []) {
+      items.push(item);
+    }
+
+    lastEvaluatedKey = result.LastEvaluatedKey;
+  } while (lastEvaluatedKey !== undefined);
+
+  return items.map((item) => syncProfileSchema.parse(item));
 }
 
 export async function putProfile(
