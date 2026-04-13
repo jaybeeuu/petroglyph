@@ -80,10 +80,7 @@ async function fetchStoredReconnectRequired(userId: string): Promise<boolean> {
     );
     const { oneDriveStatus } = parseUserStatus(result.Item);
 
-    if (
-      oneDriveStatus === "reconnect_required" ||
-      oneDriveStatus === "disconnected"
-    ) {
+    if (oneDriveStatus === "reconnect_required" || oneDriveStatus === "disconnected") {
       return true;
     }
     return false;
@@ -93,9 +90,7 @@ async function fetchStoredReconnectRequired(userId: string): Promise<boolean> {
   }
 }
 
-export async function handleStatus(
-  c: Context<{ Variables: AppVariables }>,
-): Promise<Response> {
+export async function handleStatus(c: Context<{ Variables: AppVariables }>): Promise<Response> {
   const username = c.get("username");
   const userId = c.get("userId");
 
@@ -112,8 +107,7 @@ export async function handleStatus(
   const body: StatusResponse = {
     github: { connected: true, username },
     oneDrive: {
-      connected:
-        oneDriveStatus === "connected" && syncProfileStatus.oneDriveConnected,
+      connected: oneDriveStatus === "connected" && syncProfileStatus.oneDriveConnected,
     },
     oneDriveStatus,
   };

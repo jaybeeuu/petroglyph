@@ -21,12 +21,14 @@ describe("GET /status", () => {
   });
 
   beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
     resetKeyCache();
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
     resetKeyCache();
   });
 
@@ -101,7 +103,7 @@ describe("GET /status", () => {
       });
 
       expect(res.status).toBe(200);
-      const body = await res.json() as {
+      const body = (await res.json()) as {
         oneDrive: { connected: boolean };
         oneDriveStatus: string;
       };
@@ -118,7 +120,7 @@ describe("GET /status", () => {
       });
 
       expect(res.status).toBe(200);
-      const body = await res.json() as {
+      const body = (await res.json()) as {
         oneDrive: { connected: boolean };
         oneDriveStatus: string;
       };
@@ -141,7 +143,7 @@ describe("GET /status", () => {
       });
 
       expect(res.status).toBe(200);
-      const body = await res.json() as {
+      const body = (await res.json()) as {
         oneDrive: { connected: boolean };
         oneDriveStatus: string;
       };
@@ -165,7 +167,7 @@ describe("GET /status", () => {
       });
 
       expect(res.status).toBe(200);
-      const body = await res.json() as {
+      const body = (await res.json()) as {
         oneDrive: { connected: boolean };
         oneDriveStatus: string;
       };
@@ -189,7 +191,7 @@ describe("GET /status", () => {
       });
 
       expect(res.status).toBe(200);
-      const body = await res.json() as {
+      const body = (await res.json()) as {
         oneDrive: { connected: boolean };
         oneDriveStatus: string;
       };
@@ -213,7 +215,7 @@ describe("GET /status", () => {
       });
 
       expect(res.status).toBe(200);
-      const body = await res.json() as {
+      const body = (await res.json()) as {
         oneDrive: { connected: boolean };
         oneDriveStatus: string;
       };
@@ -237,7 +239,7 @@ describe("GET /status", () => {
       });
 
       expect(res.status).toBe(200);
-      const body = await res.json() as {
+      const body = (await res.json()) as {
         oneDrive: { connected: boolean };
         oneDriveStatus: string;
       };
@@ -261,7 +263,7 @@ describe("GET /status", () => {
       });
 
       expect(res.status).toBe(200);
-      const body = await res.json() as {
+      const body = (await res.json()) as {
         oneDrive: { connected: boolean };
         oneDriveStatus: string;
       };
@@ -278,7 +280,7 @@ describe("GET /status", () => {
       });
 
       expect(res.status).toBe(200);
-      const body = await res.json() as {
+      const body = (await res.json()) as {
         oneDrive: { connected: boolean };
         oneDriveStatus: string;
       };

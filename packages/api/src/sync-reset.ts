@@ -71,11 +71,7 @@ function parseUnprocessedFileRecordKeys(
   }
 
   return tableRequests.flatMap((tableRequest) => {
-    if (
-      typeof tableRequest !== "object" ||
-      tableRequest === null ||
-      Array.isArray(tableRequest)
-    ) {
+    if (typeof tableRequest !== "object" || tableRequest === null || Array.isArray(tableRequest)) {
       return [];
     }
 
@@ -135,19 +131,14 @@ async function deleteFileRecordBatch(fileRecordKeys: FileRecordKey[]): Promise<v
       }),
     );
 
-    pendingFileRecordKeys = parseUnprocessedFileRecordKeys(
-      result.UnprocessedItems,
-      tableName,
-    );
+    pendingFileRecordKeys = parseUnprocessedFileRecordKeys(result.UnprocessedItems, tableName);
 
     if (pendingFileRecordKeys.length === 0) {
       return;
     }
   }
 
-  throw new Error(
-    `Failed to delete file records after ${MAX_BATCH_DELETE_ATTEMPTS} attempts`,
-  );
+  throw new Error(`Failed to delete file records after ${MAX_BATCH_DELETE_ATTEMPTS} attempts`);
 }
 
 async function deleteFileRecords(profileId: string): Promise<void> {

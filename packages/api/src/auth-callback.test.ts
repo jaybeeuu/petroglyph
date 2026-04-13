@@ -1,25 +1,6 @@
-import {
-  DeleteCommand,
-  GetCommand,
-  PutCommand,
-  UpdateCommand,
-} from "@aws-sdk/lib-dynamodb";
-import {
-  exportPKCS8,
-  generateKeyPair,
-  importSPKI,
-  jwtVerify,
-  exportSPKI,
-} from "jose";
-import {
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { DeleteCommand, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { exportPKCS8, generateKeyPair, importSPKI, jwtVerify, exportSPKI } from "jose";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockSend = vi.hoisted(() => vi.fn());
 
@@ -53,7 +34,11 @@ const GITHUB_USER_ID = 12345;
 const GITHUB_USERNAME = "testuser";
 const GITHUB_ACCESS_TOKEN = "gha_test_token_xyz";
 
-function makeStateItem(overrides: Partial<{ ttl: number; type: string }> = {}) {
+function makeStateItem(overrides: Partial<{ ttl: number; type: string }> = {}): {
+  token: string;
+  type: string;
+  ttl: number;
+} {
   return {
     token: VALID_STATE,
     type: "oauth_state",
@@ -62,18 +47,18 @@ function makeStateItem(overrides: Partial<{ ttl: number; type: string }> = {}) {
   };
 }
 
-function makeGitHubTokenResponse() {
+function makeGitHubTokenResponse(): { access_token: string } {
   return { access_token: GITHUB_ACCESS_TOKEN };
 }
 
-function makeGitHubUserResponse() {
+function makeGitHubUserResponse(): { id: number; login: string } {
   return { id: GITHUB_USER_ID, login: GITHUB_USERNAME };
 }
 
 function setupDynamoMock(
   stateItem: object | undefined,
   options: { rejectGet?: boolean } = {},
-) {
+): void {
   mockSend.mockImplementation((cmd: unknown) => {
     if (cmd instanceof GetCommand) {
       if (options.rejectGet) return Promise.reject(new Error("DynamoDB error"));
@@ -86,7 +71,7 @@ function setupDynamoMock(
   });
 }
 
-function setupFetchMock() {
+function setupFetchMock(): void {
   mockFetch.mockImplementation((url: string) => {
     if (url === "https://github.com/login/oauth/access_token") {
       return Promise.resolve({
@@ -100,14 +85,11 @@ function setupFetchMock() {
         ok: true,
       } as Response);
     }
-    return Promise.reject(new Error(`Unexpected fetch: ${String(url)}`));
+    return Promise.reject(new Error(`Unexpected fetch: ${url}`));
   });
 }
 
-async function postCallback(body: {
-  code?: string;
-  state?: string;
-}): Promise<Response> {
+async function postCallback(body: { code?: string; state?: string }): Promise<Response> {
   return app.request("/auth/callback", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -119,6 +101,7 @@ async function postCallback(body: {
 
 describe("POST /auth/callback", () => {
   beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubEnv("GITHUB_CLIENT_ID", "test-client-id");
     vi.stubEnv("GITHUB_CLIENT_SECRET", "test-client-secret");
     vi.stubEnv("JWT_PRIVATE_KEY", privateKeyPem);
@@ -128,6 +111,7 @@ describe("POST /auth/callback", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
   // ── Behaviour 1: missing / invalid state → 401 ─────────────────────────
@@ -145,9 +129,7 @@ describe("POST /auth/callback", () => {
     // ── Behaviour 2: expired state → 401 ─────────────────────────────────
 
     it("returns 401 when state TTL is in the past", async () => {
-      setupDynamoMock(
-        makeStateItem({ ttl: Math.floor(Date.now() / 1000) - 1 }),
-      );
+      setupDynamoMock(makeStateItem({ ttl: Math.floor(Date.now() / 1000) - 1 }));
       setupFetchMock();
 
       const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
@@ -173,9 +155,7 @@ describe("POST /auth/callback", () => {
 
     await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
-    const deleteCalls = mockSend.mock.calls.filter(
-      ([cmd]) => cmd instanceof DeleteCommand,
-    );
+    const deleteCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof DeleteCommand);
     expect(deleteCalls).toHaveLength(1);
     const [deleteCmd] = deleteCalls[0] as [{ input: { Key: { token: string } } }];
     expect(deleteCmd.input.Key.token).toBe(VALID_STATE);
@@ -214,13 +194,11 @@ describe("POST /auth/callback", () => {
 
     await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
-    const userCall = mockFetch.mock.calls.find(
-      (args) => args[0] === "https://api.github.com/user",
-    );
+    const userCall = mockFetch.mock.calls.find((args) => args[0] === "https://api.github.com/user");
     expect(userCall).toBeDefined();
 
     const [, options] = userCall as [string, RequestInit];
-    const headers = options.headers as Record<string, string>;
+    const headers = options.headers as { [key: string]: string };
     expect(headers["Authorization"]).toBe(`Bearer ${GITHUB_ACCESS_TOKEN}`);
   });
 
@@ -233,24 +211,20 @@ describe("POST /auth/callback", () => {
     vi.stubEnv("USERS_TABLE", "petroglyph-users-test");
     await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
-    const updateCalls = mockSend.mock.calls.filter(
-      ([cmd]) => cmd instanceof UpdateCommand,
-    );
+    const updateCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof UpdateCommand);
     expect(updateCalls).toHaveLength(1);
     const [updateCmd] = updateCalls[0] as [
       {
         input: {
           TableName: string;
           Key: { userId: string };
-          ExpressionAttributeValues: Record<string, string>;
+          ExpressionAttributeValues: { [key: string]: string };
         };
       },
     ];
     expect(updateCmd.input.TableName).toBe("petroglyph-users-test");
     expect(updateCmd.input.Key.userId).toBe(String(GITHUB_USER_ID));
-    expect(updateCmd.input.ExpressionAttributeValues[":username"]).toBe(
-      GITHUB_USERNAME,
-    );
+    expect(updateCmd.input.ExpressionAttributeValues[":username"]).toBe(GITHUB_USERNAME);
   });
 
   // ── Behaviour 7: JWT issued RS256 with 1hr expiry ────────────────────────
@@ -292,9 +266,7 @@ describe("POST /auth/callback", () => {
 
     const body = (await res.json()) as { refreshToken: string };
 
-    const putCalls = mockSend.mock.calls.filter(
-      ([cmd]) => cmd instanceof PutCommand,
-    );
+    const putCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof PutCommand);
     expect(putCalls).toHaveLength(1);
     const [putCmd] = putCalls[0] as [
       {
@@ -311,9 +283,7 @@ describe("POST /auth/callback", () => {
 
     // stored token should be the SHA-256 hash of the returned UUID, not the UUID itself
     const { createHash } = await import("node:crypto");
-    const expectedHash = createHash("sha256")
-      .update(body.refreshToken)
-      .digest("hex");
+    const expectedHash = createHash("sha256").update(body.refreshToken).digest("hex");
     expect(putCmd.input.Item.token).toBe(expectedHash);
 
     const ninetyDays = 90 * 24 * 60 * 60;
@@ -355,7 +325,7 @@ describe("POST /auth/callback", () => {
           json: () => Promise.resolve({ error: "bad_credentials" }),
         } as Response);
       }
-      return Promise.reject(new Error(`Unexpected fetch: ${String(url)}`));
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
     });
 
     const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
@@ -380,7 +350,7 @@ describe("POST /auth/callback", () => {
           json: () => Promise.resolve({ error: "forbidden" }),
         } as Response);
       }
-      return Promise.reject(new Error(`Unexpected fetch: ${String(url)}`));
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
     });
 
     const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });

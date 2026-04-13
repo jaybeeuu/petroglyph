@@ -31,9 +31,7 @@ describe("auth middleware", () => {
     resetKeyCache();
   });
 
-  async function makeValidToken(
-    claims: Record<string, unknown> = {},
-  ): Promise<string> {
+  async function makeValidToken(claims: { [key: string]: unknown } = {}): Promise<string> {
     return new SignJWT({ username: "testuser", ...claims })
       .setProtectedHeader({ alg: "RS256" })
       .setSubject("user-123")

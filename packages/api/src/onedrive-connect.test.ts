@@ -1,15 +1,7 @@
 import { PutParameterCommand } from "@aws-sdk/client-ssm";
 import { DeleteCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
-import {
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockDbSend = vi.hoisted(() => vi.fn());
 const mockSsmSend = vi.hoisted(() => vi.fn().mockResolvedValue({}));
@@ -109,7 +101,7 @@ function setupFetchMock(options: { msTokenOk?: boolean; graphOk?: boolean } = {}
         json: () => Promise.resolve({ id: "sub-123" }),
       } as Response);
     }
-    return Promise.reject(new Error(`Unexpected fetch: ${String(url)}`));
+    return Promise.reject(new Error(`Unexpected fetch: ${url}`));
   });
 }
 
@@ -122,10 +114,7 @@ async function makeToken(): Promise<string> {
     .sign(privateKey);
 }
 
-async function postConnect(body: {
-  code?: string;
-  state?: string;
-}): Promise<Response> {
+async function postConnect(body: { code?: string; state?: string }): Promise<Response> {
   const token = await makeToken();
   return app.request("/onedrive/connect", {
     method: "POST",
@@ -141,6 +130,7 @@ async function postConnect(body: {
 
 describe("POST /onedrive/connect", () => {
   beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
     vi.stubEnv("MICROSOFT_CLIENT_ID", "test-ms-client-id");
     vi.stubEnv("MICROSOFT_REDIRECT_URI", "obsidian://petroglyph/onedrive/callback");
@@ -154,6 +144,7 @@ describe("POST /onedrive/connect", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
     resetKeyCache();
   });
 
@@ -210,9 +201,7 @@ describe("POST /onedrive/connect", () => {
     });
 
     it("returns 401 when state token TTL is in the past", async () => {
-      setupDynamoMock(
-        makeStateItem({ ttl: Math.floor(Date.now() / 1000) - 1 }),
-      );
+      setupDynamoMock(makeStateItem({ ttl: Math.floor(Date.now() / 1000) - 1 }));
       setupFetchMock();
 
       const res = await postConnect({ code: VALID_CODE, state: VALID_STATE });
@@ -229,13 +218,9 @@ describe("POST /onedrive/connect", () => {
 
     await postConnect({ code: VALID_CODE, state: VALID_STATE });
 
-    const deleteCalls = mockDbSend.mock.calls.filter(
-      ([cmd]) => cmd instanceof DeleteCommand,
-    );
+    const deleteCalls = mockDbSend.mock.calls.filter(([cmd]) => cmd instanceof DeleteCommand);
     expect(deleteCalls).toHaveLength(1);
-    const [deleteCmd] = deleteCalls[0] as [
-      { input: { Key: { token: string } } },
-    ];
+    const [deleteCmd] = deleteCalls[0] as [{ input: { Key: { token: string } } }];
     expect(deleteCmd.input.Key.token).toBe(VALID_STATE);
   });
 
@@ -248,8 +233,7 @@ describe("POST /onedrive/connect", () => {
     await postConnect({ code: VALID_CODE, state: VALID_STATE });
 
     const tokenCall = mockFetch.mock.calls.find(
-      (args) =>
-        args[0] === "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      (args) => args[0] === "https://login.microsoftonline.com/common/oauth2/v2.0/token",
     );
     expect(tokenCall).toBeDefined();
 
@@ -260,9 +244,7 @@ describe("POST /onedrive/connect", () => {
     expect(sentParams.get("client_id")).toBe("test-ms-client-id");
     expect(sentParams.get("grant_type")).toBe("authorization_code");
     expect(sentParams.get("code")).toBe(VALID_CODE);
-    expect(sentParams.get("redirect_uri")).toBe(
-      "obsidian://petroglyph/onedrive/callback",
-    );
+    expect(sentParams.get("redirect_uri")).toBe("obsidian://petroglyph/onedrive/callback");
     expect(sentParams.get("code_verifier")).toBe(VALID_VERIFIER);
     expect(sentParams.get("scope")).toBe("files.read offline_access");
   });
@@ -288,9 +270,7 @@ describe("POST /onedrive/connect", () => {
     await postConnect({ code: VALID_CODE, state: VALID_STATE });
     const after = Date.now();
 
-    const ssmCalls = mockSsmSend.mock.calls.filter(
-      ([cmd]) => cmd instanceof PutParameterCommand,
-    );
+    const ssmCalls = mockSsmSend.mock.calls.filter(([cmd]) => cmd instanceof PutParameterCommand);
     expect(ssmCalls).toHaveLength(3);
 
     const byName = Object.fromEntries(
@@ -344,7 +324,7 @@ describe("POST /onedrive/connect", () => {
     const [, options] = graphCall as [string, RequestInit];
     expect(options.method).toBe("POST");
 
-    const headers = options.headers as Record<string, string>;
+    const headers = options.headers as { [key: string]: string };
     expect(headers["Authorization"]).toBe(`Bearer ${MS_ACCESS_TOKEN}`);
 
     const sentBody = JSON.parse(options.body as string) as {
@@ -396,16 +376,14 @@ describe("POST /onedrive/connect", () => {
 
     await postConnect({ code: VALID_CODE, state: VALID_STATE });
 
-    const updateCalls = mockDbSend.mock.calls.filter(
-      ([cmd]) => cmd instanceof UpdateCommand,
-    );
+    const updateCalls = mockDbSend.mock.calls.filter(([cmd]) => cmd instanceof UpdateCommand);
     expect(updateCalls).toHaveLength(1);
     const [updateCmd] = updateCalls[0] as [
       {
         input: {
           TableName: string;
           Key: { userId: string; profileId: string };
-          ExpressionAttributeValues: Record<string, unknown>;
+          ExpressionAttributeValues: { [key: string]: unknown };
         };
       },
     ];

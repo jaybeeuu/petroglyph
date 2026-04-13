@@ -1,14 +1,7 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import {
-  GetParameterCommand,
-  PutParameterCommand,
-  SSMClient,
-} from "@aws-sdk/client-ssm";
-import {
-  DynamoDBDocumentClient,
-  PutCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { GetParameterCommand, PutParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
+import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { SQSBatchResponse, SQSEvent, SQSRecord } from "aws-lambda";
 import { z } from "zod";
 
@@ -97,9 +90,7 @@ function extractOneDriveParentPath(parentPath: string): string[] {
     throw new Error(`Invalid OneDrive parentReference.path: ${parentPath}`);
   }
 
-  const relativePath = parentPath
-    .slice(rootIndex + rootMarker.length)
-    .replace(/^\/+|\/+$/g, "");
+  const relativePath = parentPath.slice(rootIndex + rootMarker.length).replace(/^\/+|\/+$/g, "");
 
   return relativePath.length > 0 ? relativePath.split("/") : [];
 }
@@ -172,26 +163,21 @@ async function refreshOneDriveAccessToken(refreshToken: string): Promise<string>
     throw new Error("MICROSOFT_CLIENT_ID env var not set");
   }
 
-  const response = await fetch(
-    "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        client_id: clientId,
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-        scope: "files.read offline_access",
-      }).toString(),
+  const response = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
     },
-  );
+    body: new URLSearchParams({
+      client_id: clientId,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      scope: "files.read offline_access",
+    }).toString(),
+  });
 
   if (!response.ok) {
-    throw new Error(
-      `Microsoft token refresh failed: ${response.status} ${response.statusText}`,
-    );
+    throw new Error(`Microsoft token refresh failed: ${response.status} ${response.statusText}`);
   }
 
   const parsedResponse = tokenResponseSchema.parse(await response.json());
@@ -216,10 +202,7 @@ async function resolveOneDriveAccessToken(): Promise<string> {
   return refreshOneDriveAccessToken(params.refreshToken);
 }
 
-async function fetchDriveItem(
-  resource: string,
-  accessToken: string,
-): Promise<GraphDriveItem> {
+async function fetchDriveItem(resource: string, accessToken: string): Promise<GraphDriveItem> {
   const response = await fetch(`https://graph.microsoft.com/v1.0/${resource}`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -246,8 +229,7 @@ function isPdfDriveItem(driveItem: GraphDriveItem): boolean {
   }
 
   return (
-    driveItem.file.mimeType === "application/pdf" ||
-    driveItem.name.toLowerCase().endsWith(".pdf")
+    driveItem.file.mimeType === "application/pdf" || driveItem.name.toLowerCase().endsWith(".pdf")
   );
 }
 

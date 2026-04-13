@@ -1,18 +1,11 @@
-import {
-  DeleteCommand,
-  GetCommand,
-  PutCommand,
-  UpdateCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { DeleteCommand, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { SignJWT, importPKCS8 } from "jose";
 import { createHash, randomUUID } from "node:crypto";
 import { docClient } from "./db.js";
 
 function refreshTokensTable(): string {
-  return (
-    process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default"
-  );
+  return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
 }
 
 function usersTable(): string {
@@ -46,21 +39,21 @@ class UpstreamError extends Error {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is { [key: string]: unknown } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function hasStringProp<K extends string>(
-  value: Record<string, unknown>,
+  value: { [key: string]: unknown },
   key: K,
-): value is Record<string, unknown> & Record<K, string> {
+): value is { [key: string]: unknown } & { [P in K]: string } {
   return typeof value[key] === "string";
 }
 
 function hasNumberProp<K extends string>(
-  value: Record<string, unknown>,
+  value: { [key: string]: unknown },
   key: K,
-): value is Record<string, unknown> & Record<K, number> {
+): value is { [key: string]: unknown } & { [P in K]: number } {
   return typeof value[key] === "number";
 }
 
@@ -72,11 +65,7 @@ function parseGitHubTokenResponse(data: unknown): GitHubTokenResponse {
 }
 
 function parseGitHubUser(data: unknown): GitHubUser {
-  if (
-    !isRecord(data) ||
-    !hasNumberProp(data, "id") ||
-    !hasStringProp(data, "login")
-  ) {
+  if (!isRecord(data) || !hasNumberProp(data, "id") || !hasStringProp(data, "login")) {
     throw new UpstreamError("Invalid GitHub user response shape");
   }
   return { id: data.id, login: data.login };
@@ -138,9 +127,7 @@ async function fetchGitHubUser(accessToken: string): Promise<GitHubUser> {
   });
 
   if (!response.ok) {
-    throw new UpstreamError(
-      `GitHub user fetch failed: ${response.status} ${response.statusText}`,
-    );
+    throw new UpstreamError(`GitHub user fetch failed: ${response.status} ${response.statusText}`);
   }
 
   return parseGitHubUser(await response.json());
@@ -151,8 +138,7 @@ async function upsertUser(userId: string, username: string): Promise<void> {
     new UpdateCommand({
       TableName: usersTable(),
       Key: { userId },
-      UpdateExpression:
-        "SET username = :username, createdAt = if_not_exists(createdAt, :now)",
+      UpdateExpression: "SET username = :username, createdAt = if_not_exists(createdAt, :now)",
       ExpressionAttributeValues: {
         ":username": username,
         ":now": new Date().toISOString(),
@@ -179,10 +165,7 @@ async function issueJwt(userId: string, username: string): Promise<string> {
     .sign(privateKey);
 }
 
-async function storeRefreshToken(
-  refreshToken: string,
-  userId: string,
-): Promise<void> {
+async function storeRefreshToken(refreshToken: string, userId: string): Promise<void> {
   const hash = createHash("sha256").update(refreshToken).digest("hex");
   const ttl = Math.floor(Date.now() / 1000) + 90 * 24 * 60 * 60;
 

@@ -10,15 +10,11 @@ const SSM_REFRESH_TOKEN = "/petroglyph/onedrive/refresh-token";
 const SSM_TOKEN_EXPIRY = "/petroglyph/onedrive/token-expiry";
 
 function refreshTokensTable(): string {
-  return (
-    process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default"
-  );
+  return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
 }
 
 function syncProfilesTable(): string {
-  return (
-    process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default"
-  );
+  return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
 }
 
 interface ConnectRequestBody {
@@ -46,7 +42,7 @@ class UpstreamError extends Error {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is { [key: string]: unknown } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -125,14 +121,11 @@ async function exchangeCodeForTokens(
     scope: "files.read offline_access",
   });
 
-  const response = await fetch(
-    "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString(),
-    },
-  );
+  const response = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+  });
 
   if (!response.ok) {
     throw new UpstreamError(
@@ -178,21 +171,14 @@ async function storeTokensInSsm(
   ]);
 }
 
-async function registerGraphSubscription(
-  accessToken: string,
-  userId: string,
-): Promise<void> {
+async function registerGraphSubscription(accessToken: string, userId: string): Promise<void> {
   const notificationUrl = process.env["GRAPH_NOTIFICATION_URL"];
   if (!notificationUrl) {
-    console.warn(
-      "[onedrive-connect] GRAPH_NOTIFICATION_URL not configured, skipping subscription",
-    );
+    console.warn("[onedrive-connect] GRAPH_NOTIFICATION_URL not configured, skipping subscription");
     return;
   }
 
-  const expirationDateTime = new Date(
-    Date.now() + 3 * 24 * 60 * 60 * 1000,
-  ).toISOString();
+  const expirationDateTime = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
 
   const response = await fetch("https://graph.microsoft.com/v1.0/subscriptions", {
     method: "POST",
@@ -262,11 +248,7 @@ export async function handleOnedriveConnect(
     throw err;
   }
 
-  await storeTokensInSsm(
-    tokens.access_token,
-    tokens.refresh_token,
-    tokens.expires_in,
-  );
+  await storeTokensInSsm(tokens.access_token, tokens.refresh_token, tokens.expires_in);
 
   const userId = c.get("userId");
   await registerGraphSubscription(tokens.access_token, userId);

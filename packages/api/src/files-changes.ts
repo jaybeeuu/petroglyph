@@ -55,7 +55,7 @@ interface FileRecord {
   filename: string;
   createdAt: string;
   s3Key: string;
-  pageCount?: number;
+  pageCount?: number | undefined;
 }
 
 interface CursorToken {
@@ -190,12 +190,11 @@ export async function handleFilesChanges(c: Context): Promise<Response> {
     }
   }
 
-  const { fileRecords, nextToken } = await readFileRecordPage(
-    query.data.limit,
-    exclusiveStartKey,
-  );
+  const { fileRecords, nextToken } = await readFileRecordPage(query.data.limit, exclusiveStartKey);
 
-  const files = await Promise.all(fileRecords.map(async (fileRecord) => presignFileRecord(fileRecord)));
+  const files = await Promise.all(
+    fileRecords.map(async (fileRecord) => presignFileRecord(fileRecord)),
+  );
 
   return c.json({ files, nextToken });
 }

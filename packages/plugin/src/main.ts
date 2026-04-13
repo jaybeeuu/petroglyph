@@ -126,7 +126,7 @@ export class PetroglyphPlugin extends Plugin {
       const resp = await fetch(`${this._data.apiBaseUrl}/sync/reset`, {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${this._data.jwt}`,
+          Authorization: `Bearer ${this._data.jwt}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ scope: "server" }),
@@ -153,7 +153,7 @@ export class PetroglyphPlugin extends Plugin {
       const resp = await fetch(`${this._data.apiBaseUrl}/sync/reset`, {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${this._data.jwt}`,
+          Authorization: `Bearer ${this._data.jwt}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ scope: "full" }),
@@ -203,7 +203,14 @@ export class PetroglyphPlugin extends Plugin {
       window.clearInterval(this._syncPollIntervalId);
       this._syncPollIntervalId = null;
     }
-    const { jwt: _j, refreshToken: _rt, username: _u, oneDriveConnected: _oc, oneDriveStatus: _os, ...rest } = this._data;
+    const {
+      jwt: _j,
+      refreshToken: _rt,
+      username: _u,
+      oneDriveConnected: _oc,
+      oneDriveStatus: _os,
+      ...rest
+    } = this._data;
     this._data = { ...rest, oneDriveConnected: false };
   }
 
@@ -254,11 +261,7 @@ export class PetroglyphPlugin extends Plugin {
       });
       if (!response.ok) return;
       const body: unknown = await response.json();
-      if (
-        !isRecord(body) ||
-        !hasStringProp(body, "jwt") ||
-        !hasStringProp(body, "refreshToken")
-      ) {
+      if (!isRecord(body) || !hasStringProp(body, "jwt") || !hasStringProp(body, "refreshToken")) {
         return;
       }
       this.setCredentials(body.jwt, body.refreshToken, username);
@@ -336,7 +339,10 @@ export class PetroglyphPlugin extends Plugin {
         await this.app.vault.adapter.mkdir(pdfFolder);
       }
 
-      await this.app.vault.adapter.writeBinary(pdfPath, new Uint8Array(pdfBytes) as unknown as ArrayBuffer);
+      await this.app.vault.adapter.writeBinary(
+        pdfPath,
+        new Uint8Array(pdfBytes) as unknown as ArrayBuffer,
+      );
 
       const frontmatter = [
         "---",
@@ -394,31 +400,25 @@ export class PetroglyphPlugin extends Plugin {
       });
     }
 
-    this.registerObsidianProtocolHandler(
-      "petroglyph/auth/callback",
-      async (params) => {
-        const code = params["code"];
-        const state = params["state"];
-        if (typeof code !== "string" || typeof state !== "string") {
-          new Notice("Login failed: missing code or state");
-          return;
-        }
-        await this.handleAuthCallback({ code, state });
-      },
-    );
+    this.registerObsidianProtocolHandler("petroglyph/auth/callback", async (params) => {
+      const code = params["code"];
+      const state = params["state"];
+      if (typeof code !== "string" || typeof state !== "string") {
+        new Notice("Login failed: missing code or state");
+        return;
+      }
+      await this.handleAuthCallback({ code, state });
+    });
 
-    this.registerObsidianProtocolHandler(
-      "petroglyph/oauth/callback",
-      async (params) => {
-        const code = params["code"];
-        const state = params["state"];
-        if (typeof code !== "string" || typeof state !== "string") {
-          new Notice("OneDrive connection failed: missing code or state");
-          return;
-        }
-        await this.handleOneDriveCallback({ code, state });
-      },
-    );
+    this.registerObsidianProtocolHandler("petroglyph/oauth/callback", async (params) => {
+      const code = params["code"];
+      const state = params["state"];
+      if (typeof code !== "string" || typeof state !== "string") {
+        new Notice("OneDrive connection failed: missing code or state");
+        return;
+      }
+      await this.handleOneDriveCallback({ code, state });
+    });
 
     if (this._data.jwt !== undefined) {
       this.scheduleRefresh(this._data.jwt);

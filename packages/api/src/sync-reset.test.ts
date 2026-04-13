@@ -117,16 +117,10 @@ describe("POST /sync/reset", () => {
     );
     expect(deleteParameterCalls).toHaveLength(1);
 
-    const [deleteParameterCommand] = deleteParameterCalls[0] as [
-      { input: { Name: string } },
-    ];
-    expect(deleteParameterCommand.input.Name).toBe(
-      "/petroglyph/onedrive/delta-token",
-    );
+    const [deleteParameterCommand] = deleteParameterCalls[0] as [{ input: { Name: string } }];
+    expect(deleteParameterCommand.input.Name).toBe("/petroglyph/onedrive/delta-token");
 
-    const queryCalls = mockDbSend.mock.calls.filter(
-      ([command]) => command instanceof QueryCommand,
-    );
+    const queryCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof QueryCommand);
     expect(queryCalls).toHaveLength(1);
 
     const [queryCommand] = queryCalls[0] as [
@@ -151,9 +145,7 @@ describe("POST /sync/reset", () => {
         };
       },
     ];
-    expect(
-      firstBatchWriteCommand.input.RequestItems["petroglyph-file-records-test"],
-    ).toEqual([
+    expect(firstBatchWriteCommand.input.RequestItems["petroglyph-file-records-test"]).toEqual([
       { DeleteRequest: { Key: { profileId: "default", fileId: "file-1" } } },
       { DeleteRequest: { Key: { profileId: "default", fileId: "file-2" } } },
     ]);
@@ -169,9 +161,9 @@ describe("POST /sync/reset", () => {
         };
       },
     ];
-    expect(
-      secondBatchWriteCommand.input.RequestItems["petroglyph-file-records-test"],
-    ).toEqual([{ DeleteRequest: { Key: { profileId: "default", fileId: "file-2" } } }]);
+    expect(secondBatchWriteCommand.input.RequestItems["petroglyph-file-records-test"]).toEqual([
+      { DeleteRequest: { Key: { profileId: "default", fileId: "file-2" } } },
+    ]);
   });
 
   it("returns resetToken=true for a full reset after clearing server state", async () => {
@@ -196,15 +188,11 @@ describe("POST /sync/reset", () => {
     expect(await response.json()).toEqual({ resetToken: true });
 
     expect(
-      mockSsmSend.mock.calls.some(
-        ([command]) => command instanceof DeleteParameterCommand,
-      ),
+      mockSsmSend.mock.calls.some(([command]) => command instanceof DeleteParameterCommand),
     ).toBe(true);
-    expect(
-      mockDbSend.mock.calls.some(([command]) => command instanceof QueryCommand),
-    ).toBe(true);
-    expect(
-      mockDbSend.mock.calls.some(([command]) => command instanceof BatchWriteCommand),
-    ).toBe(true);
+    expect(mockDbSend.mock.calls.some(([command]) => command instanceof QueryCommand)).toBe(true);
+    expect(mockDbSend.mock.calls.some(([command]) => command instanceof BatchWriteCommand)).toBe(
+      true,
+    );
   });
 });

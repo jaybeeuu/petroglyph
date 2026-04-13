@@ -132,7 +132,7 @@ describe("GET /files/changes", () => {
       return Promise.reject(new Error("Unexpected DB call"));
     });
     mockGetSignedUrl.mockImplementation(
-      async (_client: unknown, command: unknown, options: { expiresIn: number }) => {
+      (_client: unknown, command: unknown, options: { expiresIn: number }) => {
         expect(command).toBeInstanceOf(GetObjectCommand);
         const getObjectCommand = command as GetObjectCommand;
         return `signed:${getObjectCommand.input.Key}:${options.expiresIn}`;
@@ -185,7 +185,7 @@ describe("GET /files/changes", () => {
       return Promise.reject(new Error("Unexpected DB call"));
     });
     mockGetSignedUrl.mockImplementation(
-      async (_client: unknown, command: unknown, options: { expiresIn: number }) => {
+      (_client: unknown, command: unknown, options: { expiresIn: number }) => {
         expect(command).toBeInstanceOf(GetObjectCommand);
         const getObjectCommand = command as GetObjectCommand;
         return `signed:${getObjectCommand.input.Key}:${options.expiresIn}`;
@@ -202,9 +202,7 @@ describe("GET /files/changes", () => {
     expect(response.status).toBe(200);
     expect(mockSsmSend).not.toHaveBeenCalled();
 
-    const queryCalls = mockDbSend.mock.calls.filter(
-      ([command]) => command instanceof QueryCommand,
-    );
+    const queryCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof QueryCommand);
     expect(queryCalls).toHaveLength(1);
 
     const [queryCommand] = queryCalls[0] as [

@@ -103,6 +103,7 @@ Implement the Webhook Receiver Lambda (validates the Microsoft Graph change noti
 The API Handler Lambda exposes `GET /files/changes?after={token}&limit={pageSize}` (returns an ordered page of file records as `{ files: [...], nextToken: string | null }`) and `POST /sync/run` (runs a Microsoft Graph delta query, paging through all changes since the last token stored in SSM, and queues new or changed PDF items as `file_records` in DynamoDB with pending status and placeholder S3 keys; non-PDF items are skipped. Returns the count of queued items. Used to catch files missed by webhooks or for manual sync).
 
 **GET /files/changes contract:**
+
 - Accepts an optional `after` cursor (opaque token) and `limit` (page size).
 - Returns `{ files: [...], nextToken: string | null }`.
 - Each file includes a presigned S3 URL for direct download.

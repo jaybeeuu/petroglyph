@@ -66,9 +66,7 @@ describe("PetroglyphPlugin manual sync/reset commands", () => {
     await plugin.resetPluginState();
     expect(plugin._data.changeTokens?.default).toBeUndefined();
     expect(plugin.savePluginData).toHaveBeenCalled();
-    expect(Notice).toHaveBeenCalledWith(
-      "Plugin state reset: local sync token cleared"
-    );
+    expect(Notice).toHaveBeenCalledWith("Plugin state reset: local sync token cleared");
   });
 
   it("resetServerState calls POST /sync/reset with scope=server and shows notice", async () => {
@@ -85,13 +83,16 @@ describe("PetroglyphPlugin manual sync/reset commands", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ scope: "server" }),
-      })
+      }),
     );
     expect(Notice).toHaveBeenCalledWith("Server state reset");
   });
 
   it("fullReset calls POST /sync/reset with scope=full, clears token if resetToken, and shows notice", async () => {
-    const plugin = await makePluginWithMocks({ jwt: "jwt-token", changeTokens: { default: "tok" } });
+    const plugin = await makePluginWithMocks({
+      jwt: "jwt-token",
+      changeTokens: { default: "tok" },
+    });
     global.fetch = vi.fn((...args) => {
       if (typeof args[0] === "string" && args[0].includes("/sync/reset")) {
         return Promise.resolve({
@@ -107,7 +108,7 @@ describe("PetroglyphPlugin manual sync/reset commands", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ scope: "full" }),
-      })
+      }),
     );
     expect(plugin._data.changeTokens?.default).toBeUndefined();
     expect(plugin.savePluginData).toHaveBeenCalled();

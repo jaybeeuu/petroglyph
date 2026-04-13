@@ -12,11 +12,8 @@ async function fetchPublicKeyPem(): Promise<string> {
   const envKey = process.env["JWT_PUBLIC_KEY"];
   if (envKey) return envKey;
 
-  const paramName =
-    process.env["JWT_PUBLIC_KEY_SSM_PATH"] ?? "/petroglyph/jwt/public-key";
-  const result = await ssmClient.send(
-    new GetParameterCommand({ Name: paramName }),
-  );
+  const paramName = process.env["JWT_PUBLIC_KEY_SSM_PATH"] ?? "/petroglyph/jwt/public-key";
+  const result = await ssmClient.send(new GetParameterCommand({ Name: paramName }));
   const key = result.Parameter?.Value;
   if (!key) throw new Error(`JWT public key not found at SSM path: ${paramName}`);
   return key;
@@ -43,8 +40,7 @@ export async function verifyJwt(token: string): Promise<JwtClaims> {
   });
 
   const userId = payload.sub;
-  const username =
-    typeof payload["username"] === "string" ? payload["username"] : undefined;
+  const username = typeof payload["username"] === "string" ? payload["username"] : undefined;
 
   if (!userId || !username) {
     throw new Error("Missing required JWT claims: sub, username");

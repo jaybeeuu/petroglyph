@@ -40,9 +40,15 @@ vi.mock("obsidian", () => ({
     }
     addText(fn: (text: TextStub) => void) {
       const text: TextStub = {
-        setPlaceholder(_: string) { return text; },
-        setValue(_: string) { return text; },
-        onChange(_: (v: string) => Promise<void> | void) { return text; },
+        setPlaceholder(_: string) {
+          return text;
+        },
+        setValue(_: string) {
+          return text;
+        },
+        onChange(_: (v: string) => Promise<void> | void) {
+          return text;
+        },
       };
       fn(text);
       return this;

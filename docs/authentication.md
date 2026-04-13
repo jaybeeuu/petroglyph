@@ -79,11 +79,11 @@ On `onunload` the timer is cancelled.
 
 **`POST /auth/refresh` contract**
 
-| | Shape |
-| --- | --- |
-| Request body | `{ "refreshToken": "<opaque-uuid>" }` |
-| Success response (`200`) | `{ "jwt": "<new-jwt>", "refreshToken": "<new-opaque-uuid>" }` |
-| Failure response | `400` (missing or non-string `refreshToken`), `401` (token invalid / expired / reuse detected), or `5xx` (server error) |
+|                          | Shape                                                                                                                   |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| Request body             | `{ "refreshToken": "<opaque-uuid>" }`                                                                                   |
+| Success response (`200`) | `{ "jwt": "<new-jwt>", "refreshToken": "<new-opaque-uuid>" }`                                                           |
+| Failure response         | `400` (missing or non-string `refreshToken`), `401` (token invalid / expired / reuse detected), or `5xx` (server error) |
 
 On success the plugin calls `setCredentials` with the new `jwt` and `refreshToken`, persists them via `saveData`, and reschedules the next refresh timer.
 
@@ -126,10 +126,10 @@ The plugin periodically calls `GET /status` to determine the current connection 
 }
 ```
 
-| Field | Type | Description |
-| ----- | ---- | ----------- |
-| `github.connected` | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity. |
-| `github.username` | string | The GitHub login extracted from the JWT `username` claim. |
+| Field                | Type    | Description                                                                                                                                                                                                  |
+| -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                                                 |
+| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                                                    |
 | `oneDrive.connected` | boolean | `true` if the user has an active OneDrive connection (`oneDriveConnected === true` on the `sync_profiles` DynamoDB record); `false` if the record is absent, the field is false, or a DynamoDB error occurs. |
 
 Unauthenticated requests (missing or invalid JWT) return `401 { "error": "UNAUTHORIZED" }` from the auth middleware before the handler is reached.
@@ -141,10 +141,12 @@ The plugin uses this response to decide which UI prompts to surface — for exam
 The plugin polls `GET /status` on a **60-second interval** (`window.setInterval`). The call is guarded — polling only runs when a JWT is present. On a successful response the plugin reads `oneDrive.connected` and persists the value as `oneDriveConnected` via Obsidian's `saveData` API.
 
 Polling starts:
+
 - On `onload`, if a stored JWT is present.
 - Immediately after a successful GitHub login (`POST /auth/callback`).
 
 Polling is cancelled (interval cleared, ID set to `null`) in:
+
 - `onunload` — plugin teardown.
 - `clearCredentials` — explicit disconnect from the settings UI.
 
@@ -318,17 +320,17 @@ This table is dual-purpose: it holds both long-lived refresh tokens (issued afte
 
 ### `sync_profiles`
 
-| Attribute     | Type         | Description                      |
-| ------------- | ------------ | -------------------------------- |
-| `userId`      | String (PK)  | FK to `users`                    |
-| `profileId`   | String (SK)  | Profile identifier. The default profile uses the literal value `"default"`; additional profiles use UUIDs. |
-| `name`        | String       | Human-readable profile name      |
-| `source`      | Map          | Provider, folder path, folder ID |
-| `destination` | Map          | Vault path                       |
-| `settings`    | Map          | Conflict mode, deletion mode     |
-| `createdAt`        | String       | ISO 8601                         |
-| `updatedAt`        | String       | ISO 8601                         |
-| `oneDriveConnected` | Boolean?    | `true` once OneDrive is connected via `POST /onedrive/connect` |
+| Attribute           | Type        | Description                                                                                                |
+| ------------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
+| `userId`            | String (PK) | FK to `users`                                                                                              |
+| `profileId`         | String (SK) | Profile identifier. The default profile uses the literal value `"default"`; additional profiles use UUIDs. |
+| `name`              | String      | Human-readable profile name                                                                                |
+| `source`            | Map         | Provider, folder path, folder ID                                                                           |
+| `destination`       | Map         | Vault path                                                                                                 |
+| `settings`          | Map         | Conflict mode, deletion mode                                                                               |
+| `createdAt`         | String      | ISO 8601                                                                                                   |
+| `updatedAt`         | String      | ISO 8601                                                                                                   |
+| `oneDriveConnected` | Boolean?    | `true` once OneDrive is connected via `POST /onedrive/connect`                                             |
 
 `userId` as partition key means all profiles for a user are co-located, making list-by-user the primary key query rather than a GSI scan.
 

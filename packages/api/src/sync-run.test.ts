@@ -99,10 +99,7 @@ describe("POST /sync/run", () => {
           });
         }
 
-        if (
-          command.input.Name === "/petroglyph/onedrive/delta-token" &&
-          deltaToken !== undefined
-        ) {
+        if (command.input.Name === "/petroglyph/onedrive/delta-token" && deltaToken !== undefined) {
           return Promise.resolve({
             Parameter: { Value: deltaToken },
           });
@@ -150,21 +147,14 @@ describe("POST /sync/run", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ queued: 1 });
 
-    const [firstFetchUrl, firstFetchOptions] = mockFetch.mock.calls[0] as [
-      string,
-      RequestInit,
-    ];
-    expect(firstFetchUrl).toBe(
-      "https://graph.microsoft.com/v1.0/me/drive/root:/OnyxBoox:/delta",
-    );
+    const [firstFetchUrl, firstFetchOptions] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(firstFetchUrl).toBe("https://graph.microsoft.com/v1.0/me/drive/root:/OnyxBoox:/delta");
     expect(firstFetchOptions.method).toBe("GET");
     expect((firstFetchOptions.headers as { Authorization: string }).Authorization).toBe(
       "Bearer onedrive-access-token",
     );
 
-    const putItemCalls = mockDbSend.mock.calls.filter(
-      ([command]) => command instanceof PutCommand,
-    );
+    const putItemCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof PutCommand);
     expect(putItemCalls).toHaveLength(1);
 
     const [putCommand] = putItemCalls[0] as [
@@ -256,9 +246,9 @@ describe("POST /sync/run", () => {
       "https://graph.microsoft.com/v1.0/me/drive/root:/OnyxBoox:/delta?token=delta-token-1",
     );
     expect(incrementalFetchOptions.method).toBe("GET");
-    expect(
-      (incrementalFetchOptions.headers as { Authorization: string }).Authorization,
-    ).toBe("Bearer onedrive-access-token");
+    expect((incrementalFetchOptions.headers as { Authorization: string }).Authorization).toBe(
+      "Bearer onedrive-access-token",
+    );
 
     const [nextPageFetchUrl, nextPageFetchOptions] = mockFetch.mock.calls[1] as [
       string,
@@ -269,9 +259,7 @@ describe("POST /sync/run", () => {
     );
     expect(nextPageFetchOptions.method).toBe("GET");
 
-    const putItemCalls = mockDbSend.mock.calls.filter(
-      ([command]) => command instanceof PutCommand,
-    );
+    const putItemCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof PutCommand);
     expect(putItemCalls).toHaveLength(2);
 
     const queuedFileIds = putItemCalls.map(
@@ -288,9 +276,7 @@ describe("POST /sync/run", () => {
       ([command]) => command instanceof PutParameterCommand,
     );
     expect(putParameterCalls).toHaveLength(1);
-    const [putParameterCommand] = putParameterCalls[0] as [
-      { input: { Value: string } },
-    ];
+    const [putParameterCommand] = putParameterCalls[0] as [{ input: { Value: string } }];
     expect(putParameterCommand.input.Value).toBe("delta-token-2");
   });
 
@@ -324,9 +310,7 @@ describe("POST /sync/run", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ queued: 0 });
 
-    const putItemCalls = mockDbSend.mock.calls.filter(
-      ([command]) => command instanceof PutCommand,
-    );
+    const putItemCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof PutCommand);
     expect(putItemCalls).toHaveLength(0);
 
     const putParameterCalls = mockSsmSend.mock.calls.filter(
@@ -378,24 +362,14 @@ describe("POST /sync/run", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ queued: 1 });
 
-    const [refreshUrl, refreshOptions] = mockFetch.mock.calls[0] as [
-      string,
-      RequestInit,
-    ];
-    expect(refreshUrl).toBe(
-      "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-    );
+    const [refreshUrl, refreshOptions] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(refreshUrl).toBe("https://login.microsoftonline.com/common/oauth2/v2.0/token");
     expect(refreshOptions.method).toBe("POST");
 
-    const [graphUrl, graphOptions] = mockFetch.mock.calls[1] as [
-      string,
-      RequestInit,
-    ];
-    expect(graphUrl).toBe(
-      "https://graph.microsoft.com/v1.0/me/drive/root:/OnyxBoox:/delta",
+    const [graphUrl, graphOptions] = mockFetch.mock.calls[1] as [string, RequestInit];
+    expect(graphUrl).toBe("https://graph.microsoft.com/v1.0/me/drive/root:/OnyxBoox:/delta");
+    expect((graphOptions.headers as { Authorization: string }).Authorization).toBe(
+      "Bearer fresh-access-token",
     );
-    expect(
-      (graphOptions.headers as { Authorization: string }).Authorization,
-    ).toBe("Bearer fresh-access-token");
   });
 });

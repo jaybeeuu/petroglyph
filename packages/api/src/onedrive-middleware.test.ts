@@ -1,4 +1,5 @@
 import { GetParameterCommand, PutParameterCommand } from "@aws-sdk/client-ssm";
+import type { Context } from "hono";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppVariables } from "./auth-middleware.js";
@@ -72,10 +73,11 @@ function setupFetchMock(
 
 function makeTestApp(): Hono<{ Variables: AppVariables }> {
   const app = new Hono<{ Variables: AppVariables }>();
-  app.use("*", (c, next) => onedriveMiddleware(c, next));
-  app.get("/test", (c) =>
-    c.json({ token: c.get("onedriveAccessToken") ?? null }),
+  app.use("*", (c, next) =>
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    onedriveMiddleware(c as unknown as Context<{ Variables: AppVariables }>, next),
   );
+  app.get("/test", (c) => c.json({ token: c.get("onedriveAccessToken") ?? null }));
   return app;
 }
 
@@ -136,11 +138,9 @@ describe("onedriveMiddleware", () => {
       expect(mockFetch).toHaveBeenCalledOnce();
       const [url, init] = mockFetch.mock.calls[0] as [
         string,
-        { method: string; headers: Record<string, string>; body: string },
+        { method: string; headers: { [key: string]: string }; body: string },
       ];
-      expect(url).toBe(
-        "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-      );
+      expect(url).toBe("https://login.microsoftonline.com/common/oauth2/v2.0/token");
       expect(init.method).toBe("POST");
 
       const params = new URLSearchParams(init.body);
@@ -158,33 +158,26 @@ describe("onedriveMiddleware", () => {
       const app = makeTestApp();
       await app.request("/test");
 
-      const putCalls = mockSsmSend.mock.calls.filter(
-        ([cmd]) => cmd instanceof PutParameterCommand,
-      );
+      const putCalls = mockSsmSend.mock.calls.filter(([cmd]) => cmd instanceof PutParameterCommand);
       expect(putCalls).toHaveLength(3);
 
       const putInputs = putCalls.map(
-        ([cmd]) =>
-          (cmd as { input: { Name: string; Value: string; Overwrite: boolean } })
-            .input,
+        ([cmd]) => (cmd as { input: { Name: string; Value: string; Overwrite: boolean } }).input,
       );
 
-      const accessTokenPut = putInputs.find(
-        (i) => i.Name === SSM_ACCESS_TOKEN,
-      );
+      const accessTokenPut = putInputs.find((i) => i.Name === SSM_ACCESS_TOKEN);
       expect(accessTokenPut?.Value).toBe(NEW_ACCESS_TOKEN);
       expect(accessTokenPut?.Overwrite).toBe(true);
 
-      const refreshTokenPut = putInputs.find(
-        (i) => i.Name === SSM_REFRESH_TOKEN,
-      );
+      const refreshTokenPut = putInputs.find((i) => i.Name === SSM_REFRESH_TOKEN);
       expect(refreshTokenPut?.Value).toBe(NEW_REFRESH_TOKEN);
       expect(refreshTokenPut?.Overwrite).toBe(true);
 
       const expiryPut = putInputs.find((i) => i.Name === SSM_TOKEN_EXPIRY);
       expect(expiryPut?.Overwrite).toBe(true);
       expect(typeof expiryPut?.Value).toBe("string");
-      expect(() => new Date(expiryPut!.Value)).not.toThrow();
+      if (expiryPut === undefined) throw new Error("expiryPut should be defined");
+      expect(() => new Date(expiryPut.Value)).not.toThrow();
     });
   });
 

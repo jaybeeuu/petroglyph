@@ -12,9 +12,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { docClient } from "./db.js";
 
 function refreshTokensTable(): string {
-  return (
-    process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default"
-  );
+  return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
 }
 
 function usersTable(): string {
@@ -34,7 +32,7 @@ interface UserItem {
   username: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is { [key: string]: unknown } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -50,15 +48,11 @@ function isRefreshTokenItem(value: unknown): value is RefreshTokenItem {
 
 function isUserItem(value: unknown): value is UserItem {
   return (
-    isRecord(value) &&
-    typeof value["userId"] === "string" &&
-    typeof value["username"] === "string"
+    isRecord(value) && typeof value["userId"] === "string" && typeof value["username"] === "string"
   );
 }
 
-async function lookupRefreshToken(
-  hash: string,
-): Promise<RefreshTokenItem | undefined> {
+async function lookupRefreshToken(hash: string): Promise<RefreshTokenItem | undefined> {
   const result = await docClient.send(
     new GetCommand({
       TableName: refreshTokensTable(),
@@ -75,15 +69,14 @@ async function atomicMarkTokenSuperseded(hash: string): Promise<void> {
       TableName: refreshTokensTable(),
       Key: { token: hash },
       UpdateExpression: "SET superseded = :true",
-      ConditionExpression:
-        "superseded = :false OR attribute_not_exists(superseded)",
+      ConditionExpression: "superseded = :false OR attribute_not_exists(superseded)",
       ExpressionAttributeValues: { ":true": true, ":false": false },
     }),
   );
 }
 
 async function deleteAllUserTokens(userId: string): Promise<void> {
-  let exclusiveStartKey: Record<string, unknown> | undefined;
+  let exclusiveStartKey: { [key: string]: unknown } | undefined;
   do {
     const result = await docClient.send(
       new ScanCommand({
@@ -107,9 +100,7 @@ async function deleteAllUserTokens(userId: string): Promise<void> {
         );
       }),
     );
-    exclusiveStartKey = result.LastEvaluatedKey as
-      | Record<string, unknown>
-      | undefined;
+    exclusiveStartKey = result.LastEvaluatedKey as { [key: string]: unknown } | undefined;
   } while (exclusiveStartKey !== undefined);
 }
 
@@ -142,10 +133,7 @@ async function issueJwt(userId: string, username: string): Promise<string> {
     .sign(privateKey);
 }
 
-async function storeNewRefreshToken(
-  refreshToken: string,
-  userId: string,
-): Promise<void> {
+async function storeNewRefreshToken(refreshToken: string, userId: string): Promise<void> {
   const hash = createHash("sha256").update(refreshToken).digest("hex");
   const ttl = Math.floor(Date.now() / 1000) + 90 * 24 * 60 * 60;
 
@@ -191,10 +179,7 @@ export async function handleAuthRefresh(c: Context): Promise<Response> {
     await atomicMarkTokenSuperseded(hash);
   } catch (err) {
     if (err instanceof ConditionalCheckFailedException) {
-      console.warn(
-        "[security] Token reuse detected for userId:",
-        tokenItem.userId,
-      );
+      console.warn("[security] Token reuse detected for userId:", tokenItem.userId);
       await deleteAllUserTokens(tokenItem.userId);
       return c.json({ error: "Token reuse detected" }, 401);
     }

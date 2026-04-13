@@ -89,13 +89,13 @@ pnpm --filter @petroglyph/<name> <script>
 
 Each package should expose the following scripts where applicable:
 
-| Script      | Description                                                                |
-| ----------- | -------------------------------------------------------------------------- |
-| `build`     | Compile TypeScript to `dist/` using `tsc`                                  |
-| `lint`      | Run ESLint over `src/`                                                     |
-| `typecheck` | Type-check without emitting output                                         |
-| `test`      | Run unit and mocked integration tests with Vitest                          |
-| `dev`       | Start the package in development mode using `tsx` for TypeScript execution |
+| Script      | Description                                                                    |
+| ----------- | ------------------------------------------------------------------------------ |
+| `build`     | Compile TypeScript to `dist/` using `tsc`                                      |
+| `lint`      | Run ESLint over `src/`                                                         |
+| `typecheck` | Type-check without emitting output                                             |
+| `test`      | Run unit and mocked integration tests with Vitest                              |
+| `dev`       | Start the package in development mode using `tsx` for TypeScript execution     |
 | `package`   | Produce a Lambda deployment artifact (`lambda.zip`) via `pnpm build` + staging |
 
 See [docs/creating-a-package.md](docs/creating-a-package.md) for the canonical package scaffolding template.
@@ -127,11 +127,11 @@ Set the appropriate variables in your `.env` and follow the package-level instru
 
 The CD workflow (`.github/workflows/cd.yml`) requires three GitHub Actions secrets to be configured on the `production` environment. For full deployment and infrastructure setup instructions, see [docs/ops.md](docs/ops.md).
 
-| Secret                  | Description                                                   |
-| ----------------------- | ------------------------------------------------------------- |
-| `AWS_ROLE_ARN`          | ARN of the IAM role assumed via OIDC for deployments          |
-| `TF_STATE_BUCKET`       | S3 bucket name used to store Terraform remote state           |
-| `LAMBDA_ARTIFACT_BUCKET`| S3 bucket name used to store Lambda deployment ZIP artifacts  |
+| Secret                   | Description                                                  |
+| ------------------------ | ------------------------------------------------------------ |
+| `AWS_ROLE_ARN`           | ARN of the IAM role assumed via OIDC for deployments         |
+| `TF_STATE_BUCKET`        | S3 bucket name used to store Terraform remote state          |
+| `LAMBDA_ARTIFACT_BUCKET` | S3 bucket name used to store Lambda deployment ZIP artifacts |
 
 `TF_STATE_BUCKET` and `LAMBDA_ARTIFACT_BUCKET` may point to the same bucket or separate buckets depending on your infrastructure setup.
 

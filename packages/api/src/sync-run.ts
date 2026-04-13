@@ -100,9 +100,7 @@ function parseGraphDriveFileItem(value: unknown): GraphDriveFileItem | null {
 
   const mimeType = value["file"]["mimeType"];
   const filename = value["name"];
-  const isPdf =
-    mimeType === "application/pdf" ||
-    filename.toLowerCase().endsWith(".pdf");
+  const isPdf = mimeType === "application/pdf" || filename.toLowerCase().endsWith(".pdf");
 
   if (!isPdf) {
     return null;
@@ -119,10 +117,7 @@ function extractDeltaToken(deltaLink: string): string {
   return url.searchParams.get("token") ?? deltaLink;
 }
 
-async function fetchDeltaPage(
-  url: string,
-  accessToken: string,
-): Promise<GraphDeltaPage> {
+async function fetchDeltaPage(url: string, accessToken: string): Promise<GraphDeltaPage> {
   const response = await fetch(url, {
     method: "GET",
     headers: {

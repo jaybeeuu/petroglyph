@@ -3,8 +3,12 @@
 export class App {}
 export class Plugin {
   constructor(_app: unknown, _manifest: unknown) {}
-  loadData(): Promise<unknown> { return Promise.resolve(null); }
-  saveData(_data: unknown): Promise<void> { return Promise.resolve(); }
+  loadData(): Promise<unknown> {
+    return Promise.resolve(null);
+  }
+  saveData(_data: unknown): Promise<void> {
+    return Promise.resolve();
+  }
   addSettingTab(_tab: unknown): void {}
   registerObsidianProtocolHandler(_id: string, _handler: unknown): void {}
 }

@@ -5,8 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { AppVariables } from "./auth-middleware.js";
 import { docClient } from "./db.js";
 
-const TABLE_NAME =
-  process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
+const TABLE_NAME = process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
 
 function generateCodeVerifier(): string {
   return randomBytes(32).toString("base64url");
@@ -38,9 +37,7 @@ export async function handleOnedriveAuthUrl(
     }),
   );
 
-  const url = new URL(
-    "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-  );
+  const url = new URL("https://login.microsoftonline.com/common/oauth2/v2.0/authorize");
   url.searchParams.set("client_id", clientId);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("redirect_uri", redirectUri);

@@ -39,13 +39,11 @@ interface MicrosoftTokenResponse {
   expires_in: number;
 }
 
-function assertMicrosoftTokenResponse(
-  value: unknown,
-): asserts value is MicrosoftTokenResponse {
+function assertMicrosoftTokenResponse(value: unknown): asserts value is MicrosoftTokenResponse {
   if (typeof value !== "object" || value === null) {
     throw new Error("Microsoft token response is not an object");
   }
-  const obj = value as Record<string, unknown>;
+  const obj = value as { [key: string]: unknown };
   if (typeof obj["access_token"] !== "string") {
     throw new Error("Microsoft token response missing string access_token");
   }
@@ -57,9 +55,7 @@ function assertMicrosoftTokenResponse(
   }
 }
 
-export async function refreshOneDriveToken(
-  currentRefreshToken: string,
-): Promise<string> {
+export async function refreshOneDriveToken(currentRefreshToken: string): Promise<string> {
   const clientId = process.env["MICROSOFT_CLIENT_ID"];
   if (!clientId) throw new Error("MICROSOFT_CLIENT_ID env var not set");
 
@@ -70,19 +66,14 @@ export async function refreshOneDriveToken(
     scope: "files.read offline_access",
   });
 
-  const response = await fetch(
-    "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString(),
-    },
-  );
+  const response = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
 
   if (!response.ok) {
-    throw new Error(
-      `Microsoft token refresh failed with status ${response.status}`,
-    );
+    throw new Error(`Microsoft token refresh failed with status ${response.status}`);
   }
 
   const data: unknown = await response.json();

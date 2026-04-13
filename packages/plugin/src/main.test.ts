@@ -34,10 +34,7 @@ async function makePlugin(initialData?: Record<string, unknown>) {
     savedData["data"] = initialData;
   }
 
-  const plugin = new PetroglyphPlugin(
-    {} as App,
-    {} as PluginManifest,
-  );
+  const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
 
   plugin.loadData = vi.fn(async () => savedData["data"] ?? null);
   plugin.saveData = vi.fn(async (data: unknown) => {
@@ -83,9 +80,7 @@ describe("handleAuthCallback", () => {
     expect(plugin.data.jwt).toBe("jwt-token");
     expect(plugin.data.refreshToken).toBe("refresh-token");
     expect(plugin.data.username).toBe("alice");
-    expect(plugin.saveData).toHaveBeenCalledWith(
-      expect.objectContaining({ username: "alice" }),
-    );
+    expect(plugin.saveData).toHaveBeenCalledWith(expect.objectContaining({ username: "alice" }));
     expect(Notice).toHaveBeenCalledWith("Logged in as @alice");
   });
 
@@ -229,9 +224,7 @@ describe("loadPluginData / savePluginData", () => {
     const { plugin } = await makePlugin();
     plugin.setCredentials("jwt-token", "refresh-token", "carol");
     await plugin.savePluginData();
-    expect(plugin.saveData).toHaveBeenCalledWith(
-      expect.objectContaining({ username: "carol" }),
-    );
+    expect(plugin.saveData).toHaveBeenCalledWith(expect.objectContaining({ username: "carol" }));
   });
 });
 
@@ -452,7 +445,12 @@ describe("onload with JWT", () => {
     const jwt = makeTestJwt(Math.floor(Date.now() / 1000) + 3600);
     const { PetroglyphPlugin } = await import("./main.js");
     const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
-    plugin.loadData = vi.fn(async () => ({ jwt, refreshToken: "r", username: "alice", apiBaseUrl: "http://localhost:3000" }));
+    plugin.loadData = vi.fn(async () => ({
+      jwt,
+      refreshToken: "r",
+      username: "alice",
+      apiBaseUrl: "http://localhost:3000",
+    }));
     plugin.saveData = vi.fn();
     plugin.registerObsidianProtocolHandler = vi.fn();
     plugin.addSettingTab = vi.fn();
@@ -715,7 +713,12 @@ describe("status polling lifecycle", () => {
     const jwt = makeTestJwt(Math.floor(Date.now() / 1000) + 3600);
     const { PetroglyphPlugin } = await import("./main.js");
     const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
-    plugin.loadData = vi.fn(async () => ({ jwt, refreshToken: "r", username: "alice", apiBaseUrl: "http://localhost:3000" }));
+    plugin.loadData = vi.fn(async () => ({
+      jwt,
+      refreshToken: "r",
+      username: "alice",
+      apiBaseUrl: "http://localhost:3000",
+    }));
     plugin.saveData = vi.fn();
     plugin.registerObsidianProtocolHandler = vi.fn();
     plugin.addSettingTab = vi.fn();
@@ -777,7 +780,12 @@ describe("status polling lifecycle", () => {
     const jwt = makeTestJwt(Math.floor(Date.now() / 1000) + 3600);
     const { PetroglyphPlugin } = await import("./main.js");
     const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
-    plugin.loadData = vi.fn(async () => ({ jwt, refreshToken: "r", username: "alice", apiBaseUrl: "http://localhost:3000" }));
+    plugin.loadData = vi.fn(async () => ({
+      jwt,
+      refreshToken: "r",
+      username: "alice",
+      apiBaseUrl: "http://localhost:3000",
+    }));
     plugin.saveData = vi.fn();
     plugin.registerObsidianProtocolHandler = vi.fn();
     plugin.addSettingTab = vi.fn();
@@ -857,9 +865,7 @@ describe("sync poller", () => {
     const setIntervalSpy = vi.spyOn(window, "setInterval");
     await plugin.onload();
 
-    const syncCalls = setIntervalSpy.mock.calls.filter(
-      (call) => call[1] === 5 * 60 * 1000,
-    );
+    const syncCalls = setIntervalSpy.mock.calls.filter((call) => call[1] === 5 * 60 * 1000);
     expect(syncCalls).toHaveLength(0);
   });
 
@@ -1161,9 +1167,7 @@ describe("sync poller", () => {
 
     await plugin.handleOneDriveCallback({ code: "auth-code", state: "state" });
 
-    const syncCalls = setIntervalSpy.mock.calls.filter(
-      (call) => call[1] === 5 * 60 * 1000,
-    );
+    const syncCalls = setIntervalSpy.mock.calls.filter((call) => call[1] === 5 * 60 * 1000);
     expect(syncCalls.length).toBeGreaterThan(0);
   });
 });

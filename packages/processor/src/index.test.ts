@@ -1,11 +1,6 @@
 import type { PutObjectCommand } from "@aws-sdk/client-s3";
-import {
-  GetParameterCommand,
-  PutParameterCommand,
-} from "@aws-sdk/client-ssm";
-import type {
-  PutCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { GetParameterCommand, PutParameterCommand } from "@aws-sdk/client-ssm";
+import type { PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { SQSEvent } from "aws-lambda";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -205,9 +200,7 @@ describe("processor handler", () => {
     expect(mockS3Send).toHaveBeenCalledOnce();
     const [putObjectCommand] = mockS3Send.mock.calls[0] as [PutObjectCommand];
     expect(putObjectCommand.input.Bucket).toBe("petroglyph-staged-pdfs-staging");
-    expect(putObjectCommand.input.Key).toBe(
-      "handwritten/OnyxBoox/Meeting Notes/notes.pdf",
-    );
+    expect(putObjectCommand.input.Key).toBe("handwritten/OnyxBoox/Meeting Notes/notes.pdf");
     expect(putObjectCommand.input.ContentType).toBe("application/pdf");
 
     expect(mockSsmSend).toHaveBeenCalledTimes(3);

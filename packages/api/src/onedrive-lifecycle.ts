@@ -46,10 +46,7 @@ function parseLifecycleNotifications(body: unknown): LifecycleNotification[] {
   });
 }
 
-async function updateOneDriveStatus(
-  userId: string,
-  status: OneDriveStatus,
-): Promise<void> {
+async function updateOneDriveStatus(userId: string, status: OneDriveStatus): Promise<void> {
   await docClient.send(
     new UpdateCommand({
       TableName: usersTable(),
@@ -77,13 +74,8 @@ interface GraphSubscriptionResponse {
 
 const SSM_SUBSCRIPTION_EXPIRY = "/petroglyph/onedrive/subscription-expiry";
 
-function parseGraphSubscriptionResponse(
-  value: unknown,
-): GraphSubscriptionResponse {
-  if (
-    !isRecord(value) ||
-    typeof value["expirationDateTime"] !== "string"
-  ) {
+function parseGraphSubscriptionResponse(value: unknown): GraphSubscriptionResponse {
+  if (!isRecord(value) || typeof value["expirationDateTime"] !== "string") {
     throw new Error("Invalid Graph subscription response shape");
   }
 
@@ -94,25 +86,18 @@ async function renewGraphSubscription(
   subscriptionId: string,
   accessToken: string,
 ): Promise<string> {
-  const expirationDateTime = new Date(
-    Date.now() + 3 * 24 * 60 * 60 * 1000,
-  ).toISOString();
-  const response = await fetch(
-    `https://graph.microsoft.com/v1.0/subscriptions/${subscriptionId}`,
-    {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ expirationDateTime }),
+  const expirationDateTime = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+  const response = await fetch(`https://graph.microsoft.com/v1.0/subscriptions/${subscriptionId}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify({ expirationDateTime }),
+  });
 
   if (!response.ok) {
-    throw new Error(
-      `Graph subscription renewal failed: ${response.status} ${response.statusText}`,
-    );
+    throw new Error(`Graph subscription renewal failed: ${response.status} ${response.statusText}`);
   }
 
   const data = parseGraphSubscriptionResponse(await response.json());
@@ -130,25 +115,18 @@ async function storeSubscriptionExpiry(expirationDateTime: string): Promise<void
   );
 }
 
-async function handleReauthorizationRequired(
-  notification: LifecycleNotification,
-): Promise<void> {
+async function handleReauthorizationRequired(notification: LifecycleNotification): Promise<void> {
   if (!notification.subscriptionId) {
     throw new Error("Lifecycle notification missing subscriptionId");
   }
 
   const accessToken = await resolveOneDriveAccessToken();
-  const subscriptionExpiry = await renewGraphSubscription(
-    notification.subscriptionId,
-    accessToken,
-  );
+  const subscriptionExpiry = await renewGraphSubscription(notification.subscriptionId, accessToken);
   await storeSubscriptionExpiry(subscriptionExpiry);
   await markConnected(notification.clientState);
 }
 
-async function processLifecycleNotification(
-  notification: LifecycleNotification,
-): Promise<void> {
+async function processLifecycleNotification(notification: LifecycleNotification): Promise<void> {
   if (notification.lifecycleEvent === "subscriptionRemoved") {
     await markReconnectRequired(notification.clientState);
     return;
@@ -168,15 +146,11 @@ async function processLifecycleNotifications(
   notifications: LifecycleNotification[],
 ): Promise<void> {
   await Promise.all(
-    notifications.map((notification) =>
-      processLifecycleNotification(notification),
-    ),
+    notifications.map((notification) => processLifecycleNotification(notification)),
   );
 }
 
-function dispatchLifecycleNotifications(
-  notifications: LifecycleNotification[],
-): void {
+function dispatchLifecycleNotifications(notifications: LifecycleNotification[]): void {
   queueMicrotask(() => {
     void processLifecycleNotifications(notifications).catch((error: unknown) => {
       console.error("[onedrive-lifecycle] lifecycle processing failed:", error);
@@ -193,9 +167,7 @@ export async function handleOnedriveLifecycle(c: Context): Promise<Response> {
     });
   }
 
-  const notifications = parseLifecycleNotifications(
-    await c.req.json().catch(() => null),
-  );
+  const notifications = parseLifecycleNotifications(await c.req.json().catch(() => null));
   dispatchLifecycleNotifications(notifications);
 
   return c.body(null, 202);

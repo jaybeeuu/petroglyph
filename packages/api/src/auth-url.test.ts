@@ -30,13 +30,9 @@ describe("GET /auth/url", () => {
     const res = await app.request("/auth/url");
     const body = (await res.json()) as { url: string };
     const url = new URL(body.url);
-    expect(`${url.origin}${url.pathname}`).toBe(
-      "https://github.com/login/oauth/authorize",
-    );
+    expect(`${url.origin}${url.pathname}`).toBe("https://github.com/login/oauth/authorize");
     expect(url.searchParams.get("client_id")).toBe("test-client-id");
-    expect(url.searchParams.get("redirect_uri")).toBe(
-      "obsidian://petroglyph/auth/callback",
-    );
+    expect(url.searchParams.get("redirect_uri")).toBe("obsidian://petroglyph/auth/callback");
     expect(url.searchParams.get("scope")).toBe("read:user");
     expect(url.searchParams.get("state")).toBeTruthy();
   });

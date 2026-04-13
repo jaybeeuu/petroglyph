@@ -45,9 +45,7 @@ export class PetroglyphSettingTab extends PluginSettingTab {
       new Setting(containerEl)
         .setName("Sync Now")
         .setDesc("Manually trigger a sync now.")
-        .addButton((btn) =>
-          btn.setButtonText("Sync Now").onClick(() => this.plugin.syncNow()),
-        );
+        .addButton((btn) => btn.setButtonText("Sync Now").onClick(() => this.plugin.syncNow()));
       new Setting(containerEl)
         .setName("Reset Plugin State")
         .setDesc("Clear local sync token for this profile only.")
@@ -63,9 +61,7 @@ export class PetroglyphSettingTab extends PluginSettingTab {
       new Setting(containerEl)
         .setName("Full Reset")
         .setDesc("Reset both server and local sync state.")
-        .addButton((btn) =>
-          btn.setButtonText("Full Reset").onClick(() => this.plugin.fullReset()),
-        );
+        .addButton((btn) => btn.setButtonText("Full Reset").onClick(() => this.plugin.fullReset()));
     } else {
       new Setting(containerEl)
         .setName("GitHub account")

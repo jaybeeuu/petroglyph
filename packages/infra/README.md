@@ -7,11 +7,11 @@ Terraform configuration for the Petroglyph AWS infrastructure.
 Setting up infrastructure for the first time involves two distinct steps:
 
 1. **Bootstrap** — create the AWS resources that Terraform itself depends on
-   (the remote state bucket, lock table, and Lambda artifact bucket).  This
-   step uses plain AWS CLI calls and does *not* invoke Terraform.
+   (the remote state bucket, lock table, and Lambda artifact bucket). This
+   step uses plain AWS CLI calls and does _not_ invoke Terraform.
 
 2. **Apply** — run `terraform init`, select a workspace, plan, and apply the
-   application infrastructure.  This step is safe to repeat; a destroy guard
+   application infrastructure. This step is safe to repeat; a destroy guard
    prevents accidental deletions.
 
 Both steps are exposed as `pnpm` scripts in this package.
@@ -38,7 +38,7 @@ aws sso login --profile petroglyph-admin
 ## Step 1: Bootstrap (first time only)
 
 Bootstrap creates the S3 remote state bucket, DynamoDB lock table, and Lambda
-artifact bucket that Terraform needs before it can store its own state.  It
+artifact bucket that Terraform needs before it can store its own state. It
 also uploads a placeholder Lambda zip so the first `terraform apply` has a
 valid S3 object to reference.
 
@@ -94,7 +94,7 @@ pnpm tf:apply \
 
 ## Workspace convention
 
-Each deployment environment is a Terraform workspace.  Workspace names are
+Each deployment environment is a Terraform workspace. Workspace names are
 embedded into every resource name and tag so that environments are fully
 isolated within the same AWS account.
 
@@ -109,11 +109,11 @@ isolated within the same AWS account.
 
 Resource names follow the pattern `petroglyph-<resource>-<workspace>`, e.g.:
 
-| Workspace     | S3 bucket                           |
-|---------------|-------------------------------------|
-| `development` | `petroglyph-staged-pdfs-development`|
-| `staging`     | `petroglyph-staged-pdfs-staging`    |
-| `production`  | `petroglyph-staged-pdfs-production` |
+| Workspace     | S3 bucket                            |
+| ------------- | ------------------------------------ |
+| `development` | `petroglyph-staged-pdfs-development` |
+| `staging`     | `petroglyph-staged-pdfs-staging`     |
+| `production`  | `petroglyph-staged-pdfs-production`  |
 
 All resources also carry an `environment` tag set to `terraform.workspace`.
 

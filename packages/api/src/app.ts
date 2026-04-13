@@ -1,4 +1,5 @@
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import type { Context } from "hono";
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { handleAuthCallback } from "./auth-callback.js";
@@ -14,8 +15,7 @@ import { handleSyncRun } from "./sync-run.js";
 import { handleSyncReset } from "./sync-reset.js";
 import { docClient } from "./db.js";
 
-const TABLE_NAME =
-  process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
+const TABLE_NAME = process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
 
 const EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: "GET", path: "/auth/url" },
@@ -31,7 +31,8 @@ app.use("*", (c, next) => {
     (route) => route.method === c.req.method && route.path === c.req.path,
   );
   if (isExempt) return next();
-  return authMiddleware(c, next);
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+  return authMiddleware(c as unknown as Context<{ Variables: AppVariables }>, next);
 });
 
 app.get("/health", (c) => {
@@ -82,6 +83,9 @@ app.post("/sync/reset", (c) => handleSyncReset(c));
 
 app.post("/sync/run", (c) => handleSyncRun(c));
 
-app.use("/onedrive/*", (c, next) => onedriveMiddleware(c, next));
+app.use("/onedrive/*", (c, next) =>
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+  onedriveMiddleware(c as unknown as Context<{ Variables: AppVariables }>, next),
+);
 
 export { app };

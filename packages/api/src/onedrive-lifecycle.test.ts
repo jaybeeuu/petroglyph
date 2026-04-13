@@ -1,6 +1,6 @@
 import { GetParameterCommand, PutParameterCommand } from "@aws-sdk/client-ssm";
 import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockDbSend = vi.hoisted(() => vi.fn());
 const mockSsmSend = vi.hoisted(() => vi.fn());
@@ -20,11 +20,17 @@ import { app } from "./app.js";
 
 describe("POST /onedrive/lifecycle", () => {
   beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     mockDbSend.mockReset();
     mockSsmSend.mockReset();
     mockFetch.mockReset();
     vi.stubEnv("USERS_TABLE", "petroglyph-users-test");
     vi.stubEnv("MICROSOFT_CLIENT_ID", "test-ms-client-id");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
   function setupSsmMock(tokenExpiry: string): void {
@@ -49,9 +55,9 @@ describe("POST /onedrive/lifecycle", () => {
   }
 
   function updateCalls(): Array<[unknown]> {
-    return mockDbSend.mock.calls.filter(
-      ([command]) => command instanceof UpdateCommand,
-    ) as Array<[unknown]>;
+    return mockDbSend.mock.calls.filter(([command]) => command instanceof UpdateCommand) as Array<
+      [unknown]
+    >;
   }
 
   function putParameterCalls(): Array<[unknown]> {
@@ -61,12 +67,9 @@ describe("POST /onedrive/lifecycle", () => {
   }
 
   it("returns the Microsoft validation token as plain text", async () => {
-    const response = await app.request(
-      "/onedrive/lifecycle?validationToken=handshake-token",
-      {
-        method: "POST",
-      },
-    );
+    const response = await app.request("/onedrive/lifecycle?validationToken=handshake-token", {
+      method: "POST",
+    });
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/plain");
@@ -110,9 +113,7 @@ describe("POST /onedrive/lifecycle", () => {
     ];
     expect(updateCommand.input.TableName).toBe("petroglyph-users-test");
     expect(updateCommand.input.Key).toEqual({ userId: "user-123" });
-    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe(
-      "reconnect_required",
-    );
+    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("reconnect_required");
   });
 
   it("refreshes and renews subscriptions for reauthorizationRequired events", async () => {
@@ -160,8 +161,7 @@ describe("POST /onedrive/lifecycle", () => {
 
     await vi.waitFor(() => {
       const call = mockFetch.mock.calls.find(
-        ([url]) =>
-          url === "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        ([url]) => url === "https://login.microsoftonline.com/common/oauth2/v2.0/token",
       );
       expect(call).toBeDefined();
       return call;
@@ -169,8 +169,7 @@ describe("POST /onedrive/lifecycle", () => {
 
     const renewCall = await vi.waitFor(() => {
       const call = mockFetch.mock.calls.find(
-        ([url]) =>
-          url === "https://graph.microsoft.com/v1.0/subscriptions/sub-123",
+        ([url]) => url === "https://graph.microsoft.com/v1.0/subscriptions/sub-123",
       );
       expect(call).toBeDefined();
       return call;
@@ -178,9 +177,7 @@ describe("POST /onedrive/lifecycle", () => {
 
     const [, renewOptions] = renewCall as [string, RequestInit];
     expect(renewOptions.method).toBe("PATCH");
-    expect(
-      (renewOptions.headers as { [key: string]: string })["Authorization"],
-    ).toBe(
+    expect((renewOptions.headers as { [key: string]: string })["Authorization"]).toBe(
       "Bearer new-access-token",
     );
 
@@ -214,9 +211,7 @@ describe("POST /onedrive/lifecycle", () => {
       },
     ];
     expect(updateCommand.input.Key).toEqual({ userId: "user-123" });
-    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe(
-      "connected",
-    );
+    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("connected");
   });
 
   it("marks the user as reconnect_required when token refresh fails", async () => {
@@ -262,9 +257,7 @@ describe("POST /onedrive/lifecycle", () => {
       },
     ];
     expect(updateCommand.input.Key).toEqual({ userId: "user-123" });
-    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe(
-      "reconnect_required",
-    );
+    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("reconnect_required");
   });
 
   it("marks the user as reconnect_required when subscription renewal fails", async () => {
@@ -310,9 +303,7 @@ describe("POST /onedrive/lifecycle", () => {
       },
     ];
     expect(updateCommand.input.Key).toEqual({ userId: "user-456" });
-    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe(
-      "reconnect_required",
-    );
+    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("reconnect_required");
   });
 
   it("returns 202 before subscriptionRemoved work finishes", async () => {

@@ -6,22 +6,8 @@ import {
   ScanCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
-import {
-  exportPKCS8,
-  exportSPKI,
-  generateKeyPair,
-  importSPKI,
-  jwtVerify,
-} from "jose";
-import {
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { exportPKCS8, exportSPKI, generateKeyPair, importSPKI, jwtVerify } from "jose";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 
 const mockSend = vi.hoisted(() => vi.fn());
@@ -78,12 +64,14 @@ function makeConditionalCheckError(): ConditionalCheckFailedException {
   });
 }
 
-function setupDynamoMock(options: {
-  tokenItem?: object | undefined;
-  userItem?: object;
-  scanPages?: object[][];
-  updateShouldFail?: boolean;
-} = {}): void {
+function setupDynamoMock(
+  options: {
+    tokenItem?: object | undefined;
+    userItem?: object;
+    scanPages?: object[][];
+    updateShouldFail?: boolean;
+  } = {},
+): void {
   const {
     tokenItem,
     userItem = makeUserItem(),
@@ -95,8 +83,7 @@ function setupDynamoMock(options: {
 
   mockSend.mockImplementation((cmd: unknown) => {
     if (cmd instanceof GetCommand) {
-      const tableName = (cmd as { input: { TableName: string } }).input
-        .TableName;
+      const tableName = (cmd as { input: { TableName: string } }).input.TableName;
       if (tableName === REFRESH_TOKENS_TABLE) {
         return Promise.resolve({ Item: tokenItem });
       }
@@ -126,9 +113,7 @@ function setupDynamoMock(options: {
   });
 }
 
-async function postRefresh(body: {
-  refreshToken?: string;
-}): Promise<Response> {
+async function postRefresh(body: { refreshToken?: string }): Promise<Response> {
   return app.request("/auth/refresh", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -140,6 +125,7 @@ async function postRefresh(body: {
 
 describe("POST /auth/refresh", () => {
   beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubEnv("JWT_PRIVATE_KEY", privateKeyPem);
     vi.stubEnv("REFRESH_TOKENS_TABLE", REFRESH_TOKENS_TABLE);
     vi.stubEnv("USERS_TABLE", USERS_TABLE);
@@ -148,6 +134,7 @@ describe("POST /auth/refresh", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
   // ── Behaviour: missing/invalid refreshToken body → 400 ───────────────────
@@ -221,13 +208,10 @@ describe("POST /auth/refresh", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("Token reuse detected");
 
-    const deleteCalls = mockSend.mock.calls.filter(
-      ([cmd]) => cmd instanceof DeleteCommand,
-    );
+    const deleteCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof DeleteCommand);
     expect(deleteCalls).toHaveLength(2);
     const deletedKeys = deleteCalls.map(
-      ([cmd]) =>
-        (cmd as { input: { Key: { token: string } } }).input.Key.token,
+      ([cmd]) => (cmd as { input: { Key: { token: string } } }).input.Key.token,
     );
     expect(deletedKeys).toContain(tokenHashA);
     expect(deletedKeys).toContain(tokenHashB);
@@ -256,16 +240,14 @@ describe("POST /auth/refresh", () => {
 
     await postRefresh({ refreshToken: randomUUID() });
 
-    const scanCalls = mockSend.mock.calls.filter(
-      ([cmd]) => cmd instanceof ScanCommand,
-    );
+    const scanCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof ScanCommand);
     expect(scanCalls).toHaveLength(1);
     const [scanCmd] = scanCalls[0] as [
       {
         input: {
           TableName: string;
           FilterExpression: string;
-          ExpressionAttributeValues: Record<string, unknown>;
+          ExpressionAttributeValues: { [key: string]: unknown };
         };
       },
     ];
@@ -288,23 +270,16 @@ describe("POST /auth/refresh", () => {
 
     await postRefresh({ refreshToken: randomUUID() });
 
-    const scanCalls = mockSend.mock.calls.filter(
-      ([cmd]) => cmd instanceof ScanCommand,
-    );
+    const scanCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof ScanCommand);
     expect(scanCalls).toHaveLength(2);
 
-    const secondScanCmd = (
-      scanCalls[1] as [{ input: { ExclusiveStartKey?: unknown } }]
-    )[0];
+    const secondScanCmd = (scanCalls[1] as [{ input: { ExclusiveStartKey?: unknown } }])[0];
     expect(secondScanCmd.input.ExclusiveStartKey).toBeDefined();
 
-    const deleteCalls = mockSend.mock.calls.filter(
-      ([cmd]) => cmd instanceof DeleteCommand,
-    );
+    const deleteCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof DeleteCommand);
     expect(deleteCalls).toHaveLength(2);
     const deletedKeys = deleteCalls.map(
-      ([cmd]) =>
-        (cmd as { input: { Key: { token: string } } }).input.Key.token,
+      ([cmd]) => (cmd as { input: { Key: { token: string } } }).input.Key.token,
     );
     expect(deletedKeys).toContain(tokenHashA);
     expect(deletedKeys).toContain(tokenHashB);
@@ -357,15 +332,13 @@ describe("POST /auth/refresh", () => {
 
     await postRefresh({ refreshToken: raw });
 
-    const updateCalls = mockSend.mock.calls.filter(
-      ([cmd]) => cmd instanceof UpdateCommand,
-    );
+    const updateCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof UpdateCommand);
     expect(updateCalls).toHaveLength(1);
     const [updateCmd] = updateCalls[0] as [
       {
         input: {
           Key: { token: string };
-          ExpressionAttributeValues: Record<string, unknown>;
+          ExpressionAttributeValues: { [key: string]: unknown };
         };
       },
     ];
@@ -384,9 +357,7 @@ describe("POST /auth/refresh", () => {
 
     const body = (await res.json()) as { refreshToken: string };
 
-    const putCalls = mockSend.mock.calls.filter(
-      ([cmd]) => cmd instanceof PutCommand,
-    );
+    const putCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof PutCommand);
     expect(putCalls).toHaveLength(1);
     const [putCmd] = putCalls[0] as [
       {
@@ -400,9 +371,7 @@ describe("POST /auth/refresh", () => {
     expect(putCmd.input.Item.type).toBe("refresh_token");
     expect(putCmd.input.Item.userId).toBe(USER_ID);
 
-    const expectedHash = createHash("sha256")
-      .update(body.refreshToken)
-      .digest("hex");
+    const expectedHash = createHash("sha256").update(body.refreshToken).digest("hex");
     expect(putCmd.input.Item.token).toBe(expectedHash);
 
     const ninetyDays = 90 * 24 * 60 * 60;

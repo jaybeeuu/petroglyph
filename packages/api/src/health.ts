@@ -1,8 +1,6 @@
-import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from "aws-lambda";
+import type { APIGatewayProxyResultV2 } from "aws-lambda";
 
-export const handler = async (
-  _event: APIGatewayProxyEventV2,
-): Promise<APIGatewayProxyResultV2> => {
+export const handler = (): APIGatewayProxyResultV2 => {
   return {
     statusCode: 200,
     headers: { "Content-Type": "application/json" },

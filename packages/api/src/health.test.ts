@@ -2,10 +2,8 @@ import { describe, expect, it } from "vitest";
 import { handler } from "./health.js";
 
 describe("GET /health handler", () => {
-  it("returns 200 with status ok", async () => {
-    const result = await handler(
-      {} as Parameters<typeof handler>[0],
-    );
+  it("returns 200 with status ok", () => {
+    const result = handler();
 
     expect(result).toMatchObject({
       statusCode: 200,

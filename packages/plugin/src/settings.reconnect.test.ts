@@ -14,7 +14,9 @@ vi.mock("obsidian", () => ({
       createEl: vi.fn((tag, _opts) => {
         if (tag === "div") {
           // Banner div: needs textContent and createEl for button
-          const button: { onclick: undefined | (() => Promise<void> | void) } = { onclick: undefined };
+          const button: { onclick: undefined | (() => Promise<void> | void) } = {
+            onclick: undefined,
+          };
           const banner = {
             textContent: "",
             createEl: vi.fn((btnTag, _btnOpts) => {
@@ -29,7 +31,7 @@ vi.mock("obsidian", () => ({
                 return button;
               }
               return {};
-            })
+            }),
           };
           return banner;
         }
@@ -65,9 +67,15 @@ vi.mock("obsidian", () => ({
     }
     addText(fn: (text: TextStub) => void) {
       const text: TextStub = {
-        setPlaceholder(_: string) { return text; },
-        setValue(_: string) { return text; },
-        onChange(_: (v: string) => Promise<void> | void) { return text; },
+        setPlaceholder(_: string) {
+          return text;
+        },
+        setValue(_: string) {
+          return text;
+        },
+        onChange(_: (v: string) => Promise<void> | void) {
+          return text;
+        },
       };
       fn(text);
       return this;
@@ -88,7 +96,9 @@ interface TextStub {
 
 const _Notice = vi.fn();
 
-async function makePlugin(options: { username?: string; oneDriveConnected?: boolean, oneDriveStatus?: string } = {}) {
+async function makePlugin(
+  options: { username?: string; oneDriveConnected?: boolean; oneDriveStatus?: string } = {},
+) {
   const { PetroglyphPlugin } = await import("./main.js");
 
   const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
