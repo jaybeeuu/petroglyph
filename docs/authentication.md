@@ -130,7 +130,7 @@ The plugin periodically calls `GET /status` to determine the current connection 
 | -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                                                 |
 | `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                                                    |
-| `oneDrive.connected` | boolean | `true` if the user has an active OneDrive connection (`oneDriveConnected === true` on the `sync_profiles` DynamoDB record); `false` if the record is absent, the field is false, or a DynamoDB error occurs. |
+| `oneDrive.connected` | boolean | `true` if the user has an active OneDrive connection (`active === true` on the `sync_profiles` DynamoDB record); `false` if the record is absent, the field is false, or a DynamoDB error occurs. |
 
 Unauthenticated requests (missing or invalid JWT) return `401 { "error": "UNAUTHORIZED" }` from the auth middleware before the handler is reached.
 
@@ -320,19 +320,20 @@ This table is dual-purpose: it holds both long-lived refresh tokens (issued afte
 
 ### `sync_profiles`
 
-| Attribute           | Type        | Description                                                                                                |
-| ------------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
-| `userId`            | String (PK) | FK to `users`                                                                                              |
-| `profileId`         | String (SK) | Profile identifier. The default profile uses the literal value `"default"`; additional profiles use UUIDs. |
-| `name`              | String      | Human-readable profile name                                                                                |
-| `source`            | Map         | Provider, folder path, folder ID                                                                           |
-| `destination`       | Map         | Vault path                                                                                                 |
-| `settings`          | Map         | Conflict mode, deletion mode                                                                               |
-| `createdAt`         | String      | ISO 8601                                                                                                   |
-| `updatedAt`         | String      | ISO 8601                                                                                                   |
-| `oneDriveConnected` | Boolean?    | `true` once OneDrive is connected via `POST /onedrive/connect`                                             |
+| Attribute                | Type        | Description                                                                                                |
+| ------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------- |
+| `userId`                 | String (PK) | FK to `users`                                                                                              |
+| `profileId`              | String (SK) | Profile identifier. The default profile uses the literal value `"default"`; additional profiles use UUIDs. |
+| `name`                   | String      | Human-readable profile name                                                                                |
+| `sourceFolderPath`       | String      | OneDrive folder path to watch                                                                              |
+| `destinationVaultPath`   | String      | Obsidian vault path to sync files into                                                                     |
+| `pollingIntervalMinutes` | Number      | How often to poll for changes (default: `5`)                                                               |
+| `enabled`                | Boolean     | Whether the profile participates in sync runs (default: `true`)                                            |
+| `active`                 | Boolean     | `true` once OneDrive is connected and the profile is live                                                  |
+| `createdAt`              | String      | ISO 8601                                                                                                   |
+| `updatedAt`              | String      | ISO 8601                                                                                                   |
 
-`userId` as partition key means all profiles for a user are co-located, making list-by-user the primary key query rather than a GSI scan.
+`userId` as partition key means all profiles for a user are co-located, making list-by-user the primary key query rather than a GSI scan. Source and destination are stored as flat string fields rather than nested maps — the current single-provider design doesn't require the extra indirection.
 
 ---
 
