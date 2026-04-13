@@ -490,7 +490,7 @@ export class PetroglyphPlugin extends Plugin {
       }));
       const activeFromApi = profiles.find((p) => p.active);
       const activeProfileId = activeFromApi !== undefined ? activeFromApi.id : this._data.activeProfileId;
-      this._data = { ...this._data, profiles, activeProfileId };
+      this._data = { ...this._data, profiles, ...(activeProfileId !== undefined ? { activeProfileId } : {}) };
 
       // Clean up stale change tokens whose profile IDs no longer exist
       if (this._data.changeTokens !== undefined) {
