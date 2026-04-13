@@ -47,6 +47,9 @@ vi.mock("obsidian", () => ({
     setName(_: string) {
       return this;
     }
+    setHeading() {
+      return this;
+    }
     setDesc(_: string) {
       return this;
     }
@@ -80,6 +83,11 @@ vi.mock("obsidian", () => ({
       fn(text);
       return this;
     }
+  },
+  Modal: class {
+    contentEl = { empty: vi.fn(), createEl: vi.fn(() => ({})) };
+    open() {}
+    close() {}
   },
 }));
 

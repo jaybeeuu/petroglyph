@@ -536,6 +536,79 @@ export class PetroglyphPlugin extends Plugin {
     }
   }
 
+  async createProfile(data: {
+    name: string;
+    sourceFolderPath: string;
+    destinationVaultPath: string;
+  }): Promise<void> {
+    if (this._data.jwt === undefined) return;
+    try {
+      const response = await fetch(`${this._data.apiBaseUrl}/profiles`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this._data.jwt}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) {
+        new Notice("Failed to create profile");
+        return;
+      }
+      await this.loadProfiles();
+    } catch {
+      new Notice("Failed to create profile: network error");
+    }
+  }
+
+  async editProfile(
+    profileId: string,
+    updates: Partial<Pick<SyncProfile, "name" | "sourceFolderPath" | "destinationVaultPath">>,
+  ): Promise<void> {
+    if (this._data.jwt === undefined) return;
+    try {
+      const response = await fetch(`${this._data.apiBaseUrl}/profiles/${profileId}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${this._data.jwt}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(updates),
+      });
+      if (!response.ok) {
+        new Notice("Failed to edit profile");
+        return;
+      }
+      await this.loadProfiles();
+    } catch {
+      new Notice("Failed to edit profile: network error");
+    }
+  }
+
+  async deleteProfile(profileId: string): Promise<void> {
+    if (this._data.jwt === undefined) return;
+    try {
+      const response = await fetch(`${this._data.apiBaseUrl}/profiles/${profileId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${this._data.jwt}`,
+        },
+      });
+      if (!response.ok) {
+        new Notice("Failed to delete profile");
+        return;
+      }
+      if (this._data.activeProfileId === profileId) {
+        const data = { ...this._data };
+        delete data.activeProfileId;
+        this._data = data;
+      }
+      await this.loadProfiles();
+    } catch {
+      new Notice("Failed to delete profile: network error");
+    }
+  }
+
   async savePluginData(): Promise<void> {
     await this.saveData(this._data);
   }

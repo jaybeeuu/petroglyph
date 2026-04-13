@@ -9,6 +9,11 @@ vi.mock("obsidian", () => ({
   PluginSettingTab: class {},
   App: class {},
   Setting: class {},
+  Modal: class {
+    contentEl = { empty: vi.fn(), createEl: vi.fn(() => ({})) };
+    open() {}
+    close() {}
+  },
   normalizePath: (path: string) => path,
 }));
 
@@ -1356,5 +1361,211 @@ describe("activeProfileId persistence", () => {
   it("loads activeProfileId from saved data", async () => {
     const { plugin } = await makePlugin({ activeProfileId: "p42" });
     expect(plugin.data.activeProfileId).toBe("p42");
+  });
+});
+
+describe("createProfile", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("does nothing when no jwt is set", async () => {
+    const { plugin } = await makePlugin();
+    global.fetch = vi.fn();
+    await plugin.createProfile({ name: "New", sourceFolderPath: "/src", destinationVaultPath: "/dst" });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("calls POST /profiles with the profile data", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [],
+    });
+
+    await plugin.createProfile({ name: "My Profile", sourceFolderPath: "/src", destinationVaultPath: "/dst" });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/profiles"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ name: "My Profile", sourceFolderPath: "/src", destinationVaultPath: "/dst" }),
+      }),
+    );
+  });
+
+  it("calls loadProfiles after successful creation", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    const mockProfiles = [
+      { id: "p1", name: "My Profile", sourceFolderPath: "/src", destinationVaultPath: "/dst" },
+    ];
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true, json: async () => mockProfiles });
+
+    await plugin.createProfile({ name: "My Profile", sourceFolderPath: "/src", destinationVaultPath: "/dst" });
+
+    expect(plugin.data.profiles).toHaveLength(1);
+  });
+
+  it("shows notice and does not call loadProfiles on API failure", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue({ ok: false });
+
+    await plugin.createProfile({ name: "Fail", sourceFolderPath: "/s", destinationVaultPath: "/d" });
+
+    expect(Notice).toHaveBeenCalledWith("Failed to create profile");
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("editProfile", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("does nothing when no jwt is set", async () => {
+    const { plugin } = await makePlugin();
+    global.fetch = vi.fn();
+    await plugin.editProfile("p1", { name: "Updated" });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("calls PUT /profiles/{id} with the updates", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
+
+    await plugin.editProfile("p1", { name: "Updated Name", sourceFolderPath: "/new-src" });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/profiles/p1"),
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ name: "Updated Name", sourceFolderPath: "/new-src" }),
+      }),
+    );
+  });
+
+  it("calls loadProfiles after successful edit", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    const updatedProfiles = [
+      { id: "p1", name: "Updated Name", sourceFolderPath: "/new-src", destinationVaultPath: "/dst" },
+    ];
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true, json: async () => updatedProfiles });
+
+    await plugin.editProfile("p1", { name: "Updated Name" });
+
+    expect(plugin.data.profiles?.[0]?.name).toBe("Updated Name");
+  });
+
+  it("shows notice and does not call loadProfiles on API failure", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue({ ok: false });
+
+    await plugin.editProfile("p1", { name: "Fail" });
+
+    expect(Notice).toHaveBeenCalledWith("Failed to edit profile");
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("deleteProfile", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("does nothing when no jwt is set", async () => {
+    const { plugin } = await makePlugin();
+    global.fetch = vi.fn();
+    await plugin.deleteProfile("p1");
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("calls DELETE /profiles/{id}", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
+
+    await plugin.deleteProfile("p1");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/profiles/p1"),
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("calls loadProfiles after successful deletion", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", profiles: [
+      { id: "p1", name: "P1", sourceFolderPath: "/s", destinationVaultPath: "/d" },
+      { id: "p2", name: "P2", sourceFolderPath: "/s2", destinationVaultPath: "/d2" },
+    ] });
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ id: "p2", name: "P2", sourceFolderPath: "/s2", destinationVaultPath: "/d2" }],
+      });
+
+    await plugin.deleteProfile("p1");
+
+    expect(plugin.data.profiles).toHaveLength(1);
+    expect(plugin.data.profiles?.[0]?.id).toBe("p2");
+  });
+
+  it("clears activeProfileId when the active profile is deleted", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", activeProfileId: "p1" });
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] });
+
+    await plugin.deleteProfile("p1");
+
+    expect(plugin.data.activeProfileId).toBeUndefined();
+  });
+
+  it("does not clear activeProfileId when a different profile is deleted", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", activeProfileId: "p2" });
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] });
+
+    await plugin.deleteProfile("p1");
+
+    expect(plugin.data.activeProfileId).toBe("p2");
+  });
+
+  it("shows notice and does not call loadProfiles on API failure", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue({ ok: false });
+
+    await plugin.deleteProfile("p1");
+
+    expect(Notice).toHaveBeenCalledWith("Failed to delete profile");
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 });

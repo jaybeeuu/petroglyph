@@ -10,6 +10,11 @@ vi.mock("obsidian", () => ({
   },
   PluginSettingTab: class {},
   App: class {},
+  Modal: class {
+    contentEl = { empty: vi.fn(), createEl: vi.fn(() => ({})) };
+    open() {}
+    close() {}
+  },
   Setting: class {},
   normalizePath: (path: string) => path,
 }));

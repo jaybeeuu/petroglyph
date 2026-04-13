@@ -15,6 +15,18 @@ export class Plugin {
 export class PluginSettingTab {
   constructor(_app: unknown, _plugin: unknown) {}
 }
+export class Modal {
+  app: unknown;
+  contentEl: { empty(): void; createEl(_tag: string, _opts?: unknown): unknown } = {
+    empty() {},
+    createEl() { return {}; },
+  };
+  constructor(_app: unknown) {}
+  open(): void {}
+  close(): void {}
+  onOpen(): void {}
+  onClose(): void {}
+}
 export class Notice {
   constructor(_message: string) {}
 }
