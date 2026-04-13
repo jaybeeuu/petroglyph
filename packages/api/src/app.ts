@@ -10,6 +10,8 @@ import { handleOnedriveAuthUrl } from "./onedrive-auth-url.js";
 import { handleOnedriveConnect } from "./onedrive-connect.js";
 import { handleOnedriveLifecycle } from "./onedrive-lifecycle.js";
 import { handleFilesChanges } from "./files-changes.js";
+import { handleListProfiles, handleCreateProfile } from "./profiles.js";
+import { handleGetProfile, handlePutProfile, handleDeleteProfile } from "./profiles-crud.js";
 import { handleStatus } from "./status.js";
 import { handleSyncRun } from "./sync-run.js";
 import { handleSyncReset } from "./sync-reset.js";
@@ -72,6 +74,12 @@ app.post("/auth/refresh", (c) => handleAuthRefresh(c));
 app.get("/status", (c) => handleStatus(c));
 
 app.get("/files/changes", (c) => handleFilesChanges(c));
+
+app.get("/profiles", (c) => handleListProfiles(c));
+app.post("/profiles", (c) => handleCreateProfile(c));
+app.get("/profiles/:id", (c) => handleGetProfile(c));
+app.put("/profiles/:id", (c) => handlePutProfile(c));
+app.delete("/profiles/:id", (c) => handleDeleteProfile(c));
 
 app.get("/onedrive/auth-url", (c) => handleOnedriveAuthUrl(c));
 
