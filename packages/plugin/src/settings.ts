@@ -103,5 +103,25 @@ export class PetroglyphSettingTab extends PluginSettingTab {
           }),
         );
     }
+
+    // Profiles section
+    containerEl.createEl("h3", { text: "Profiles" });
+    const profiles = this.plugin.data.profiles ?? [];
+    if (profiles.length === 0) {
+      containerEl.createEl("p", { text: "No profiles found." });
+    } else {
+      for (const profile of profiles) {
+        const isActive = profile.id === this.plugin.data.activeProfileId || profile.active === true;
+        new Setting(containerEl)
+          .setName(profile.name + (isActive ? " ✓ (active)" : ""))
+          .setDesc(`Source: ${profile.sourceFolderPath} → Destination: ${profile.destinationVaultPath}`)
+          .addButton((btn) =>
+            btn.setButtonText("Set active").onClick(async () => {
+              await this.plugin.setActiveProfile(profile.id);
+              this.display();
+            }),
+          );
+      }
+    }
   }
 }

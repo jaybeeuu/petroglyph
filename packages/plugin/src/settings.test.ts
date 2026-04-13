@@ -173,3 +173,43 @@ describe("PetroglyphSettingTab OneDrive section", () => {
     expect(plugin.openOneDriveAuthUrl).toHaveBeenCalled();
   });
 });
+
+describe("PetroglyphSettingTab Profiles section", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    buttonHandlers.clear();
+  });
+
+  it("shows 'Set active' buttons for each profile", async () => {
+    const plugin = await makePlugin({ username: "alice" });
+    // @ts-expect-error — testing internal data
+    plugin._data = {
+      ...plugin.data,
+      profiles: [
+        { id: "p1", name: "Profile 1", sourceFolderPath: "/src", destinationVaultPath: "/dst" },
+        { id: "p2", name: "Profile 2", sourceFolderPath: "/src2", destinationVaultPath: "/dst2" },
+      ],
+    };
+    const { PetroglyphSettingTab } = await import("./settings.js");
+    const tab = new PetroglyphSettingTab({} as App, plugin);
+    tab.display();
+    expect(buttonHandlers.has("Set active")).toBe(true);
+  });
+
+  it("'Set active' button calls setActiveProfile with profile id", async () => {
+    const plugin = await makePlugin({ username: "alice" });
+    // @ts-expect-error — testing internal data
+    plugin._data = {
+      ...plugin.data,
+      profiles: [
+        { id: "p1", name: "Profile 1", sourceFolderPath: "/src", destinationVaultPath: "/dst" },
+      ],
+    };
+    plugin.setActiveProfile = vi.fn().mockResolvedValue(undefined);
+    const { PetroglyphSettingTab } = await import("./settings.js");
+    const tab = new PetroglyphSettingTab({} as App, plugin);
+    tab.display();
+    await buttonHandlers.get("Set active")?.();
+    expect(plugin.setActiveProfile).toHaveBeenCalledWith("p1");
+  });
+});

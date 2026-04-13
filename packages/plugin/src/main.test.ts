@@ -1171,3 +1171,159 @@ describe("sync poller", () => {
     expect(syncCalls.length).toBeGreaterThan(0);
   });
 });
+
+describe("loadProfiles", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("does nothing when no jwt is set", async () => {
+    const { plugin } = await makePlugin();
+    global.fetch = vi.fn();
+    await plugin.loadProfiles();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("fetches GET /profiles and stores profiles in data", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+
+    const mockProfiles = [
+      { id: "p1", name: "Profile 1", sourceFolderPath: "/src", destinationVaultPath: "/dst", active: true },
+    ];
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockProfiles,
+    });
+
+    await plugin.loadProfiles();
+
+    expect(plugin.data.profiles).toHaveLength(1);
+    expect(plugin.data.profiles?.[0]?.name).toBe("Profile 1");
+  });
+
+  it("removes stale change tokens for deleted profile IDs", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      changeTokens: { p1: "token1", p2: "token2" },
+    });
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { id: "p1", name: "Profile 1", sourceFolderPath: "/src", destinationVaultPath: "/dst" },
+      ],
+    });
+
+    await plugin.loadProfiles();
+
+    expect(plugin.data.changeTokens?.["p1"]).toBe("token1");
+    expect(plugin.data.changeTokens?.["p2"]).toBeUndefined();
+  });
+
+  it("saves plugin data after fetching profiles", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ id: "p1", name: "P1", sourceFolderPath: "/s", destinationVaultPath: "/d" }],
+    });
+
+    await plugin.loadProfiles();
+
+    expect(plugin.saveData).toHaveBeenCalled();
+  });
+
+  it("ignores non-ok responses", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+
+    global.fetch = vi.fn().mockResolvedValue({ ok: false });
+
+    await plugin.loadProfiles();
+
+    expect(plugin.data.profiles).toBeUndefined();
+    expect(plugin.saveData).not.toHaveBeenCalled();
+  });
+});
+
+describe("setActiveProfile", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("does nothing when no jwt is set", async () => {
+    const { plugin } = await makePlugin();
+    global.fetch = vi.fn();
+    await plugin.setActiveProfile("p1");
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("calls PUT /profiles/{id} with active: true", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue({ ok: true });
+
+    await plugin.setActiveProfile("p1");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/profiles/p1"),
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ active: true }),
+      }),
+    );
+  });
+
+  it("stores activeProfileId in data and saves", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue({ ok: true });
+
+    await plugin.setActiveProfile("p1");
+
+    expect(plugin.data.activeProfileId).toBe("p1");
+    expect(plugin.saveData).toHaveBeenCalledWith(expect.objectContaining({ activeProfileId: "p1" }));
+  });
+
+  it("shows notice on failure", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue({ ok: false });
+
+    await plugin.setActiveProfile("p1");
+
+    expect(Notice).toHaveBeenCalledWith("Failed to set active profile");
+    expect(plugin.data.activeProfileId).toBeUndefined();
+  });
+});
+
+describe("activeProfileId persistence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("loads activeProfileId from saved data", async () => {
+    const { plugin } = await makePlugin({ activeProfileId: "p42" });
+    expect(plugin.data.activeProfileId).toBe("p42");
+  });
+});

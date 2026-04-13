@@ -1,6 +1,6 @@
 import { Notice, Plugin, normalizePath } from "obsidian";
 import { PetroglyphSettingTab } from "./settings.js";
-import type { AuthCallbackParams, FileChange, PluginData } from "./types.js";
+import type { AuthCallbackParams, FileChange, PluginData, SyncProfile } from "./types.js";
 import { hasStringProp, isRecord } from "./validate.js";
 
 const DEFAULT_DATA: PluginData = {
@@ -373,6 +373,7 @@ export class PetroglyphPlugin extends Plugin {
 
   override async onload(): Promise<void> {
     await this.loadPluginData();
+    await this.loadProfiles();
 
     this.addSettingTab(new PetroglyphSettingTab(this.app, this));
 
@@ -464,8 +465,73 @@ export class PetroglyphPlugin extends Plugin {
       if (hasStringProp(raw, "oneDriveStatus")) {
         saved.oneDriveStatus = raw.oneDriveStatus;
       }
+      if (hasStringProp(raw, "activeProfileId")) {
+        saved.activeProfileId = raw.activeProfileId;
+      }
     }
     this._data = { ...DEFAULT_DATA, ...saved };
+  }
+
+  async loadProfiles(): Promise<void> {
+    if (this._data.jwt === undefined) return;
+    try {
+      const response = await fetch(`${this._data.apiBaseUrl}/profiles`, {
+        headers: { Authorization: `Bearer ${this._data.jwt}` },
+      });
+      if (!response.ok) return;
+      const body: unknown = await response.json();
+      if (!Array.isArray(body)) return;
+      const profiles = body.filter(isRecord).map((p): SyncProfile => ({
+        id: typeof p["id"] === "string" ? p["id"] : "",
+        name: typeof p["name"] === "string" ? p["name"] : "",
+        sourceFolderPath: typeof p["sourceFolderPath"] === "string" ? p["sourceFolderPath"] : "",
+        destinationVaultPath: typeof p["destinationVaultPath"] === "string" ? p["destinationVaultPath"] : "",
+        active: p["active"] === true,
+      }));
+      this._data = { ...this._data, profiles };
+
+      // Clean up stale change tokens whose profile IDs no longer exist
+      if (this._data.changeTokens !== undefined) {
+        const profileIds = new Set(profiles.map((p) => p.id));
+        const cleanedTokens: { [key: string]: string } = {};
+        for (const [key, val] of Object.entries(this._data.changeTokens)) {
+          if (profileIds.has(key)) {
+            cleanedTokens[key] = val;
+          }
+        }
+        this._data = { ...this._data, changeTokens: cleanedTokens };
+      }
+
+      await this.savePluginData();
+    } catch {
+      // Network errors are silently ignored.
+    }
+  }
+
+  async setActiveProfile(id: string): Promise<void> {
+    if (this._data.jwt === undefined) return;
+    try {
+      const response = await fetch(`${this._data.apiBaseUrl}/profiles/${id}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${this._data.jwt}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ active: true }),
+      });
+      if (!response.ok) {
+        new Notice("Failed to set active profile");
+        return;
+      }
+      const profiles = (this._data.profiles ?? []).map((p) => ({
+        ...p,
+        active: p.id === id,
+      }));
+      this._data = { ...this._data, activeProfileId: id, profiles };
+      await this.savePluginData();
+    } catch {
+      new Notice("Failed to set active profile: network error");
+    }
   }
 
   async savePluginData(): Promise<void> {

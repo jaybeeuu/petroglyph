@@ -1,3 +1,11 @@
+export interface SyncProfile {
+  id: string;
+  name: string;
+  sourceFolderPath: string;
+  destinationVaultPath: string;
+  active?: boolean;
+}
+
 export interface PluginData {
   apiBaseUrl: string;
   jwt?: string;
@@ -7,6 +15,8 @@ export interface PluginData {
   oneDriveStatus?: string;
   syncIntervalMinutes?: number;
   changeTokens?: Record<string, string>;
+  activeProfileId?: string;
+  profiles?: SyncProfile[];
 }
 
 export interface AuthCallbackParams {
