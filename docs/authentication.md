@@ -286,8 +286,9 @@ interface SyncProfile {
 ### Device Behaviour
 
 - Each plugin instance selects **one active profile** from the user's profile list (Phase 1).
-- The active profile ID is stored in the plugin's local settings.
+- The active profile ID is persisted in plugin-local settings but the API is the authoritative source. On every `loadProfiles()` call, if any profile carries `active: true` from the server, that value overwrites the locally-stored ID. The local value is used only as a fallback when the API returns no active profile.
 - Profile _definitions_ (source, destination, settings) are always read from the cloud API, ensuring changes propagate across devices without manual reconfiguration.
+- `loadProfiles()` also cleans up any locally-stored changeTokens whose profile IDs no longer appear in the API response — a profile that has been deleted server-side will have its sync checkpoint removed locally on the next load.
 - Future phases may allow multiple active profiles per vault.
 
 ---
