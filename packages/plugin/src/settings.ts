@@ -111,7 +111,7 @@ export class PetroglyphSettingTab extends PluginSettingTab {
       containerEl.createEl("p", { text: "No profiles found." });
     } else {
       for (const profile of profiles) {
-        const isActive = profile.id === this.plugin.data.activeProfileId || profile.active === true;
+        const isActive = profile.id === this.plugin.data.activeProfileId;
         new Setting(containerEl)
           .setName(profile.name + (isActive ? " ✓ (active)" : ""))
           .setDesc(`Source: ${profile.sourceFolderPath} → Destination: ${profile.destinationVaultPath}`)

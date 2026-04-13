@@ -1228,6 +1228,37 @@ describe("loadProfiles", () => {
     expect(plugin.data.changeTokens?.["p2"]).toBeUndefined();
   });
 
+  it("syncs activeProfileId from the profile returned with active: true", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { id: "p1", name: "Profile 1", sourceFolderPath: "/src", destinationVaultPath: "/dst", active: false },
+        { id: "p2", name: "Profile 2", sourceFolderPath: "/src2", destinationVaultPath: "/dst2", active: true },
+      ],
+    });
+
+    await plugin.loadProfiles();
+
+    expect(plugin.data.activeProfileId).toBe("p2");
+  });
+
+  it("does not overwrite activeProfileId when no profile is active in API response", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", activeProfileId: "p1" });
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { id: "p1", name: "Profile 1", sourceFolderPath: "/src", destinationVaultPath: "/dst", active: false },
+      ],
+    });
+
+    await plugin.loadProfiles();
+
+    expect(plugin.data.activeProfileId).toBe("p1");
+  });
+
   it("saves plugin data after fetching profiles", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
 

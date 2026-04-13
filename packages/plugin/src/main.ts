@@ -488,7 +488,9 @@ export class PetroglyphPlugin extends Plugin {
         destinationVaultPath: typeof p["destinationVaultPath"] === "string" ? p["destinationVaultPath"] : "",
         active: p["active"] === true,
       }));
-      this._data = { ...this._data, profiles };
+      const activeFromApi = profiles.find((p) => p.active);
+      const activeProfileId = activeFromApi !== undefined ? activeFromApi.id : this._data.activeProfileId;
+      this._data = { ...this._data, profiles, activeProfileId };
 
       // Clean up stale change tokens whose profile IDs no longer exist
       if (this._data.changeTokens !== undefined) {
