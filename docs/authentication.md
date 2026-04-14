@@ -126,10 +126,10 @@ The plugin periodically calls `GET /status` to determine the current connection 
 }
 ```
 
-| Field                | Type    | Description                                                                                                                                                                                                  |
-| -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                                                 |
-| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                                                    |
+| Field                | Type    | Description                                                                                                                                                                                       |
+| -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                                      |
+| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                                         |
 | `oneDrive.connected` | boolean | `true` if the user has an active OneDrive connection (`active === true` on the `sync_profiles` DynamoDB record); `false` if the record is absent, the field is false, or a DynamoDB error occurs. |
 
 Unauthenticated requests (missing or invalid JWT) return `401 { "error": "UNAUTHORIZED" }` from the auth middleware before the handler is reached.
@@ -287,7 +287,7 @@ interface SyncProfile {
 
 Profiles can be created, edited, and deleted from the plugin's Obsidian settings panel. Each operation calls the corresponding API endpoint (`POST /profiles`, `PATCH /profiles/:id`, `DELETE /profiles/:id`) and then refreshes the local state via `loadProfiles()`.
 
-On deletion, `activeProfileId` is cleared locally *before* `loadProfiles()` is called. This ordering is deliberate: `loadProfiles()` uses the locally-stored ID as a fallback when the API returns no `active: true` profile, so clearing it first ensures the deleted profile is not silently re-applied by the fallback path.
+On deletion, `activeProfileId` is cleared locally _before_ `loadProfiles()` is called. This ordering is deliberate: `loadProfiles()` uses the locally-stored ID as a fallback when the API returns no `active: true` profile, so clearing it first ensures the deleted profile is not silently re-applied by the fallback path.
 
 ### Device Behaviour
 

@@ -14,7 +14,7 @@ export interface PluginData {
   oneDriveConnected?: boolean;
   oneDriveStatus?: string;
   syncIntervalMinutes?: number;
-  changeTokens?: Record<string, string>;
+  changeTokens?: { [key: string]: string };
   activeProfileId?: string;
   profiles?: SyncProfile[];
 }

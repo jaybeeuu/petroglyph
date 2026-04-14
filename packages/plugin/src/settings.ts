@@ -1,4 +1,5 @@
-import { App, Modal, Notice, PluginSettingTab, Setting } from "obsidian";
+import type { App } from "obsidian";
+import { Modal, Notice, PluginSettingTab, Setting } from "obsidian";
 import type { PetroglyphPlugin } from "./main.js";
 
 class ProfileModal extends Modal {
@@ -7,11 +8,13 @@ class ProfileModal extends Modal {
     sourceFolderPath: string,
     destinationVaultPath: string,
   ) => void;
-  private readonly initialValues: {
-    name: string;
-    sourceFolderPath: string;
-    destinationVaultPath: string;
-  } | undefined;
+  private readonly initialValues:
+    | {
+        name: string;
+        sourceFolderPath: string;
+        destinationVaultPath: string;
+      }
+    | undefined;
 
   constructor(
     app: App,
@@ -25,32 +28,47 @@ class ProfileModal extends Modal {
 
   override onOpen(): void {
     const { contentEl } = this;
-    contentEl.createEl("h2", { text: this.initialValues !== undefined ? "Edit Profile" : "New Profile" });
+    contentEl.createEl("h2", {
+      text: this.initialValues !== undefined ? "Edit Profile" : "New Profile",
+    });
 
     let name = this.initialValues?.name ?? "";
     let sourceFolderPath = this.initialValues?.sourceFolderPath ?? "";
     let destinationVaultPath = this.initialValues?.destinationVaultPath ?? "";
 
-    new Setting(contentEl)
-      .setName("Name")
-      .addText((text) => text.setValue(name).onChange((value) => { name = value; }));
+    new Setting(contentEl).setName("Name").addText((text) =>
+      text.setValue(name).onChange((value) => {
+        name = value;
+      }),
+    );
 
-    new Setting(contentEl)
-      .setName("Source folder path")
-      .addText((text) => text.setValue(sourceFolderPath).onChange((value) => { sourceFolderPath = value; }));
+    new Setting(contentEl).setName("Source folder path").addText((text) =>
+      text.setValue(sourceFolderPath).onChange((value) => {
+        sourceFolderPath = value;
+      }),
+    );
 
-    new Setting(contentEl)
-      .setName("Destination vault path")
-      .addText((text) => text.setValue(destinationVaultPath).onChange((value) => { destinationVaultPath = value; }));
+    new Setting(contentEl).setName("Destination vault path").addText((text) =>
+      text.setValue(destinationVaultPath).onChange((value) => {
+        destinationVaultPath = value;
+      }),
+    );
 
     new Setting(contentEl)
       .addButton((btn) =>
-        btn.setButtonText("Save").setCta().onClick(() => {
-          this.close();
-          this.onSubmit(name, sourceFolderPath, destinationVaultPath);
-        }),
+        btn
+          .setButtonText("Save")
+          .setCta()
+          .onClick(() => {
+            this.close();
+            this.onSubmit(name, sourceFolderPath, destinationVaultPath);
+          }),
       )
-      .addButton((btn) => btn.setButtonText("Cancel").onClick(() => { this.close(); }));
+      .addButton((btn) =>
+        btn.setButtonText("Cancel").onClick(() => {
+          this.close();
+        }),
+      );
   }
 
   override onClose(): void {
@@ -69,16 +87,25 @@ class DeleteConfirmModal extends Modal {
   override onOpen(): void {
     const { contentEl } = this;
     contentEl.createEl("h2", { text: "Delete Profile" });
-    contentEl.createEl("p", { text: "Are you sure you want to delete this profile? This cannot be undone." });
+    contentEl.createEl("p", {
+      text: "Are you sure you want to delete this profile? This cannot be undone.",
+    });
 
     new Setting(contentEl)
       .addButton((btn) =>
-        btn.setButtonText("Delete").setWarning().onClick(() => {
-          this.close();
-          this.onConfirm();
-        }),
+        btn
+          .setButtonText("Delete")
+          .setWarning()
+          .onClick(() => {
+            this.close();
+            this.onConfirm();
+          }),
       )
-      .addButton((btn) => btn.setButtonText("Cancel").onClick(() => { this.close(); }));
+      .addButton((btn) =>
+        btn.setButtonText("Cancel").onClick(() => {
+          this.close();
+        }),
+      );
   }
 
   override onClose(): void {
@@ -195,13 +222,10 @@ export class PetroglyphSettingTab extends PluginSettingTab {
       .setHeading()
       .addButton((btn) =>
         btn.setButtonText("New Profile").onClick(() => {
-          new ProfileModal(
-            this.app,
-            async (name, sourceFolderPath, destinationVaultPath) => {
-              await this.plugin.createProfile({ name, sourceFolderPath, destinationVaultPath });
-              this.display();
-            },
-          ).open();
+          new ProfileModal(this.app, async (name, sourceFolderPath, destinationVaultPath) => {
+            await this.plugin.createProfile({ name, sourceFolderPath, destinationVaultPath });
+            this.display();
+          }).open();
         }),
       );
     const profiles = this.plugin.data.profiles ?? [];
@@ -212,7 +236,9 @@ export class PetroglyphSettingTab extends PluginSettingTab {
         const isActive = profile.id === this.plugin.data.activeProfileId;
         new Setting(containerEl)
           .setName(profile.name + (isActive ? " ✓ (active)" : ""))
-          .setDesc(`Source: ${profile.sourceFolderPath} → Destination: ${profile.destinationVaultPath}`)
+          .setDesc(
+            `Source: ${profile.sourceFolderPath} → Destination: ${profile.destinationVaultPath}`,
+          )
           .addButton((btn) =>
             btn.setButtonText("Set active").onClick(async () => {
               await this.plugin.setActiveProfile(profile.id);
@@ -224,10 +250,18 @@ export class PetroglyphSettingTab extends PluginSettingTab {
               new ProfileModal(
                 this.app,
                 async (name, sourceFolderPath, destinationVaultPath) => {
-                  await this.plugin.editProfile(profile.id, { name, sourceFolderPath, destinationVaultPath });
+                  await this.plugin.editProfile(profile.id, {
+                    name,
+                    sourceFolderPath,
+                    destinationVaultPath,
+                  });
                   this.display();
                 },
-                { name: profile.name, sourceFolderPath: profile.sourceFolderPath, destinationVaultPath: profile.destinationVaultPath },
+                {
+                  name: profile.name,
+                  sourceFolderPath: profile.sourceFolderPath,
+                  destinationVaultPath: profile.destinationVaultPath,
+                },
               ).open();
             }),
           )

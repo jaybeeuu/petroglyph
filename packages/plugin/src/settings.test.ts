@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { App, PluginManifest } from "obsidian";
+import type { PetroglyphPlugin } from "./main.js";
 
 const buttonHandlers = new Map<string, () => Promise<void> | void>();
 
+/* eslint-disable @typescript-eslint/no-extraneous-class, @typescript-eslint/no-useless-constructor, @typescript-eslint/no-unused-vars, @typescript-eslint/explicit-function-return-type */
 vi.mock("obsidian", () => ({
   Notice: Notice,
 
@@ -63,6 +65,7 @@ vi.mock("obsidian", () => ({
     }
   },
 }));
+/* eslint-enable @typescript-eslint/no-extraneous-class, @typescript-eslint/no-useless-constructor, @typescript-eslint/no-unused-vars, @typescript-eslint/explicit-function-return-type */
 
 interface ButtonStub {
   setButtonText(text: string): ButtonStub;
@@ -77,15 +80,17 @@ interface TextStub {
 
 const Notice = vi.fn();
 
-async function makePlugin(options: { username?: string; oneDriveConnected?: boolean } = {}) {
-  const { PetroglyphPlugin } = await import("./main.js");
+async function makePlugin(
+  options: { username?: string; oneDriveConnected?: boolean } = {},
+): Promise<PetroglyphPlugin> {
+  const { PetroglyphPlugin: PluginClass } = await import("./main.js");
 
-  const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
-  plugin.loadData = vi.fn(async () => null);
+  const plugin = new PluginClass({} as App, {} as PluginManifest);
+  plugin.loadData = vi.fn(() => Promise.resolve(null));
   plugin.saveData = vi.fn();
   plugin.registerObsidianProtocolHandler = vi.fn();
   plugin.addSettingTab = vi.fn();
-  plugin.app = {};
+  plugin.app = {} as App;
 
   await plugin.loadPluginData();
 
@@ -131,6 +136,7 @@ describe("PetroglyphSettingTab", () => {
     const tab = new PetroglyphSettingTab({} as App, plugin);
     tab.display();
     await buttonHandlers.get("Connect")?.();
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.openAuthUrl).toHaveBeenCalled();
   });
 
@@ -142,6 +148,7 @@ describe("PetroglyphSettingTab", () => {
     await buttonHandlers.get("Disconnect")?.();
     expect(plugin.data.username).toBeUndefined();
     expect(plugin.data.jwt).toBeUndefined();
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.saveData).toHaveBeenCalled();
     expect(Notice).toHaveBeenCalledWith("Disconnected");
   });
@@ -178,6 +185,7 @@ describe("PetroglyphSettingTab OneDrive section", () => {
     const tab = new PetroglyphSettingTab({} as App, plugin);
     tab.display();
     await buttonHandlers.get("Connect OneDrive")?.();
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.openOneDriveAuthUrl).toHaveBeenCalled();
   });
 });
@@ -218,6 +226,7 @@ describe("PetroglyphSettingTab Profiles section", () => {
     const tab = new PetroglyphSettingTab({} as App, plugin);
     tab.display();
     await buttonHandlers.get("Set active")?.();
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.setActiveProfile).toHaveBeenCalledWith("p1");
   });
 });

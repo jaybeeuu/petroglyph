@@ -70,9 +70,7 @@ function mergeProfile(
   };
 }
 
-export async function handleGetProfile(
-  c: Context<{ Variables: AppVariables }>,
-): Promise<Response> {
+export async function handleGetProfile(c: Context<{ Variables: AppVariables }>): Promise<Response> {
   const userId = c.get("userId");
   const profileId = c.req.param("id") ?? "";
 
@@ -85,9 +83,7 @@ export async function handleGetProfile(
   return c.json(profile);
 }
 
-export async function handlePutProfile(
-  c: Context<{ Variables: AppVariables }>,
-): Promise<Response> {
+export async function handlePutProfile(c: Context<{ Variables: AppVariables }>): Promise<Response> {
   const userId = c.get("userId");
   const profileId = c.req.param("id") ?? "";
 
@@ -160,4 +156,3 @@ export async function handleDeleteProfile(
 
   return new Response(null, { status: 204 });
 }
-

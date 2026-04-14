@@ -90,7 +90,7 @@ export class PetroglyphPlugin extends Plugin {
         afterToken = hasMore ? (nextToken as string) : undefined;
       }
       new Notice("Sync complete");
-    } catch (e) {
+    } catch {
       new Notice("Sync failed: network or server error");
     }
   }
@@ -446,7 +446,7 @@ export class PetroglyphPlugin extends Plugin {
   }
 
   async loadPluginData(): Promise<void> {
-    const raw = await this.loadData();
+    const raw: unknown = await this.loadData();
     const saved: Partial<PluginData> = {};
     if (isRecord(raw)) {
       if (hasStringProp(raw, "apiBaseUrl")) saved.apiBaseUrl = raw.apiBaseUrl;
@@ -460,7 +460,7 @@ export class PetroglyphPlugin extends Plugin {
         saved.syncIntervalMinutes = raw["syncIntervalMinutes"];
       }
       if (isRecord(raw["changeTokens"])) {
-        saved.changeTokens = raw["changeTokens"] as Record<string, string>;
+        saved.changeTokens = raw["changeTokens"] as { [key: string]: string };
       }
       if (hasStringProp(raw, "oneDriveStatus")) {
         saved.oneDriveStatus = raw.oneDriveStatus;
@@ -481,16 +481,24 @@ export class PetroglyphPlugin extends Plugin {
       if (!response.ok) return;
       const body: unknown = await response.json();
       if (!Array.isArray(body)) return;
-      const profiles = body.filter(isRecord).map((p): SyncProfile => ({
-        id: typeof p["id"] === "string" ? p["id"] : "",
-        name: typeof p["name"] === "string" ? p["name"] : "",
-        sourceFolderPath: typeof p["sourceFolderPath"] === "string" ? p["sourceFolderPath"] : "",
-        destinationVaultPath: typeof p["destinationVaultPath"] === "string" ? p["destinationVaultPath"] : "",
-        active: p["active"] === true,
-      }));
+      const profiles = body.filter(isRecord).map(
+        (p): SyncProfile => ({
+          id: typeof p["id"] === "string" ? p["id"] : "",
+          name: typeof p["name"] === "string" ? p["name"] : "",
+          sourceFolderPath: typeof p["sourceFolderPath"] === "string" ? p["sourceFolderPath"] : "",
+          destinationVaultPath:
+            typeof p["destinationVaultPath"] === "string" ? p["destinationVaultPath"] : "",
+          active: p["active"] === true,
+        }),
+      );
       const activeFromApi = profiles.find((p) => p.active);
-      const activeProfileId = activeFromApi !== undefined ? activeFromApi.id : this._data.activeProfileId;
-      this._data = { ...this._data, profiles, ...(activeProfileId !== undefined ? { activeProfileId } : {}) };
+      const activeProfileId =
+        activeFromApi !== undefined ? activeFromApi.id : this._data.activeProfileId;
+      this._data = {
+        ...this._data,
+        profiles,
+        ...(activeProfileId !== undefined ? { activeProfileId } : {}),
+      };
 
       // Clean up stale change tokens whose profile IDs no longer exist
       if (this._data.changeTokens !== undefined) {
@@ -633,7 +641,7 @@ export class PetroglyphPlugin extends Plugin {
 
   async openOneDriveAuthUrl(): Promise<void> {
     try {
-      const headers: Record<string, string> = {};
+      const headers: { [key: string]: string } = {};
       if (this._data.jwt !== undefined) {
         headers["Authorization"] = `Bearer ${this._data.jwt}`;
       }
@@ -655,7 +663,7 @@ export class PetroglyphPlugin extends Plugin {
 
   async handleOneDriveCallback(params: { code: string; state: string }): Promise<void> {
     try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const headers: { [key: string]: string } = { "Content-Type": "application/json" };
       if (this._data.jwt !== undefined) {
         headers["Authorization"] = `Bearer ${this._data.jwt}`;
       }

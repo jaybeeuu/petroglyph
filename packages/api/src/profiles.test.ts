@@ -96,7 +96,11 @@ describe("/profiles", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body).toEqual([existingProfile]);
-      expect(mockListProfiles).toHaveBeenCalledWith(expect.anything(), "test-sync-profiles", "user-42");
+      expect(mockListProfiles).toHaveBeenCalledWith(
+        expect.anything(),
+        "test-sync-profiles",
+        "user-42",
+      );
     });
 
     it("passes the authenticated userId to listProfiles", async () => {
@@ -106,7 +110,11 @@ describe("/profiles", () => {
         headers: { Authorization: `Bearer ${token}` },
       });
 
-      expect(mockListProfiles).toHaveBeenCalledWith(expect.anything(), "test-sync-profiles", "user-99");
+      expect(mockListProfiles).toHaveBeenCalledWith(
+        expect.anything(),
+        "test-sync-profiles",
+        "user-99",
+      );
     });
   });
 
@@ -115,7 +123,11 @@ describe("/profiles", () => {
       const res = await app.request("/profiles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Test", sourceFolderPath: "/src", destinationVaultPath: "/dst" }),
+        body: JSON.stringify({
+          name: "Test",
+          sourceFolderPath: "/src",
+          destinationVaultPath: "/dst",
+        }),
       });
       expect(res.status).toBe(401);
     });
@@ -167,7 +179,7 @@ describe("/profiles", () => {
       });
 
       expect(res.status).toBe(201);
-      const body = await res.json() as SyncProfile;
+      const body = (await res.json()) as SyncProfile;
       expect(body.profileId).toBeDefined();
       expect(body.profileId).toMatch(/^[0-9a-f-]{36}$/);
       expect(body.userId).toBe("user-42");
@@ -198,7 +210,7 @@ describe("/profiles", () => {
       });
 
       expect(res.status).toBe(201);
-      const body = await res.json() as SyncProfile;
+      const body = (await res.json()) as SyncProfile;
       expect(body.active).toBe(true);
     });
 
@@ -220,7 +232,7 @@ describe("/profiles", () => {
       });
 
       expect(res.status).toBe(201);
-      const body = await res.json() as SyncProfile;
+      const body = (await res.json()) as SyncProfile;
       expect(body.active).toBe(false);
     });
 
@@ -243,7 +255,7 @@ describe("/profiles", () => {
       });
 
       expect(res.status).toBe(201);
-      const body = await res.json() as SyncProfile;
+      const body = (await res.json()) as SyncProfile;
       expect(body.pollingIntervalMinutes).toBe(10);
       expect(body.enabled).toBe(false);
     });

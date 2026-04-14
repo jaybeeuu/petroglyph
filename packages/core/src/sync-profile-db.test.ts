@@ -1,11 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import {
-  deleteProfile,
-  getProfile,
-  listProfiles,
-  putProfile,
-} from "./sync-profile-db.js";
+import { deleteProfile, getProfile, listProfiles, putProfile } from "./sync-profile-db.js";
 import type { SyncProfile } from "./sync-profile.js";
 
 const TABLE_NAME = "test-sync-profiles";

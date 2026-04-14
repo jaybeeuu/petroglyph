@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { App, PluginManifest } from "obsidian";
+import type { PetroglyphPlugin } from "./main.js";
 
+/* eslint-disable @typescript-eslint/no-extraneous-class, @typescript-eslint/no-useless-constructor, @typescript-eslint/no-unused-vars, @typescript-eslint/explicit-function-return-type */
 vi.mock("obsidian", () => ({
   Notice: Notice,
   Plugin: class {
@@ -16,6 +18,7 @@ vi.mock("obsidian", () => ({
   },
   normalizePath: (path: string) => path,
 }));
+/* eslint-enable @typescript-eslint/no-extraneous-class, @typescript-eslint/no-useless-constructor, @typescript-eslint/no-unused-vars, @typescript-eslint/explicit-function-return-type */
 
 const Notice = vi.fn();
 
@@ -31,24 +34,26 @@ function makeTestJwtWithoutExp(): string {
   return `${header}.${payload}.fakesignature`;
 }
 
-async function makePlugin(initialData?: Record<string, unknown>) {
-  const { PetroglyphPlugin } = await import("./main.js");
+async function makePlugin(initialData?: {
+  [key: string]: unknown;
+}): Promise<{ plugin: PetroglyphPlugin; savedData: { [key: string]: unknown } }> {
+  const { PetroglyphPlugin: PluginClass } = await import("./main.js");
 
-  const savedData: Record<string, unknown> = {};
+  const savedData: { [key: string]: unknown } = {};
   if (initialData !== undefined) {
     savedData["data"] = initialData;
   }
 
-  const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
+  const plugin = new PluginClass({} as App, {} as PluginManifest);
 
-  plugin.loadData = vi.fn(async () => savedData["data"] ?? null);
-  plugin.saveData = vi.fn(async (data: unknown) => {
+  plugin.loadData = vi.fn(() => Promise.resolve(savedData["data"] ?? null));
+  plugin.saveData = vi.fn((data: unknown) => {
     savedData["data"] = data;
+    return Promise.resolve();
   });
   plugin.registerObsidianProtocolHandler = vi.fn();
   plugin.addSettingTab = vi.fn();
-  // @ts-expect-error — minimal stub
-  plugin.app = {};
+  plugin.app = {} as App;
 
   await plugin.loadPluginData();
 
@@ -73,11 +78,12 @@ describe("handleAuthCallback", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({
-        jwt: "jwt-token",
-        refreshToken: "refresh-token",
-        username: "alice",
-      }),
+      json: () =>
+        Promise.resolve({
+          jwt: "jwt-token",
+          refreshToken: "refresh-token",
+          username: "alice",
+        }),
     });
 
     await plugin.handleAuthCallback({ code: "abc", state: "xyz" });
@@ -85,6 +91,7 @@ describe("handleAuthCallback", () => {
     expect(plugin.data.jwt).toBe("jwt-token");
     expect(plugin.data.refreshToken).toBe("refresh-token");
     expect(plugin.data.username).toBe("alice");
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.saveData).toHaveBeenCalledWith(expect.objectContaining({ username: "alice" }));
     expect(Notice).toHaveBeenCalledWith("Logged in as @alice");
   });
@@ -115,7 +122,7 @@ describe("handleAuthCallback", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ jwt: "token" }),
+      json: () => Promise.resolve({ jwt: "token" }),
     });
 
     await plugin.handleAuthCallback({ code: "abc", state: "xyz" });
@@ -132,11 +139,12 @@ describe("handleAuthCallback", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({
-        jwt: "jwt-token",
-        refreshToken: "refresh-token",
-        username: "alice",
-      }),
+      json: () =>
+        Promise.resolve({
+          jwt: "jwt-token",
+          refreshToken: "refresh-token",
+          username: "alice",
+        }),
     });
 
     await plugin.handleAuthCallback({ code: "abc", state: "xyz" });
@@ -159,7 +167,7 @@ describe("openAuthUrl", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ url: "https://github.com/login/oauth/authorize?..." }),
+      json: () => Promise.resolve({ url: "https://github.com/login/oauth/authorize?..." }),
     });
 
     await plugin.openAuthUrl();
@@ -185,7 +193,7 @@ describe("openAuthUrl", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ notUrl: 42 }),
+      json: () => Promise.resolve({ notUrl: 42 }),
     });
 
     await plugin.openAuthUrl();
@@ -229,6 +237,7 @@ describe("loadPluginData / savePluginData", () => {
     const { plugin } = await makePlugin();
     plugin.setCredentials("jwt-token", "refresh-token", "carol");
     await plugin.savePluginData();
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.saveData).toHaveBeenCalledWith(expect.objectContaining({ username: "carol" }));
   });
 });
@@ -299,7 +308,12 @@ describe("clearCredentials", () => {
   });
 });
 
-function makeWindowStub() {
+function makeWindowStub(): {
+  setTimeout: typeof globalThis.setTimeout;
+  clearTimeout: typeof globalThis.clearTimeout;
+  setInterval: typeof globalThis.setInterval;
+  clearInterval: typeof globalThis.clearInterval;
+} {
   return {
     setTimeout: globalThis.setTimeout,
     clearTimeout: globalThis.clearTimeout,
@@ -374,7 +388,7 @@ describe("performRefresh", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ jwt: newJwt, refreshToken: "new-refresh" }),
+      json: () => Promise.resolve({ jwt: newJwt, refreshToken: "new-refresh" }),
     });
 
     await plugin.performRefresh();
@@ -401,7 +415,7 @@ describe("performRefresh", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ jwt: newJwt, refreshToken: "new-refresh" }),
+      json: () => Promise.resolve({ jwt: newJwt, refreshToken: "new-refresh" }),
     });
 
     const scheduleRefreshSpy = vi.spyOn(plugin, "scheduleRefresh").mockImplementation(() => {});
@@ -450,12 +464,14 @@ describe("onload with JWT", () => {
     const jwt = makeTestJwt(Math.floor(Date.now() / 1000) + 3600);
     const { PetroglyphPlugin } = await import("./main.js");
     const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
-    plugin.loadData = vi.fn(async () => ({
-      jwt,
-      refreshToken: "r",
-      username: "alice",
-      apiBaseUrl: "http://localhost:3000",
-    }));
+    plugin.loadData = vi.fn(() =>
+      Promise.resolve({
+        jwt,
+        refreshToken: "r",
+        username: "alice",
+        apiBaseUrl: "http://localhost:3000",
+      }),
+    );
     plugin.saveData = vi.fn();
     plugin.registerObsidianProtocolHandler = vi.fn();
     plugin.addSettingTab = vi.fn();
@@ -472,7 +488,7 @@ describe("onload with JWT", () => {
   it("does not schedule refresh when no JWT in saved data", async () => {
     const { PetroglyphPlugin } = await import("./main.js");
     const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
-    plugin.loadData = vi.fn(async () => null);
+    plugin.loadData = vi.fn(() => Promise.resolve(null));
     plugin.saveData = vi.fn();
     plugin.registerObsidianProtocolHandler = vi.fn();
     plugin.addSettingTab = vi.fn();
@@ -521,7 +537,9 @@ describe("onunload", () => {
 
     const { plugin } = await makePlugin();
 
-    expect(() => plugin.onunload()).not.toThrow();
+    expect(() => {
+      plugin.onunload();
+    }).not.toThrow();
   });
 });
 
@@ -537,7 +555,7 @@ describe("openOneDriveAuthUrl", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ url: "https://onedrive.auth.url" }),
+      json: () => Promise.resolve({ url: "https://onedrive.auth.url" }),
     });
 
     await plugin.openOneDriveAuthUrl();
@@ -545,7 +563,9 @@ describe("openOneDriveAuthUrl", () => {
     expect(global.fetch).toHaveBeenCalledWith(
       "http://localhost:3000/onedrive/auth-url",
       expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "Bearer jwt-token" }),
+        headers: expect.objectContaining({ Authorization: "Bearer jwt-token" }) as unknown as {
+          [key: string]: string;
+        },
       }),
     );
     expect(window.open).toHaveBeenCalledWith("https://onedrive.auth.url", "_blank");
@@ -566,7 +586,7 @@ describe("openOneDriveAuthUrl", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ notUrl: 42 }),
+      json: () => Promise.resolve({ notUrl: 42 }),
     });
 
     await plugin.openOneDriveAuthUrl();
@@ -594,11 +614,12 @@ describe("handleOneDriveCallback", () => {
   it("sets oneDriveConnected=true and saves data on success", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", refreshToken: "r", username: "alice" });
 
-    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
 
     await plugin.handleOneDriveCallback({ code: "abc", state: "xyz" });
 
     expect(plugin.data.oneDriveConnected).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.saveData).toHaveBeenCalledWith(
       expect.objectContaining({ oneDriveConnected: true }),
     );
@@ -607,7 +628,7 @@ describe("handleOneDriveCallback", () => {
   it("calls POST /onedrive/connect with JWT Bearer and params", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", refreshToken: "r", username: "alice" });
 
-    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
 
     await plugin.handleOneDriveCallback({ code: "abc", state: "xyz" });
 
@@ -615,7 +636,9 @@ describe("handleOneDriveCallback", () => {
       "http://localhost:3000/onedrive/connect",
       expect.objectContaining({
         method: "POST",
-        headers: expect.objectContaining({ Authorization: "Bearer jwt-token" }),
+        headers: expect.objectContaining({ Authorization: "Bearer jwt-token" }) as unknown as {
+          [key: string]: string;
+        },
         body: JSON.stringify({ code: "abc", state: "xyz" }),
       }),
     );
@@ -654,7 +677,7 @@ describe("pollStatus", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ oneDrive: { connected: true } }),
+      json: () => Promise.resolve({ oneDrive: { connected: true } }),
     });
 
     await plugin.pollStatus();
@@ -662,7 +685,9 @@ describe("pollStatus", () => {
     expect(global.fetch).toHaveBeenCalledWith(
       "http://localhost:3000/status",
       expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "Bearer jwt-token" }),
+        headers: expect.objectContaining({ Authorization: "Bearer jwt-token" }) as unknown as {
+          [key: string]: string;
+        },
       }),
     );
   });
@@ -672,12 +697,13 @@ describe("pollStatus", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ oneDrive: { connected: true } }),
+      json: () => Promise.resolve({ oneDrive: { connected: true } }),
     });
 
     await plugin.pollStatus();
 
     expect(plugin.data.oneDriveConnected).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.saveData).toHaveBeenCalledWith(
       expect.objectContaining({ oneDriveConnected: true }),
     );
@@ -718,12 +744,14 @@ describe("status polling lifecycle", () => {
     const jwt = makeTestJwt(Math.floor(Date.now() / 1000) + 3600);
     const { PetroglyphPlugin } = await import("./main.js");
     const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
-    plugin.loadData = vi.fn(async () => ({
-      jwt,
-      refreshToken: "r",
-      username: "alice",
-      apiBaseUrl: "http://localhost:3000",
-    }));
+    plugin.loadData = vi.fn(() =>
+      Promise.resolve({
+        jwt,
+        refreshToken: "r",
+        username: "alice",
+        apiBaseUrl: "http://localhost:3000",
+      }),
+    );
     plugin.saveData = vi.fn();
     plugin.registerObsidianProtocolHandler = vi.fn();
     plugin.addSettingTab = vi.fn();
@@ -743,7 +771,7 @@ describe("status polling lifecycle", () => {
   it("does not start polling when no JWT on load", async () => {
     const { PetroglyphPlugin } = await import("./main.js");
     const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
-    plugin.loadData = vi.fn(async () => null);
+    plugin.loadData = vi.fn(() => Promise.resolve(null));
     plugin.saveData = vi.fn();
     plugin.registerObsidianProtocolHandler = vi.fn();
     plugin.addSettingTab = vi.fn();
@@ -785,12 +813,14 @@ describe("status polling lifecycle", () => {
     const jwt = makeTestJwt(Math.floor(Date.now() / 1000) + 3600);
     const { PetroglyphPlugin } = await import("./main.js");
     const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
-    plugin.loadData = vi.fn(async () => ({
-      jwt,
-      refreshToken: "r",
-      username: "alice",
-      apiBaseUrl: "http://localhost:3000",
-    }));
+    plugin.loadData = vi.fn(() =>
+      Promise.resolve({
+        jwt,
+        refreshToken: "r",
+        username: "alice",
+        apiBaseUrl: "http://localhost:3000",
+      }),
+    );
     plugin.saveData = vi.fn();
     plugin.registerObsidianProtocolHandler = vi.fn();
     plugin.addSettingTab = vi.fn();
@@ -821,7 +851,7 @@ describe("oauth/callback URI handler registration", () => {
   it("registers petroglyph/oauth/callback handler on load", async () => {
     const { PetroglyphPlugin } = await import("./main.js");
     const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
-    plugin.loadData = vi.fn(async () => null);
+    plugin.loadData = vi.fn(() => Promise.resolve(null));
     plugin.saveData = vi.fn();
     plugin.registerObsidianProtocolHandler = vi.fn();
     plugin.addSettingTab = vi.fn();
@@ -830,6 +860,7 @@ describe("oauth/callback URI handler registration", () => {
 
     await plugin.onload();
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.registerObsidianProtocolHandler).toHaveBeenCalledWith(
       "petroglyph/oauth/callback",
       expect.any(Function),
@@ -898,32 +929,33 @@ describe("sync poller", () => {
       if (typeof url === "string" && url.includes("/files/changes")) {
         return Promise.resolve({
           ok: true,
-          json: async () => ({
-            files: [
-              {
-                fileId: "file-1",
-                s3PresignedUrl: "https://s3.example.com/file.pdf",
-                filename: "note.pdf",
-                createdAt: "2026-04-11T10:00:00Z",
-                pageCount: 3,
-              },
-            ],
-            nextToken: null,
-          }),
+          json: () =>
+            Promise.resolve({
+              files: [
+                {
+                  fileId: "file-1",
+                  s3PresignedUrl: "https://s3.example.com/file.pdf",
+                  filename: "note.pdf",
+                  createdAt: "2026-04-11T10:00:00Z",
+                  pageCount: 3,
+                },
+              ],
+              nextToken: null,
+            }),
         });
       }
       return Promise.resolve({
         ok: true,
-        arrayBuffer: async () => mockPdfBytes.buffer,
+        arrayBuffer: () => Promise.resolve(mockPdfBytes.buffer),
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const mockVault = {
       adapter: {
-        exists: vi.fn(async () => false),
-        mkdir: vi.fn(async () => {}),
-        writeBinary: vi.fn(async () => {}),
-        write: vi.fn(async () => {}),
+        exists: vi.fn(() => Promise.resolve(false)),
+        mkdir: vi.fn(() => Promise.resolve()),
+        writeBinary: vi.fn(() => Promise.resolve()),
+        write: vi.fn(() => Promise.resolve()),
       },
     };
 
@@ -956,37 +988,38 @@ describe("sync poller", () => {
       if (typeof url === "string" && url.includes("/files/changes")) {
         return Promise.resolve({
           ok: true,
-          json: async () => ({
-            files: [
-              {
-                fileId: "file-1",
-                s3PresignedUrl: "https://s3.example.com/file1.pdf",
-                filename: "note1.pdf",
-                createdAt: "2026-04-11T10:00:00Z",
-              },
-              {
-                fileId: "file-2",
-                s3PresignedUrl: "https://s3.example.com/file2.pdf",
-                filename: "note2.pdf",
-                createdAt: "2026-04-11T11:00:00Z",
-              },
-            ],
-            nextToken: null,
-          }),
+          json: () =>
+            Promise.resolve({
+              files: [
+                {
+                  fileId: "file-1",
+                  s3PresignedUrl: "https://s3.example.com/file1.pdf",
+                  filename: "note1.pdf",
+                  createdAt: "2026-04-11T10:00:00Z",
+                },
+                {
+                  fileId: "file-2",
+                  s3PresignedUrl: "https://s3.example.com/file2.pdf",
+                  filename: "note2.pdf",
+                  createdAt: "2026-04-11T11:00:00Z",
+                },
+              ],
+              nextToken: null,
+            }),
         });
       }
       return Promise.resolve({
         ok: true,
-        arrayBuffer: async () => new ArrayBuffer(4),
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const mockVault = {
       adapter: {
-        exists: vi.fn(async () => true),
-        mkdir: vi.fn(async () => {}),
-        writeBinary: vi.fn(async () => {}),
-        write: vi.fn(async () => {}),
+        exists: vi.fn(() => Promise.resolve(true)),
+        mkdir: vi.fn(() => Promise.resolve()),
+        writeBinary: vi.fn(() => Promise.resolve()),
+        write: vi.fn(() => Promise.resolve()),
       },
     };
 
@@ -995,6 +1028,7 @@ describe("sync poller", () => {
 
     await plugin.performSync();
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.saveData).toHaveBeenCalledTimes(2);
     expect(plugin.data.changeTokens?.["default"]).toBe("file-2");
   });
@@ -1010,32 +1044,33 @@ describe("sync poller", () => {
       if (typeof url === "string" && url.includes("/files/changes")) {
         return Promise.resolve({
           ok: true,
-          json: async () => ({
-            resetToken: true,
-            files: [
-              {
-                fileId: "file-1",
-                s3PresignedUrl: "https://s3.example.com/file1.pdf",
-                filename: "note1.pdf",
-                createdAt: "2026-04-11T10:00:00Z",
-              },
-            ],
-            nextToken: null,
-          }),
+          json: () =>
+            Promise.resolve({
+              resetToken: true,
+              files: [
+                {
+                  fileId: "file-1",
+                  s3PresignedUrl: "https://s3.example.com/file1.pdf",
+                  filename: "note1.pdf",
+                  createdAt: "2026-04-11T10:00:00Z",
+                },
+              ],
+              nextToken: null,
+            }),
         });
       }
       return Promise.resolve({
         ok: true,
-        arrayBuffer: async () => new ArrayBuffer(4),
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const mockVault = {
       adapter: {
-        exists: vi.fn(async () => true),
-        mkdir: vi.fn(async () => {}),
-        writeBinary: vi.fn(async () => {}),
-        write: vi.fn(async () => {}),
+        exists: vi.fn(() => Promise.resolve(true)),
+        mkdir: vi.fn(() => Promise.resolve()),
+        writeBinary: vi.fn(() => Promise.resolve()),
+        write: vi.fn(() => Promise.resolve()),
       },
     };
 
@@ -1060,46 +1095,48 @@ describe("sync poller", () => {
         if (callCount === 1) {
           return Promise.resolve({
             ok: true,
-            json: async () => ({
-              files: [
-                {
-                  fileId: "file-1",
-                  s3PresignedUrl: "https://s3.example.com/file1.pdf",
-                  filename: "note1.pdf",
-                  createdAt: "2026-04-11T10:00:00Z",
-                },
-              ],
-              nextToken: "page-2-token",
-            }),
+            json: () =>
+              Promise.resolve({
+                files: [
+                  {
+                    fileId: "file-1",
+                    s3PresignedUrl: "https://s3.example.com/file1.pdf",
+                    filename: "note1.pdf",
+                    createdAt: "2026-04-11T10:00:00Z",
+                  },
+                ],
+                nextToken: "page-2-token",
+              }),
           });
         }
         return Promise.resolve({
           ok: true,
-          json: async () => ({
-            files: [
-              {
-                fileId: "file-2",
-                s3PresignedUrl: "https://s3.example.com/file2.pdf",
-                filename: "note2.pdf",
-                createdAt: "2026-04-11T11:00:00Z",
-              },
-            ],
-            nextToken: null,
-          }),
+          json: () =>
+            Promise.resolve({
+              files: [
+                {
+                  fileId: "file-2",
+                  s3PresignedUrl: "https://s3.example.com/file2.pdf",
+                  filename: "note2.pdf",
+                  createdAt: "2026-04-11T11:00:00Z",
+                },
+              ],
+              nextToken: null,
+            }),
         });
       }
       return Promise.resolve({
         ok: true,
-        arrayBuffer: async () => new ArrayBuffer(4),
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const mockVault = {
       adapter: {
-        exists: vi.fn(async () => true),
-        mkdir: vi.fn(async () => {}),
-        writeBinary: vi.fn(async () => {}),
-        write: vi.fn(async () => {}),
+        exists: vi.fn(() => Promise.resolve(true)),
+        mkdir: vi.fn(() => Promise.resolve()),
+        writeBinary: vi.fn(() => Promise.resolve()),
+        write: vi.fn(() => Promise.resolve()),
       },
     };
 
@@ -1122,31 +1159,32 @@ describe("sync poller", () => {
       if (typeof url === "string" && url.includes("/files/changes")) {
         return Promise.resolve({
           ok: true,
-          json: async () => ({
-            files: [
-              {
-                fileId: "file-1",
-                s3PresignedUrl: "https://s3.example.com/file.pdf",
-                filename: "subfolder/note.pdf",
-                createdAt: "2026-04-11T10:00:00Z",
-              },
-            ],
-            nextToken: null,
-          }),
+          json: () =>
+            Promise.resolve({
+              files: [
+                {
+                  fileId: "file-1",
+                  s3PresignedUrl: "https://s3.example.com/file.pdf",
+                  filename: "subfolder/note.pdf",
+                  createdAt: "2026-04-11T10:00:00Z",
+                },
+              ],
+              nextToken: null,
+            }),
         });
       }
       return Promise.resolve({
         ok: true,
-        arrayBuffer: async () => new ArrayBuffer(4),
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const mockVault = {
       adapter: {
-        exists: vi.fn(async () => false),
-        mkdir: vi.fn(async () => {}),
-        writeBinary: vi.fn(async () => {}),
-        write: vi.fn(async () => {}),
+        exists: vi.fn(() => Promise.resolve(false)),
+        mkdir: vi.fn(() => Promise.resolve()),
+        writeBinary: vi.fn(() => Promise.resolve()),
+        write: vi.fn(() => Promise.resolve()),
       },
     };
 
@@ -1165,7 +1203,7 @@ describe("sync poller", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({}),
+      json: () => Promise.resolve({}),
     });
 
     const setIntervalSpy = vi.spyOn(window, "setInterval");
@@ -1201,11 +1239,17 @@ describe("loadProfiles", () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
 
     const mockProfiles = [
-      { id: "p1", name: "Profile 1", sourceFolderPath: "/src", destinationVaultPath: "/dst", active: true },
+      {
+        id: "p1",
+        name: "Profile 1",
+        sourceFolderPath: "/src",
+        destinationVaultPath: "/dst",
+        active: true,
+      },
     ];
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => mockProfiles,
+      json: () => Promise.resolve(mockProfiles),
     });
 
     await plugin.loadProfiles();
@@ -1222,9 +1266,10 @@ describe("loadProfiles", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => [
-        { id: "p1", name: "Profile 1", sourceFolderPath: "/src", destinationVaultPath: "/dst" },
-      ],
+      json: () =>
+        Promise.resolve([
+          { id: "p1", name: "Profile 1", sourceFolderPath: "/src", destinationVaultPath: "/dst" },
+        ]),
     });
 
     await plugin.loadProfiles();
@@ -1238,10 +1283,23 @@ describe("loadProfiles", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => [
-        { id: "p1", name: "Profile 1", sourceFolderPath: "/src", destinationVaultPath: "/dst", active: false },
-        { id: "p2", name: "Profile 2", sourceFolderPath: "/src2", destinationVaultPath: "/dst2", active: true },
-      ],
+      json: () =>
+        Promise.resolve([
+          {
+            id: "p1",
+            name: "Profile 1",
+            sourceFolderPath: "/src",
+            destinationVaultPath: "/dst",
+            active: false,
+          },
+          {
+            id: "p2",
+            name: "Profile 2",
+            sourceFolderPath: "/src2",
+            destinationVaultPath: "/dst2",
+            active: true,
+          },
+        ]),
     });
 
     await plugin.loadProfiles();
@@ -1254,9 +1312,16 @@ describe("loadProfiles", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => [
-        { id: "p1", name: "Profile 1", sourceFolderPath: "/src", destinationVaultPath: "/dst", active: false },
-      ],
+      json: () =>
+        Promise.resolve([
+          {
+            id: "p1",
+            name: "Profile 1",
+            sourceFolderPath: "/src",
+            destinationVaultPath: "/dst",
+            active: false,
+          },
+        ]),
     });
 
     await plugin.loadProfiles();
@@ -1269,11 +1334,15 @@ describe("loadProfiles", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => [{ id: "p1", name: "P1", sourceFolderPath: "/s", destinationVaultPath: "/d" }],
+      json: () =>
+        Promise.resolve([
+          { id: "p1", name: "P1", sourceFolderPath: "/s", destinationVaultPath: "/d" },
+        ]),
     });
 
     await plugin.loadProfiles();
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.saveData).toHaveBeenCalled();
   });
 
@@ -1285,6 +1354,7 @@ describe("loadProfiles", () => {
     await plugin.loadProfiles();
 
     expect(plugin.data.profiles).toBeUndefined();
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.saveData).not.toHaveBeenCalled();
   });
 });
@@ -1331,7 +1401,10 @@ describe("setActiveProfile", () => {
     await plugin.setActiveProfile("p1");
 
     expect(plugin.data.activeProfileId).toBe("p1");
-    expect(plugin.saveData).toHaveBeenCalledWith(expect.objectContaining({ activeProfileId: "p1" }));
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(plugin.saveData).toHaveBeenCalledWith(
+      expect.objectContaining({ activeProfileId: "p1" }),
+    );
   });
 
   it("shows notice on failure", async () => {
@@ -1380,7 +1453,11 @@ describe("createProfile", () => {
   it("does nothing when no jwt is set", async () => {
     const { plugin } = await makePlugin();
     global.fetch = vi.fn();
-    await plugin.createProfile({ name: "New", sourceFolderPath: "/src", destinationVaultPath: "/dst" });
+    await plugin.createProfile({
+      name: "New",
+      sourceFolderPath: "/src",
+      destinationVaultPath: "/dst",
+    });
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
@@ -1388,16 +1465,24 @@ describe("createProfile", () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => [],
+      json: () => Promise.resolve([]),
     });
 
-    await plugin.createProfile({ name: "My Profile", sourceFolderPath: "/src", destinationVaultPath: "/dst" });
+    await plugin.createProfile({
+      name: "My Profile",
+      sourceFolderPath: "/src",
+      destinationVaultPath: "/dst",
+    });
 
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringContaining("/profiles"),
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ name: "My Profile", sourceFolderPath: "/src", destinationVaultPath: "/dst" }),
+        body: JSON.stringify({
+          name: "My Profile",
+          sourceFolderPath: "/src",
+          destinationVaultPath: "/dst",
+        }),
       }),
     );
   });
@@ -1407,11 +1492,16 @@ describe("createProfile", () => {
     const mockProfiles = [
       { id: "p1", name: "My Profile", sourceFolderPath: "/src", destinationVaultPath: "/dst" },
     ];
-    global.fetch = vi.fn()
+    global.fetch = vi
+      .fn()
       .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({ ok: true, json: async () => mockProfiles });
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(mockProfiles) });
 
-    await plugin.createProfile({ name: "My Profile", sourceFolderPath: "/src", destinationVaultPath: "/dst" });
+    await plugin.createProfile({
+      name: "My Profile",
+      sourceFolderPath: "/src",
+      destinationVaultPath: "/dst",
+    });
 
     expect(plugin.data.profiles).toHaveLength(1);
   });
@@ -1420,7 +1510,11 @@ describe("createProfile", () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
     global.fetch = vi.fn().mockResolvedValue({ ok: false });
 
-    await plugin.createProfile({ name: "Fail", sourceFolderPath: "/s", destinationVaultPath: "/d" });
+    await plugin.createProfile({
+      name: "Fail",
+      sourceFolderPath: "/s",
+      destinationVaultPath: "/d",
+    });
 
     expect(Notice).toHaveBeenCalledWith("Failed to create profile");
     expect(global.fetch).toHaveBeenCalledTimes(1);
@@ -1449,7 +1543,7 @@ describe("editProfile", () => {
 
   it("calls PUT /profiles/{id} with the updates", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
-    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve([]) });
 
     await plugin.editProfile("p1", { name: "Updated Name", sourceFolderPath: "/new-src" });
 
@@ -1465,11 +1559,17 @@ describe("editProfile", () => {
   it("calls loadProfiles after successful edit", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
     const updatedProfiles = [
-      { id: "p1", name: "Updated Name", sourceFolderPath: "/new-src", destinationVaultPath: "/dst" },
+      {
+        id: "p1",
+        name: "Updated Name",
+        sourceFolderPath: "/new-src",
+        destinationVaultPath: "/dst",
+      },
     ];
-    global.fetch = vi.fn()
+    global.fetch = vi
+      .fn()
       .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({ ok: true, json: async () => updatedProfiles });
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(updatedProfiles) });
 
     await plugin.editProfile("p1", { name: "Updated Name" });
 
@@ -1509,7 +1609,7 @@ describe("deleteProfile", () => {
 
   it("calls DELETE /profiles/{id}", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
-    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve([]) });
 
     await plugin.deleteProfile("p1");
 
@@ -1520,15 +1620,22 @@ describe("deleteProfile", () => {
   });
 
   it("calls loadProfiles after successful deletion", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", profiles: [
-      { id: "p1", name: "P1", sourceFolderPath: "/s", destinationVaultPath: "/d" },
-      { id: "p2", name: "P2", sourceFolderPath: "/s2", destinationVaultPath: "/d2" },
-    ] });
-    global.fetch = vi.fn()
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      profiles: [
+        { id: "p1", name: "P1", sourceFolderPath: "/s", destinationVaultPath: "/d" },
+        { id: "p2", name: "P2", sourceFolderPath: "/s2", destinationVaultPath: "/d2" },
+      ],
+    });
+    global.fetch = vi
+      .fn()
       .mockResolvedValueOnce({ ok: true })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => [{ id: "p2", name: "P2", sourceFolderPath: "/s2", destinationVaultPath: "/d2" }],
+        json: () =>
+          Promise.resolve([
+            { id: "p2", name: "P2", sourceFolderPath: "/s2", destinationVaultPath: "/d2" },
+          ]),
       });
 
     await plugin.deleteProfile("p1");
@@ -1539,9 +1646,10 @@ describe("deleteProfile", () => {
 
   it("clears activeProfileId when the active profile is deleted", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", activeProfileId: "p1" });
-    global.fetch = vi.fn()
+    global.fetch = vi
+      .fn()
       .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] });
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) });
 
     await plugin.deleteProfile("p1");
 
@@ -1550,9 +1658,10 @@ describe("deleteProfile", () => {
 
   it("does not clear activeProfileId when a different profile is deleted", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", activeProfileId: "p2" });
-    global.fetch = vi.fn()
+    global.fetch = vi
+      .fn()
       .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({ ok: true, json: async () => [] });
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) });
 
     await plugin.deleteProfile("p1");
 

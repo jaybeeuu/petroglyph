@@ -1,5 +1,6 @@
 // Minimal stub so Vitest can resolve the obsidian module.
 // Tests that import obsidian should use vi.mock('obsidian', ...) to replace it.
+/* eslint-disable @typescript-eslint/no-extraneous-class, @typescript-eslint/no-useless-constructor, @typescript-eslint/no-unused-vars */
 export class App {}
 export class Plugin {
   constructor(_app: unknown, _manifest: unknown) {}
@@ -19,7 +20,9 @@ export class Modal {
   app: unknown;
   contentEl: { empty(): void; createEl(_tag: string, _opts?: unknown): unknown } = {
     empty() {},
-    createEl() { return {}; },
+    createEl() {
+      return {};
+    },
   };
   constructor(_app: unknown) {}
   open(): void {}

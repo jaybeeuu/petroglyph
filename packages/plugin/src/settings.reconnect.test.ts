@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { App, PluginManifest } from "obsidian";
+import type { PetroglyphPlugin } from "./main.js";
 
 const buttonHandlers = new Map<string, () => Promise<void> | void>();
 
+/* eslint-disable @typescript-eslint/no-extraneous-class, @typescript-eslint/no-useless-constructor, @typescript-eslint/no-unused-vars, @typescript-eslint/explicit-function-return-type */
 vi.mock("obsidian", () => ({
   Notice: vi.fn(),
   Plugin: class {
@@ -90,6 +92,7 @@ vi.mock("obsidian", () => ({
     close() {}
   },
 }));
+/* eslint-enable @typescript-eslint/no-extraneous-class, @typescript-eslint/no-useless-constructor, @typescript-eslint/no-unused-vars, @typescript-eslint/explicit-function-return-type */
 
 interface ButtonStub {
   setButtonText(text: string): ButtonStub;
@@ -102,19 +105,25 @@ interface TextStub {
   onChange(cb: (v: string) => Promise<void> | void): TextStub;
 }
 
-const _Notice = vi.fn();
+vi.fn(); // Notice mock — imported by obsidian vi.mock factory above
 
 async function makePlugin(
   options: { username?: string; oneDriveConnected?: boolean; oneDriveStatus?: string } = {},
-) {
+): Promise<PetroglyphPlugin> {
   const { PetroglyphPlugin } = await import("./main.js");
 
   const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
-  plugin.loadData = vi.fn(async () => null);
+  const initialData: { [key: string]: unknown } = {};
+  if (options.oneDriveStatus !== undefined) {
+    initialData["oneDriveStatus"] = options.oneDriveStatus;
+  }
+  plugin.loadData = vi.fn(() =>
+    Promise.resolve(Object.keys(initialData).length > 0 ? initialData : null),
+  );
   plugin.saveData = vi.fn();
   plugin.registerObsidianProtocolHandler = vi.fn();
   plugin.addSettingTab = vi.fn();
-  plugin.app = {};
+  plugin.app = {} as App;
 
   await plugin.loadPluginData();
 
@@ -124,10 +133,6 @@ async function makePlugin(
 
   if (options.oneDriveConnected !== undefined) {
     plugin.setOneDriveConnected(options.oneDriveConnected);
-  }
-
-  if (options.oneDriveStatus !== undefined) {
-    plugin.data.oneDriveStatus = options.oneDriveStatus;
   }
 
   return plugin;
@@ -154,6 +159,7 @@ describe("PetroglyphSettingTab OneDrive reconnect banner", () => {
     const tab = new PetroglyphSettingTab({} as App, plugin);
     tab.display();
     await buttonHandlers.get("Reconnect OneDrive")?.();
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.openOneDriveAuthUrl).toHaveBeenCalled();
   });
 

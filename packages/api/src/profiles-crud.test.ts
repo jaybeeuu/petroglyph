@@ -291,7 +291,9 @@ describe("profiles CRUD handlers", () => {
 
       expect(response.status).toBe(204);
       const dbCalls = mockDbSend.mock.calls;
-      const queryCall = dbCalls.find((call) => (call[0] as { input?: unknown }) instanceof QueryCommand);
+      const queryCall = dbCalls.find(
+        (call) => (call[0] as { input?: unknown }) instanceof QueryCommand,
+      );
       expect(queryCall).toBeDefined();
       const deleteCall = dbCalls.find(
         (call) =>
