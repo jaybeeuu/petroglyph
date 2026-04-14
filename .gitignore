@@ -1,4 +1,7 @@
 
+# Working documents (checklists, notes, scratch pads — not for version control)
+.working-docs/
+
 # Dolt database files (added by bd init)
 .dolt/
 *.db
@@ -19,3 +22,19 @@ dist/
 
 # Local environment variables (never commit)
 .env
+
+# Beads / Dolt files (added by bd init)
+.beads-credential-key
+.ralph-progress.md
+
+# Lambda deployment artifact
+lambda.zip
+test-output.txt
+
+# Terraform
+**/.vitest-terraform/
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars.json
+.terraform.tfstate.lock.info

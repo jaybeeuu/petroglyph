@@ -1,0 +1,29 @@
+{
+  "name": "@petroglyph/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^25.5.2"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "package": "bash scripts/package.sh",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "lint": "eslint .",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1024.0",
+    "@aws-sdk/client-s3": "^3.1024.0",
+    "@aws-sdk/client-ssm": "^3.1024.0",
+    "@aws-sdk/lib-dynamodb": "^3.1024.0",
+    "@aws-sdk/s3-request-presigner": "^3.1024.0",
+    "@petroglyph/core": "workspace:*",
+    "hono": "^4.12.10",
+    "jose": "^6.2.2",
+    "zod": "^4.3.6"
+  }
+}

@@ -5,104 +5,122 @@ on:
     branches:
       - main
   pull_request:
+    branches:
+      - main
 
 jobs:
-  build:
-    name: Build
+  install:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup
-        uses: ./.github/actions/setup
-
-      - name: Build
-        run: pnpm build
-
-      - name: Cache build output
-        uses: actions/cache/save@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
         with:
-          path: packages/*/dist
-          key: build-${{ runner.os }}-${{ github.sha }}
+          version: "10.4.1"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-
+      - run: pnpm install --frozen-lockfile
 
-  format-check:
-    name: Format check
+  build:
+    needs: [install]
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup
-        uses: ./.github/actions/setup
-
-      - name: Format check
-        run: pnpm format:check
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.4.1"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
 
   lint:
-    name: Lint
+    needs: [install]
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup
-        uses: ./.github/actions/setup
-
-      - name: Lint
-        run: pnpm lint
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.4.1"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm lint
 
   typecheck:
-    name: Type check
-    needs: build
+    needs: [install]
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup
-        uses: ./.github/actions/setup
-
-      - name: Restore build output
-        uses: actions/cache/restore@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
         with:
-          path: packages/*/dist
-          key: build-${{ runner.os }}-${{ github.sha }}
-
-      - name: Type check
-        run: pnpm typecheck
+          version: "10.4.1"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm typecheck
 
   test:
-    name: Test
-    needs: build
+    needs: [install]
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup
-        uses: ./.github/actions/setup
-
-      - name: Restore build output
-        uses: actions/cache/restore@v4
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
         with:
-          path: packages/*/dist
-          key: build-${{ runner.os }}-${{ github.sha }}
+          version: "10.4.1"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
 
-      - name: Test
-        run: pnpm test
+  format-check:
+    needs: [install]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.4.1"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check

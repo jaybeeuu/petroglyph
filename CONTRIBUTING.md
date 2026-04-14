@@ -47,7 +47,7 @@ All four commands should complete without errors on a clean checkout.
 pnpm --filter @petroglyph/<name> dev
 ```
 
-Replace `<name>` with one of: `api`, `ingest-onedrive`, `processor`, `cli`.
+Replace `<name>` with one of: `api`, `ingest-onedrive`, `processor`, `plugin`, `infra`, `core`.
 
 ### Start all packages together
 
@@ -89,13 +89,14 @@ pnpm --filter @petroglyph/<name> <script>
 
 Each package should expose the following scripts where applicable:
 
-| Script      | Description                                                                |
-| ----------- | -------------------------------------------------------------------------- |
-| `build`     | Compile TypeScript to `dist/` using `tsc`                                  |
-| `lint`      | Run ESLint over `src/`                                                     |
-| `typecheck` | Type-check without emitting output                                         |
-| `test`      | Run unit and mocked integration tests with Vitest                          |
-| `dev`       | Start the package in development mode using `tsx` for TypeScript execution |
+| Script      | Description                                                                    |
+| ----------- | ------------------------------------------------------------------------------ |
+| `build`     | Compile TypeScript to `dist/` using `tsc`                                      |
+| `lint`      | Run ESLint over `src/`                                                         |
+| `typecheck` | Type-check without emitting output                                             |
+| `test`      | Run unit and mocked integration tests with Vitest                              |
+| `dev`       | Start the package in development mode using `tsx` for TypeScript execution     |
+| `package`   | Produce a Lambda deployment artifact (`lambda.zip`) via `pnpm build` + staging |
 
 See [docs/creating-a-package.md](docs/creating-a-package.md) for the canonical package scaffolding template.
 
@@ -122,9 +123,34 @@ Tests or scripts that connect to real AWS, Entra, or OneDrive services are opt-i
 They are not part of `pnpm test` and must be run explicitly.
 Set the appropriate variables in your `.env` and follow the package-level instructions in each package's `LOCAL.md` (when present).
 
+## CD Secrets
+
+The CD workflow (`.github/workflows/cd.yml`) requires three GitHub Actions secrets to be configured on the `production` environment. For full deployment and infrastructure setup instructions, see [docs/ops.md](docs/ops.md).
+
+| Secret                   | Description                                                  |
+| ------------------------ | ------------------------------------------------------------ |
+| `AWS_ROLE_ARN`           | ARN of the IAM role assumed via OIDC for deployments         |
+| `TF_STATE_BUCKET`        | S3 bucket name used to store Terraform remote state          |
+| `LAMBDA_ARTIFACT_BUCKET` | S3 bucket name used to store Lambda deployment ZIP artifacts |
+
+`TF_STATE_BUCKET` and `LAMBDA_ARTIFACT_BUCKET` may point to the same bucket or separate buckets depending on your infrastructure setup.
+
+The `deploy` job targets the `production` GitHub Actions environment. Configure that environment so only `main` can deploy, and add any required reviewers or other protection rules there.
+
+## CD Artifact Versioning
+
+Lambda deployment ZIPs are stored in `LAMBDA_ARTIFACT_BUCKET` using a **content-hash key**: `lambda-<sha256>.zip`, where `<sha256>` is the SHA-256 digest of the ZIP file produced by `pnpm --filter @petroglyph/api package`.
+
+This means:
+
+- **No-op deploys**: If a merge to `main` changes no application code (e.g., docs-only or infra-only change), the packaged ZIP is identical to the previous one. The CD workflow detects that the content-hash key already exists in S3 and skips the upload. Terraform sees the same `api_zip_s3_key` as the previous run and produces a no-op `apply` for the Lambda function.
+- **Code changes**: When application code changes, the ZIP content differs, producing a new SHA-256 digest and a new S3 key. Terraform detects the key change and updates the Lambda function.
+
+The content-hash key is computed and exposed as a step output (`steps.artifact-hash.outputs.hash`) in the `deploy` job before the upload and Terraform steps run.
+
 ## CI Alignment
 
-CI runs the same commands as local validation. See [README.md](README.md#ci-checks) for the full CI job breakdown.
+CI runs the same commands as local validation. The workflow is defined in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and triggers on push and pull requests targeting `main`. Each check runs in a parallel job after a shared `install` job warms the pnpm store cache.
 
 The key local commands that align with CI jobs:
 
@@ -135,6 +161,8 @@ The key local commands that align with CI jobs:
 5. `pnpm test`
 
 If all five pass locally, they should pass in CI.
+
+Branch protection on `main` requires all five checks to pass before a pull request can be merged.
 
 ## Code Style
 
@@ -147,6 +175,14 @@ If all five pass locally, they should pass in CI.
 ## Adding a New Package
 
 Follow the instructions in [docs/creating-a-package.md](docs/creating-a-package.md).
+
+## Plugin Development
+
+The `plugin` package depends on the Obsidian API, which is only available inside a running Obsidian instance.
+Tests use a manual mock at `packages/plugin/src/__mocks__/obsidian.ts` that stubs the Obsidian classes and APIs needed by the plugin.
+Vitest automatically picks up `__mocks__` directories adjacent to the source files, so no explicit `vi.mock` call is needed in test files.
+
+When adding tests that touch new Obsidian APIs, extend the mock first.
 
 ## Troubleshooting
 

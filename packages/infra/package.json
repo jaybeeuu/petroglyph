@@ -1,0 +1,15 @@
+{
+  "name": "@petroglyph/infra",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bootstrap": "./scripts/bootstrap.sh",
+    "tf:apply": "./scripts/tf-apply.sh",
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "lint": "eslint .",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  }
+}

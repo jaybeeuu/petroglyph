@@ -1,0 +1,103 @@
+name: CD
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.4.1"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+
+  package:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.4.1"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @petroglyph/api package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lambda-zip
+          path: packages/api/lambda.zip
+
+  deploy:
+    needs: [package]
+    environment: production
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: eu-west-2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: lambda-zip
+          path: packages/api
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Compute artifact content hash
+        id: artifact-hash
+        run: |
+          HASH=$(sha256sum packages/api/lambda.zip | cut -d' ' -f1)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+      - name: Upload lambda zip to S3
+        run: |
+          KEY="lambda-${{ steps.artifact-hash.outputs.hash }}.zip"
+          if aws s3api head-object --bucket ${{ secrets.LAMBDA_ARTIFACT_BUCKET }} --key "$KEY" 2>/dev/null; then
+            echo "Artifact already exists at $KEY — skipping upload"
+          else
+            aws s3 cp packages/api/lambda.zip s3://${{ secrets.LAMBDA_ARTIFACT_BUCKET }}/$KEY
+          fi
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform init
+        working-directory: packages/infra
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=petroglyph/terraform.tfstate" \
+            -backend-config="region=eu-west-2" \
+            -backend-config="dynamodb_table=petroglyph-terraform-locks" \
+            -backend-config="encrypt=true"
+      - name: Terraform workspace
+        working-directory: packages/infra
+        run: |
+          terraform workspace select production || terraform workspace new production
+      - name: Terraform apply
+        working-directory: packages/infra
+        run: |
+          terraform apply -auto-approve \
+            -var="api_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
+            -var="api_zip_s3_key=lambda-${{ steps.artifact-hash.outputs.hash }}.zip"

@@ -2,27 +2,25 @@
   "name": "@petroglyph/core",
   "version": "0.0.0",
   "private": true,
-  "description": "Core domain types and contracts for Petroglyph.",
   "type": "module",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     }
   },
   "scripts": {
-    "build": "tsc --project tsconfig.build.json",
-    "lint": "eslint src",
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "lint": "eslint .",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc --project tsconfig.json --noEmit"
-  },
-  "engines": {
-    "node": ">=24.0.0"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/lib-dynamodb": "^3.1024.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "vitest": "^4.0.18"
+    "@aws-sdk/client-dynamodb": "^3.1024.0"
   }
 }
