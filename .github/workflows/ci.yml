@@ -21,9 +21,11 @@ jobs:
           node-version: "24"
       - uses: actions/cache@v4
         with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-store-
+          path: |
+            ~/.local/share/pnpm/store
+            node_modules
+            packages/*/node_modules
+          key: deps-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm install --frozen-lockfile
 
   build:
@@ -39,14 +41,21 @@ jobs:
           node-version: "24"
       - uses: actions/cache@v4
         with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-store-
-      - run: pnpm install --frozen-lockfile
+          path: |
+            ~/.local/share/pnpm/store
+            node_modules
+            packages/*/node_modules
+          key: deps-${{ hashFiles('pnpm-lock.yaml') }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            packages/*/dist
+            packages/*/*.tsbuildinfo
+          key: dist-${{ github.sha }}
       - run: pnpm build
 
   lint:
-    needs: [install]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,15 +67,21 @@ jobs:
           node-version: "24"
       - uses: actions/cache@v4
         with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-store-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+          path: |
+            ~/.local/share/pnpm/store
+            node_modules
+            packages/*/node_modules
+          key: deps-${{ hashFiles('pnpm-lock.yaml') }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            packages/*/dist
+            packages/*/*.tsbuildinfo
+          key: dist-${{ github.sha }}
       - run: pnpm lint
 
   typecheck:
-    needs: [install]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,15 +93,21 @@ jobs:
           node-version: "24"
       - uses: actions/cache@v4
         with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-store-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+          path: |
+            ~/.local/share/pnpm/store
+            node_modules
+            packages/*/node_modules
+          key: deps-${{ hashFiles('pnpm-lock.yaml') }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            packages/*/dist
+            packages/*/*.tsbuildinfo
+          key: dist-${{ github.sha }}
       - run: pnpm typecheck
 
   test:
-    needs: [install]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -99,11 +120,17 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
       - uses: actions/cache@v4
         with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-store-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+          path: |
+            ~/.local/share/pnpm/store
+            node_modules
+            packages/*/node_modules
+          key: deps-${{ hashFiles('pnpm-lock.yaml') }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            packages/*/dist
+            packages/*/*.tsbuildinfo
+          key: dist-${{ github.sha }}
       - run: pnpm test
 
   format-check:
@@ -119,8 +146,9 @@ jobs:
           node-version: "24"
       - uses: actions/cache@v4
         with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-store-
-      - run: pnpm install --frozen-lockfile
+          path: |
+            ~/.local/share/pnpm/store
+            node_modules
+            packages/*/node_modules
+          key: deps-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm format:check
