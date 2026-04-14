@@ -47,6 +47,7 @@ jobs:
           key: pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-store-
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - run: pnpm --filter @petroglyph/api package
       - uses: actions/upload-artifact@v4
         with:
