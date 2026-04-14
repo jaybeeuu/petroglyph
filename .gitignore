@@ -1,4 +1,7 @@
 
+# Working documents (checklists, notes, scratch pads — not for version control)
+.working-docs/
+
 # Dolt database files (added by bd init)
 .dolt/
 *.db
