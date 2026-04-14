@@ -38,6 +38,17 @@ cp -rf source dest          # NOT: cp -r source dest
 - `apt-get` - use `-y` flag
 - `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
 
+## Working Documents
+
+Checklists, scratch pads, and other operational notes that should **not** be committed belong in `.working-docs/`. That directory is gitignored.
+
+```bash
+# Example
+.working-docs/dv4.13-cd-checklist.md
+```
+
+Never put working documents in `docs/` or any other tracked directory.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 
 ## Beads Issue Tracker
