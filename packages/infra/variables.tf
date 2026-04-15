@@ -13,23 +13,27 @@ variable "api_zip_s3_key" {
 }
 
 variable "ingest_onedrive_zip_s3_bucket" {
-  description = "S3 bucket containing the ingest-onedrive Lambda deployment zip"
+  description = "S3 bucket containing the ingest-onedrive Lambda deployment zip. Empty string disables the Lambda."
   type        = string
+  default     = ""
 }
 
 variable "ingest_onedrive_zip_s3_key" {
-  description = "S3 key of the ingest-onedrive Lambda deployment zip"
+  description = "S3 key of the ingest-onedrive Lambda deployment zip. Empty string disables the Lambda."
   type        = string
+  default     = ""
 }
 
 variable "processor_zip_s3_bucket" {
-  description = "S3 bucket containing the processor Lambda deployment zip"
+  description = "S3 bucket containing the processor Lambda deployment zip. Empty string disables the Lambda."
   type        = string
+  default     = ""
 }
 
 variable "processor_zip_s3_key" {
-  description = "S3 key of the processor Lambda deployment zip"
+  description = "S3 key of the processor Lambda deployment zip. Empty string disables the Lambda."
   type        = string
+  default     = ""
 }
 
 variable "retention_days" {

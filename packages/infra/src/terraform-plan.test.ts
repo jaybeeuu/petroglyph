@@ -87,7 +87,7 @@ describe.sequential("terraform ingestion infrastructure", () => {
       /resource "aws_lambda_function" "petroglyph_processor" \{[\s\S]*timeout\s*=\s*60[\s\S]*environment \{[\s\S]*MICROSOFT_CLIENT_ID\s*=\s*aws_ssm_parameter\.onedrive_client_id\.value[\s\S]*\}[\s\S]*\}/,
     );
     expect(lambdaIngestionTerraform).toMatch(
-      /resource "aws_lambda_event_source_mapping" "processor_ingest_queue" \{[\s\S]*event_source_arn\s*=\s*aws_sqs_queue\.ingest\.arn[\s\S]*function_name\s*=\s*aws_lambda_function\.petroglyph_processor\.arn[\s\S]*batch_size\s*=\s*10/,
+      /resource "aws_lambda_event_source_mapping" "processor_ingest_queue" \{[\s\S]*event_source_arn\s*=\s*aws_sqs_queue\.ingest\.arn[\s\S]*function_name\s*=\s*aws_lambda_function\.petroglyph_processor\[0\]\.arn[\s\S]*batch_size\s*=\s*10/,
     );
     expect(lambdaIngestionTerraform).toContain('route_key = "POST /webhooks/onedrive"');
     expect(lambdaIngestionTerraform).toContain(

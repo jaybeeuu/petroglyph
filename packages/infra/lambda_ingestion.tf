@@ -48,6 +48,8 @@ resource "aws_cloudwatch_metric_alarm" "ingest_dlq_depth" {
 # ---------------------------------------------------------------------------
 
 resource "aws_lambda_function" "petroglyph_ingest_onedrive" {
+  count = var.ingest_onedrive_zip_s3_bucket != "" ? 1 : 0
+
   function_name = "petroglyph-ingest-onedrive-${terraform.workspace}"
 
   s3_bucket = var.ingest_onedrive_zip_s3_bucket
@@ -71,28 +73,36 @@ resource "aws_lambda_function" "petroglyph_ingest_onedrive" {
 }
 
 resource "aws_apigatewayv2_integration" "petroglyph_ingest_onedrive" {
+  count = var.ingest_onedrive_zip_s3_bucket != "" ? 1 : 0
+
   api_id                 = aws_apigatewayv2_api.petroglyph_api.id
   integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.petroglyph_ingest_onedrive.invoke_arn
+  integration_uri        = aws_lambda_function.petroglyph_ingest_onedrive[0].invoke_arn
   payload_format_version = "2.0"
 }
 
 resource "aws_apigatewayv2_route" "onedrive_webhook_post" {
+  count = var.ingest_onedrive_zip_s3_bucket != "" ? 1 : 0
+
   api_id    = aws_apigatewayv2_api.petroglyph_api.id
   route_key = "POST /webhooks/onedrive"
-  target    = "integrations/${aws_apigatewayv2_integration.petroglyph_ingest_onedrive.id}"
+  target    = "integrations/${aws_apigatewayv2_integration.petroglyph_ingest_onedrive[0].id}"
 }
 
 resource "aws_lambda_permission" "api_gateway_ingest_onedrive" {
+  count = var.ingest_onedrive_zip_s3_bucket != "" ? 1 : 0
+
   statement_id  = "AllowAPIGatewayInvokeIngestOnedrive"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.petroglyph_ingest_onedrive.function_name
+  function_name = aws_lambda_function.petroglyph_ingest_onedrive[0].function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.petroglyph_api.execution_arn}/*/*/webhooks/onedrive"
 }
 
 resource "aws_cloudwatch_log_group" "lambda_ingest_onedrive" {
-  name              = "/aws/lambda/${aws_lambda_function.petroglyph_ingest_onedrive.function_name}"
+  count = var.ingest_onedrive_zip_s3_bucket != "" ? 1 : 0
+
+  name              = "/aws/lambda/${aws_lambda_function.petroglyph_ingest_onedrive[0].function_name}"
   retention_in_days = 14
 
   tags = {
@@ -105,6 +115,8 @@ resource "aws_cloudwatch_log_group" "lambda_ingest_onedrive" {
 # ---------------------------------------------------------------------------
 
 resource "aws_lambda_function" "petroglyph_processor" {
+  count = var.processor_zip_s3_bucket != "" ? 1 : 0
+
   function_name = "petroglyph-processor-${terraform.workspace}"
 
   s3_bucket = var.processor_zip_s3_bucket
@@ -118,10 +130,10 @@ resource "aws_lambda_function" "petroglyph_processor" {
 
   environment {
     variables = {
-      FILE_RECORDS_TABLE    = local.file_records_table_name
-      MICROSOFT_CLIENT_ID  = aws_ssm_parameter.onedrive_client_id.value
-      STAGED_PDFS_BUCKET   = aws_s3_bucket.staged_pdfs.bucket
-      STAGED_PDF_PREFIX    = "handwritten"
+      FILE_RECORDS_TABLE  = local.file_records_table_name
+      MICROSOFT_CLIENT_ID = aws_ssm_parameter.onedrive_client_id.value
+      STAGED_PDFS_BUCKET  = aws_s3_bucket.staged_pdfs.bucket
+      STAGED_PDF_PREFIX   = "handwritten"
     }
   }
 
@@ -131,14 +143,18 @@ resource "aws_lambda_function" "petroglyph_processor" {
 }
 
 resource "aws_lambda_event_source_mapping" "processor_ingest_queue" {
+  count = var.processor_zip_s3_bucket != "" ? 1 : 0
+
   event_source_arn        = aws_sqs_queue.ingest.arn
-  function_name           = aws_lambda_function.petroglyph_processor.arn
+  function_name           = aws_lambda_function.petroglyph_processor[0].arn
   batch_size              = 10
   function_response_types = ["ReportBatchItemFailures"]
 }
 
 resource "aws_cloudwatch_log_group" "lambda_processor" {
-  name              = "/aws/lambda/${aws_lambda_function.petroglyph_processor.function_name}"
+  count = var.processor_zip_s3_bucket != "" ? 1 : 0
+
+  name              = "/aws/lambda/${aws_lambda_function.petroglyph_processor[0].function_name}"
   retention_in_days = 14
 
   tags = {
