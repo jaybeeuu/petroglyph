@@ -1,0 +1,9 @@
+{
+  "id": "petroglyph",
+  "name": "Petroglyph",
+  "version": "0.0.0",
+  "minAppVersion": "1.0.0",
+  "description": "Petroglyph Obsidian plugin",
+  "author": "Josh Bickley-Wallace",
+  "isDesktopOnly": false
+}
