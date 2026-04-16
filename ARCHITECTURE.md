@@ -145,6 +145,10 @@ A TypeScript plugin that runs inside Obsidian, responsible for pulling staged fi
 - **Acknowledgement** — notifies the cloud API on successful download; the API marks the file as delivered in DynamoDB.
 - **Markdown stub** — creates a companion `.md` file alongside each PDF containing YAML frontmatter extracted from the PDF metadata (title, creation date, page count, source path, etc.).
 
+#### Build
+
+Obsidian requires plugins to be distributed as a single CJS file (`dist/main.js`) with `obsidian` left external — the runtime injects it. `tsc` alone cannot produce a bundle, so the build uses **esbuild** (`esbuild.config.mjs`). The dev script adds inline source maps; the production build omits them. `manifest.json` (required by Obsidian alongside `dist/main.js`) lives at the package root and declares the plugin id, name, version, and `minAppVersion`.
+
 #### Plugin Location
 
 Lives in this monorepo during initial development. Will be extracted to its own repository before community plugin submission.
