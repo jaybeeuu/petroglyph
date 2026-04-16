@@ -114,6 +114,6 @@ jobs:
       - name: Terraform apply
         working-directory: packages/infra
         run: |
-          terraform apply -auto-approve \
+          terraform apply -auto-approve -refresh=false \
             -var="api_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
             -var="api_zip_s3_key=lambda-${{ steps.artifact-hash.outputs.hash }}.zip"

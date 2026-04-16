@@ -10,8 +10,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "staged_pdfs" {
   bucket = aws_s3_bucket.staged_pdfs.id
 
   rule {
-    bucket_key_enabled       = false
-    blocked_encryption_types = ["SSE-C"]
+    bucket_key_enabled = false
 
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
