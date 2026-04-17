@@ -5,10 +5,11 @@
   "type": "module",
   "devDependencies": {
     "@types/aws-lambda": "^8.10.145",
-    "@types/node": "^25.5.2"
+    "@types/node": "^25.5.2",
+    "esbuild": "^0.28.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node esbuild.config.mjs",
     "package": "bash scripts/package.sh",
     "dev": "tsc -p tsconfig.build.json --watch",
     "lint": "eslint .",

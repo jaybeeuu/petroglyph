@@ -66,6 +66,9 @@ importers:
       '@types/node':
         specifier: ^25.5.2
         version: 25.5.2
+      esbuild:
+        specifier: ^0.28.0
+        version: 0.28.0
 
   packages/core:
     dependencies:
