@@ -9,8 +9,8 @@ const SSM_MAPPINGS = [
   { pathEnv: "JWT_SIGNING_SECRET_SSM_PATH", targetEnv: "JWT_SIGNING_SECRET" },
 ] as const;
 
-const paths = SSM_MAPPINGS.map((m) => process.env[m.pathEnv]).filter(
-  (p): p is string => Boolean(p),
+const paths = SSM_MAPPINGS.map((m) => process.env[m.pathEnv]).filter((p): p is string =>
+  Boolean(p),
 );
 
 if (paths.length > 0) {
