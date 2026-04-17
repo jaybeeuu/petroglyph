@@ -31,6 +31,12 @@ resource "aws_apigatewayv2_route" "health" {
   target    = "integrations/${aws_apigatewayv2_integration.petroglyph_api.id}"
 }
 
+resource "aws_apigatewayv2_route" "default" {
+  api_id    = aws_apigatewayv2_api.petroglyph_api.id
+  route_key = "$default"
+  target    = "integrations/${aws_apigatewayv2_integration.petroglyph_api.id}"
+}
+
 resource "aws_cloudwatch_log_group" "api_gateway_access_logs" {
   name              = "/aws/apigateway/petroglyph-${terraform.workspace}"
   retention_in_days = 14

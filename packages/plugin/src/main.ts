@@ -745,3 +745,5 @@ export class PetroglyphPlugin extends Plugin {
     }
   }
 }
+
+export default PetroglyphPlugin;
