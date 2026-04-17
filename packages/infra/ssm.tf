@@ -43,6 +43,34 @@ resource "aws_ssm_parameter" "jwt_signing_secret" {
   }
 }
 
+resource "aws_ssm_parameter" "jwt_private_key" {
+  name  = "/petroglyph/jwt/private-key"
+  type  = "SecureString"
+  value = "PLACEHOLDER"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+resource "aws_ssm_parameter" "jwt_public_key" {
+  name  = "/petroglyph/jwt/public-key"
+  type  = "SecureString"
+  value = "PLACEHOLDER"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
 resource "aws_ssm_parameter" "onedrive_client_id" {
   name  = "/petroglyph/onedrive/client-id"
   type  = "SecureString"

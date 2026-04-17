@@ -23,7 +23,17 @@ resource "aws_lambda_function" "petroglyph_api" {
       GITHUB_CLIENT_ID_SSM_PATH     = aws_ssm_parameter.github_client_id.name
       GITHUB_CLIENT_SECRET_SSM_PATH = aws_ssm_parameter.github_client_secret.name
       JWT_SIGNING_SECRET_SSM_PATH   = aws_ssm_parameter.jwt_signing_secret.name
+      JWT_PRIVATE_KEY_SSM_PATH      = aws_ssm_parameter.jwt_private_key.name
+      JWT_PUBLIC_KEY_SSM_PATH       = aws_ssm_parameter.jwt_public_key.name
+      ONEDRIVE_CLIENT_ID_SSM_PATH   = aws_ssm_parameter.onedrive_client_id.name
       GITHUB_REDIRECT_URI           = "${aws_apigatewayv2_api.petroglyph_api.api_endpoint}/auth/callback"
+      MICROSOFT_REDIRECT_URI        = "${aws_apigatewayv2_api.petroglyph_api.api_endpoint}/onedrive/connect"
+      GRAPH_NOTIFICATION_URL        = "${aws_apigatewayv2_api.petroglyph_api.api_endpoint}/onedrive/lifecycle"
+      REFRESH_TOKENS_TABLE          = aws_dynamodb_table.refresh_tokens.name
+      USERS_TABLE                   = aws_dynamodb_table.users.name
+      SYNC_PROFILES_TABLE           = aws_dynamodb_table.sync_profiles.name
+      FILE_RECORDS_TABLE            = aws_dynamodb_table.file_records.name
+      STAGED_PDFS_BUCKET            = aws_s3_bucket.staged_pdfs.id
     }
   }
 

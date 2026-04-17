@@ -38,3 +38,5 @@ test-output.txt
 *.tfstate.backup
 *.tfvars.json
 .terraform.tfstate.lock.info
+.ralph-state.json
+.ralph-*.log
