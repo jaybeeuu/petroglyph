@@ -72,7 +72,7 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
       {
         Sid    = "SSMGetParameter"
         Effect = "Allow"
-        Action = "ssm:GetParameter"
+        Action = ["ssm:GetParameter", "ssm:GetParameters"]
         Resource = [
           "${local.ssm_arn_prefix}/petroglyph/github/*",
           "${local.ssm_arn_prefix}/petroglyph/jwt/*",

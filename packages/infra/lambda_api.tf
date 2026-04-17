@@ -23,6 +23,7 @@ resource "aws_lambda_function" "petroglyph_api" {
       GITHUB_CLIENT_ID_SSM_PATH     = aws_ssm_parameter.github_client_id.name
       GITHUB_CLIENT_SECRET_SSM_PATH = aws_ssm_parameter.github_client_secret.name
       JWT_SIGNING_SECRET_SSM_PATH   = aws_ssm_parameter.jwt_signing_secret.name
+      GITHUB_REDIRECT_URI           = "${aws_apigatewayv2_api.petroglyph_api.api_endpoint}/auth/callback"
     }
   }
 
