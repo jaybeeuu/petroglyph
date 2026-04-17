@@ -1,9 +1,5 @@
 # ---------------------------------------------------------------------------
 # API Lambda function
-#
-# Handler: dist/health.handler — the current entry point is the health check.
-# This will be updated to dist/index.handler once a proper index.ts is added
-# to the API package.
 # ---------------------------------------------------------------------------
 
 resource "aws_lambda_function" "petroglyph_api" {
@@ -13,7 +9,7 @@ resource "aws_lambda_function" "petroglyph_api" {
   s3_key    = var.api_zip_s3_key
 
   runtime = "nodejs24.x"
-  handler = "dist/health.handler"
+  handler = "dist/index.handler"
 
   role = aws_iam_role.petroglyph_api_role.arn
 
