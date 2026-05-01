@@ -1,0 +1,740 @@
+openapi: 3.1.0
+info:
+  title: Petroglyph API
+  description: API for the Petroglyph handwritten notes sync service
+  version: 0.0.0
+servers:
+  - url: https://api.petroglyph.example.com
+    description: Production server
+  - url: http://localhost:3000
+    description: Local development server
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT access token from GitHub OAuth flow
+
+  schemas:
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+    AuthUrlResponse:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          format: uri
+          description: GitHub OAuth authorization URL with state parameter
+
+    AuthCallbackRequest:
+      type: object
+      required:
+        - code
+        - state
+      properties:
+        code:
+          type: string
+          description: OAuth authorization code from GitHub
+        state:
+          type: string
+          description: State token to prevent CSRF
+
+    AuthTokenResponse:
+      type: object
+      required:
+        - jwt
+        - refreshToken
+      properties:
+        jwt:
+          type: string
+          description: Short-lived JWT access token (1 hour)
+        refreshToken:
+          type: string
+          description: Long-lived refresh token (90 days)
+
+    AuthRefreshRequest:
+      type: object
+      required:
+        - refreshToken
+      properties:
+        refreshToken:
+          type: string
+          description: Valid refresh token
+
+    StatusResponse:
+      type: object
+      required:
+        - github
+        - oneDrive
+        - oneDriveStatus
+      properties:
+        github:
+          type: object
+          required:
+            - connected
+          properties:
+            connected:
+              type: boolean
+            username:
+              type: string
+        oneDrive:
+          type: object
+          required:
+            - connected
+          properties:
+            connected:
+              type: boolean
+        oneDriveStatus:
+          type: string
+          enum: [connected, disconnected, never_connected, reconnect_required]
+
+    SyncProfile:
+      type: object
+      required:
+        - profileId
+        - userId
+        - name
+        - sourceFolderPath
+        - destinationVaultPath
+        - pollingIntervalMinutes
+        - enabled
+        - active
+        - createdAt
+        - updatedAt
+      properties:
+        profileId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+        name:
+          type: string
+          minLength: 1
+        sourceFolderPath:
+          type: string
+          minLength: 1
+          description: OneDrive folder path to sync from
+        destinationVaultPath:
+          type: string
+          minLength: 1
+          description: Obsidian vault path to sync to
+        pollingIntervalMinutes:
+          type: integer
+          minimum: 1
+          default: 5
+        enabled:
+          type: boolean
+          default: true
+        active:
+          type: boolean
+          description: Whether this is the currently active profile
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateProfileRequest:
+      type: object
+      required:
+        - name
+        - sourceFolderPath
+        - destinationVaultPath
+      properties:
+        name:
+          type: string
+          minLength: 1
+        sourceFolderPath:
+          type: string
+          minLength: 1
+        destinationVaultPath:
+          type: string
+          minLength: 1
+        pollingIntervalMinutes:
+          type: integer
+          minimum: 1
+        enabled:
+          type: boolean
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        sourceFolderPath:
+          type: string
+          minLength: 1
+        destinationVaultPath:
+          type: string
+          minLength: 1
+        pollingIntervalMinutes:
+          type: integer
+          minimum: 1
+        enabled:
+          type: boolean
+        active:
+          type: boolean
+
+    FileChange:
+      type: object
+      required:
+        - fileId
+        - s3PresignedUrl
+        - filename
+        - createdAt
+      properties:
+        fileId:
+          type: string
+        s3PresignedUrl:
+          type: string
+          format: uri
+          description: Pre-signed S3 URL to download PDF (15 minute expiry)
+        filename:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        pageCount:
+          type: integer
+          minimum: 1
+
+    FileChangesResponse:
+      type: object
+      required:
+        - files
+      properties:
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileChange'
+        nextToken:
+          type: string
+          description: Cursor token for pagination (base64url encoded)
+        resetToken:
+          type: boolean
+          description: If true, client should clear local change token and refetch from start
+
+    OneDriveAuthUrlResponse:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Microsoft OneDrive OAuth authorization URL
+
+    OneDriveConnectRequest:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          description: OAuth authorization code from Microsoft
+
+    OneDriveConnectResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+
+    OneDriveLifecycleNotification:
+      type: object
+      description: Microsoft Graph subscription lifecycle notification
+      properties:
+        subscriptionId:
+          type: string
+        subscriptionExpirationDateTime:
+          type: string
+          format: date-time
+        changeType:
+          type: string
+        resource:
+          type: string
+        clientState:
+          type: string
+
+    SyncRunResponse:
+      type: object
+      required:
+        - queued
+      properties:
+        queued:
+          type: integer
+          minimum: 0
+          description: Number of new files queued for processing
+
+    SyncResetResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns 200 OK if service is running
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /auth/url:
+    get:
+      summary: Get GitHub OAuth authorization URL
+      description: Returns a GitHub OAuth URL for the user to authorize the app
+      operationId: getAuthUrl
+      security: []
+      responses:
+        '200':
+          description: OAuth URL generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthUrlResponse'
+        '500':
+          description: Missing OAuth configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/callback:
+    post:
+      summary: Handle GitHub OAuth callback
+      description: Exchange OAuth code for JWT and refresh token
+      operationId: postAuthCallback
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthCallbackRequest'
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenResponse'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Invalid state or authorization code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error during authentication
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/refresh:
+    post:
+      summary: Refresh JWT access token
+      description: Exchange a valid refresh token for a new JWT and refresh token
+      operationId: postAuthRefresh
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthRefreshRequest'
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenResponse'
+        '400':
+          description: Missing refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Invalid, expired, or reused refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /status:
+    get:
+      summary: Get connection status
+      description: Returns GitHub and OneDrive connection status for authenticated user
+      operationId: getStatus
+      responses:
+        '200':
+          description: Status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '401':
+          description: Unauthorized - invalid or missing JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /profiles:
+    get:
+      summary: List sync profiles
+      description: Returns all sync profiles for authenticated user
+      operationId: listProfiles
+      responses:
+        '200':
+          description: Profiles retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SyncProfile'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      summary: Create sync profile
+      description: Create a new sync profile for authenticated user
+      operationId: createProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProfileRequest'
+      responses:
+        '201':
+          description: Profile created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncProfile'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /profiles/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: Profile ID
+
+    get:
+      summary: Get sync profile
+      description: Get a specific sync profile by ID
+      operationId: getProfile
+      responses:
+        '200':
+          description: Profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncProfile'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Profile not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      summary: Update sync profile
+      description: Update an existing sync profile
+      operationId: updateProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncProfile'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Profile not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      summary: Delete sync profile
+      description: Delete a sync profile
+      operationId: deleteProfile
+      responses:
+        '204':
+          description: Profile deleted successfully
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Profile not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /files/changes:
+    get:
+      summary: Get file changes
+      description: Paginated list of file changes (new PDFs to sync)
+      operationId: getFileChanges
+      parameters:
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Cursor token from previous response for pagination
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+          description: Maximum number of results per page
+      responses:
+        '200':
+          description: File changes retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileChangesResponse'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /onedrive/auth-url:
+    get:
+      summary: Get OneDrive OAuth authorization URL
+      description: Returns a Microsoft OneDrive OAuth URL for the user
+      operationId: getOneDriveAuthUrl
+      responses:
+        '200':
+          description: OAuth URL generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OneDriveAuthUrlResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Missing OAuth configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /onedrive/connect:
+    post:
+      summary: Complete OneDrive OAuth flow
+      description: Exchange OneDrive OAuth code for access tokens
+      operationId: postOneDriveConnect
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OneDriveConnectRequest'
+      responses:
+        '200':
+          description: OneDrive connected successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OneDriveConnectResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /onedrive/lifecycle:
+    post:
+      summary: Handle OneDrive lifecycle notifications
+      description: Microsoft Graph subscription lifecycle webhook endpoint
+      operationId: postOneDriveLifecycle
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OneDriveLifecycleNotification'
+      responses:
+        '200':
+          description: Notification processed
+        '204':
+          description: Validation token response
+
+  /sync/run:
+    post:
+      summary: Run manual sync
+      description: Manually trigger a sync operation to check for new files
+      operationId: postSyncRun
+      responses:
+        '200':
+          description: Sync completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncRunResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Sync failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sync/reset:
+    post:
+      summary: Reset sync state
+      description: Clear local sync state and restart from beginning
+      operationId: postSyncReset
+      responses:
+        '200':
+          description: Sync reset successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResetResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Reset failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
