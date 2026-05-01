@@ -378,4 +378,15 @@ describe("POST /auth/refresh", () => {
     expect(putCmd.input.Item.ttl).toBeGreaterThanOrEqual(before + ninetyDays);
     expect(putCmd.input.Item.ttl).toBeLessThanOrEqual(after + ninetyDays);
   });
+
+  // ── Error paths ───────────────────────────────────────────────────────────
+
+  it("returns 500 when JWT_PRIVATE_KEY is not configured", async () => {
+    setupDynamoMock({ tokenItem: makeTokenItem() });
+    delete process.env["JWT_PRIVATE_KEY"];
+
+    const res = await postRefresh({ refreshToken: randomUUID() });
+
+    expect(res.status).toBe(500);
+  });
 });

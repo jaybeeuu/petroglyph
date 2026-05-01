@@ -384,4 +384,54 @@ describe("POST /auth/callback", () => {
 
     expect(res.status).toBe(500);
   });
+
+  it("returns 500 when JWT_PRIVATE_KEY is not configured", async () => {
+    setupDynamoMock(makeStateItem());
+    setupFetchMock();
+    delete process.env["JWT_PRIVATE_KEY"];
+
+    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(500);
+  });
+
+  it("returns 502 when GitHub token response has invalid shape", async () => {
+    setupDynamoMock(makeStateItem());
+    mockFetch.mockImplementation((url: string) => {
+      if (url === "https://github.com/login/oauth/access_token") {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ error: "invalid_grant" }), // missing access_token
+        } as Response);
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(502);
+  });
+
+  it("returns 502 when GitHub user response has invalid shape", async () => {
+    setupDynamoMock(makeStateItem());
+    mockFetch.mockImplementation((url: string) => {
+      if (url === "https://github.com/login/oauth/access_token") {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(makeGitHubTokenResponse()),
+        } as Response);
+      }
+      if (url === "https://api.github.com/user") {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: "not-a-number", login: GITHUB_USERNAME }), // id should be number
+        } as Response);
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(502);
+  });
 });
