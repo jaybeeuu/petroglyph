@@ -37,7 +37,7 @@ describe("loadSSMParameters", () => {
     const calls = mockSend.mock.calls as Array<
       [{ input: { Names: string[]; WithDecryption: boolean } }]
     >;
-    const command = calls[0][0];
+    const command = calls[0]![0]!;
     expect(command.input.Names).toEqual([
       "/petroglyph/github/client-id",
       "/petroglyph/jwt/signing-secret",

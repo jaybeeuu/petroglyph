@@ -58,7 +58,8 @@ function extractTerraformEnvVars(): Set<string> {
   const varPattern = /^\s*([A-Z_][A-Z0-9_]*)\s*=/gm;
   let match;
   while ((match = varPattern.exec(envBlock)) !== null) {
-    envVars.add(match[1]);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    envVars.add(match[1]!);
   }
 
   return envVars;
@@ -103,17 +104,20 @@ function extractCodeEnvVarReads(): Set<string> {
 
     // Match bracket notation
     while ((match = bracketPattern.exec(content)) !== null) {
-      envVars.add(match[1]);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      envVars.add(match[1]!);
     }
 
     // Match dot notation
     while ((match = dotPattern.exec(content)) !== null) {
-      envVars.add(match[1]);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      envVars.add(match[1]!);
     }
 
     // Match destructuring
     while ((match = destructurePattern.exec(content)) !== null) {
-      const vars = match[1].split(/\s*,\s*/);
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const vars = match[1]!.split(/\s*,\s*/);
       for (const v of vars) {
         envVars.add(v.trim());
       }
