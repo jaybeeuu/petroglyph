@@ -1,0 +1,29 @@
+{
+  "name": "@petroglyph/api-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "generate-types": "openapi-typescript openapi.yaml -o src/openapi-types.ts",
+    "lint": "eslint .",
+    "prebuild": "pnpm generate-types",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "openapi-fetch": "^0.13.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "openapi-typescript": "^7.13.0"
+  }
+}
