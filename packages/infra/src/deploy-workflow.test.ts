@@ -43,7 +43,7 @@ describe("Deploy workflow artifact handling", () => {
   it("runs the deployed smoke test after terraform apply", () => {
     const workflow = readDeployWorkflow();
     expect(workflow).toMatch(
-      /Terraform apply[\s\S]*Capture API function URL[\s\S]*Smoke test deployed API[\s\S]*LAMBDA_FUNCTION_URL:\s*\$\{\{\s*steps\.api-function-url\.outputs\.url\s*\}\}[\s\S]*node packages\/api\/scripts\/smoke-test\.ts/,
+      /Terraform apply[\s\S]*Capture API function URL[\s\S]*Smoke test deployed API[\s\S]*LAMBDA_FUNCTION_URL:\s*\$\{\{\s*steps\.api-function-url\.outputs\.url\s*\}\}[\s\S]*pnpm --filter @petroglyph\/api smoke-test/,
     );
   });
 });
