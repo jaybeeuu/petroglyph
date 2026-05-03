@@ -13,7 +13,7 @@ function usersTable(): string {
 }
 
 interface StateItem {
-  token: string;
+  tokenHash: string;
   type: string;
   ttl: number;
 }
@@ -75,7 +75,7 @@ async function lookUpState(state: string): Promise<StateItem | undefined> {
   const result = await docClient.send(
     new GetCommand({
       TableName: refreshTokensTable(),
-      Key: { token: state },
+      Key: { tokenHash: state },
     }),
   );
   return result.Item as StateItem | undefined;
@@ -85,7 +85,7 @@ async function deleteState(state: string): Promise<void> {
   await docClient.send(
     new DeleteCommand({
       TableName: refreshTokensTable(),
-      Key: { token: state },
+      Key: { tokenHash: state },
     }),
   );
 }
@@ -173,7 +173,7 @@ async function storeRefreshToken(refreshToken: string, userId: string): Promise<
     new PutCommand({
       TableName: refreshTokensTable(),
       Item: {
-        token: hash,
+        tokenHash: hash,
         type: "refresh_token",
         userId,
         ttl,

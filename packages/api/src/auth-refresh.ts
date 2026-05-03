@@ -20,7 +20,7 @@ function usersTable(): string {
 }
 
 interface RefreshTokenItem {
-  token: string;
+  tokenHash: string;
   type: string;
   userId: string;
   ttl: number;
@@ -39,7 +39,7 @@ function isRecord(value: unknown): value is { [key: string]: unknown } {
 function isRefreshTokenItem(value: unknown): value is RefreshTokenItem {
   return (
     isRecord(value) &&
-    typeof value["token"] === "string" &&
+    typeof value["tokenHash"] === "string" &&
     typeof value["type"] === "string" &&
     typeof value["userId"] === "string" &&
     typeof value["ttl"] === "number"
@@ -56,7 +56,7 @@ async function lookupRefreshToken(hash: string): Promise<RefreshTokenItem | unde
   const result = await docClient.send(
     new GetCommand({
       TableName: refreshTokensTable(),
-      Key: { token: hash },
+      Key: { tokenHash: hash },
     }),
   );
   const item = result.Item;
@@ -67,7 +67,7 @@ async function atomicMarkTokenSuperseded(hash: string): Promise<void> {
   await docClient.send(
     new UpdateCommand({
       TableName: refreshTokensTable(),
-      Key: { token: hash },
+      Key: { tokenHash: hash },
       UpdateExpression: "SET superseded = :true",
       ConditionExpression: "superseded = :false OR attribute_not_exists(superseded)",
       ExpressionAttributeValues: { ":true": true, ":false": false },
@@ -91,11 +91,11 @@ async function deleteAllUserTokens(userId: string): Promise<void> {
     const items = result.Items ?? [];
     await Promise.all(
       items.map((item) => {
-        if (typeof item["token"] !== "string") return Promise.resolve();
+        if (typeof item["tokenHash"] !== "string") return Promise.resolve();
         return docClient.send(
           new DeleteCommand({
             TableName: refreshTokensTable(),
-            Key: { token: item["token"] },
+            Key: { tokenHash: item["tokenHash"] },
           }),
         );
       }),
@@ -141,7 +141,7 @@ async function storeNewRefreshToken(refreshToken: string, userId: string): Promi
     new PutCommand({
       TableName: refreshTokensTable(),
       Item: {
-        token: hash,
+        tokenHash: hash,
         type: "refresh_token",
         userId,
         ttl,
