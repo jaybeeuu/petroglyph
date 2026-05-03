@@ -1,4 +1,4 @@
-name: CD
+name: Deploy
 
 on:
   push:
@@ -76,6 +76,9 @@ jobs:
       AWS_REGION: eu-west-2
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/download-artifact@v4
         with:
           name: lambda-zip
@@ -117,3 +120,12 @@ jobs:
           terraform apply -auto-approve -refresh=false \
             -var="api_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
             -var="api_zip_s3_key=lambda-${{ steps.artifact-hash.outputs.hash }}.zip"
+      - name: Capture API function URL
+        id: api-function-url
+        working-directory: packages/infra
+        run: |
+          echo "url=$(terraform output -raw api_function_url)" >> "$GITHUB_OUTPUT"
+      - name: Smoke test deployed API
+        env:
+          LAMBDA_FUNCTION_URL: ${{ steps.api-function-url.outputs.url }}
+        run: node packages/api/scripts/smoke-test.ts
