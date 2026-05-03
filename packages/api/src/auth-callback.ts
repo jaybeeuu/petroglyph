@@ -16,6 +16,7 @@ interface StateItem {
   tokenHash: string;
   type: string;
   ttl: number;
+  returnUri: string;
 }
 
 interface GitHubTokenResponse {
@@ -57,6 +58,16 @@ function hasNumberProp<K extends string>(
   return typeof value[key] === "number";
 }
 
+function isStateItem(value: unknown): value is StateItem {
+  return (
+    isRecord(value) &&
+    hasStringProp(value, "tokenHash") &&
+    hasStringProp(value, "type") &&
+    hasNumberProp(value, "ttl") &&
+    hasStringProp(value, "returnUri")
+  );
+}
+
 function parseGitHubTokenResponse(data: unknown): GitHubTokenResponse {
   if (!isRecord(data) || !hasStringProp(data, "access_token")) {
     throw new UpstreamError("Invalid GitHub token response shape");
@@ -78,7 +89,8 @@ async function lookUpState(state: string): Promise<StateItem | undefined> {
       Key: { tokenHash: state },
     }),
   );
-  return result.Item as StateItem | undefined;
+
+  return isStateItem(result.Item) ? result.Item : undefined;
 }
 
 async function deleteState(state: string): Promise<void> {
