@@ -44,8 +44,13 @@ app.get("/health", (c) => {
 app.get("/auth/url", async (c) => {
   const clientId = process.env["GITHUB_CLIENT_ID"];
   const redirectUri = process.env["GITHUB_REDIRECT_URI"];
+  const returnUri = c.req.query("returnUri");
   if (!clientId || !redirectUri) {
     return c.json({ error: "Missing OAuth configuration" }, 500);
+  }
+
+  if (typeof returnUri !== "string" || returnUri.length === 0) {
+    return c.json({ error: "returnUri is required" }, 400);
   }
 
   const state = randomUUID();
@@ -54,7 +59,7 @@ app.get("/auth/url", async (c) => {
   await docClient.send(
     new PutCommand({
       TableName: TABLE_NAME,
-      Item: { tokenHash: state, type: "oauth_state", ttl },
+      Item: { tokenHash: state, type: "oauth_state", ttl, returnUri },
     }),
   );
 
