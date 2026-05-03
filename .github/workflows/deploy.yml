@@ -89,7 +89,6 @@ jobs:
             node_modules
             packages/*/node_modules
           key: deps-${{ hashFiles('pnpm-lock.yaml') }}
-      - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v4
         with:
           name: lambda-zip
