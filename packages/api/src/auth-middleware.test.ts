@@ -121,7 +121,7 @@ describe("auth middleware", () => {
       vi.stubEnv("GITHUB_CLIENT_ID", "test-client-id");
       vi.stubEnv("GITHUB_REDIRECT_URI", "obsidian://petroglyph/auth/callback");
 
-      const res = await app.request("/auth/url");
+      const res = await app.request("/auth/url?returnUri=obsidian%3A%2F%2Fpetroglyph%2Fopen");
       expect(res.status).toBe(200);
     });
   });
