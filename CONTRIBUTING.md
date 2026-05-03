@@ -125,7 +125,7 @@ Set the appropriate variables in your `.env` and follow the package-level instru
 
 ## CD Secrets
 
-The CD workflow (`.github/workflows/cd.yml`) requires three GitHub Actions secrets to be configured on the `production` environment. For full deployment and infrastructure setup instructions, see [docs/ops.md](docs/ops.md).
+The Deploy workflow (`.github/workflows/deploy.yml`) requires three GitHub Actions secrets to be configured on the `production` environment. For full deployment and infrastructure setup instructions, see [docs/ops.md](docs/ops.md).
 
 | Secret                   | Description                                                  |
 | ------------------------ | ------------------------------------------------------------ |
@@ -150,7 +150,7 @@ The content-hash key is computed and exposed as a step output (`steps.artifact-h
 
 ## CI Alignment
 
-CI runs the same commands as local validation. The workflow is defined in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and triggers on push and pull requests targeting `main`. Each check runs in a parallel job after a shared `install` job warms the pnpm store cache.
+Validation runs the same commands as local validation. The workflow is defined in [`.github/workflows/validate.yml`](.github/workflows/validate.yml) and triggers on push and pull requests targeting `main`. Each check runs in a parallel job after a shared `install` job warms the pnpm store cache.
 
 The key local commands that align with CI jobs:
 

@@ -101,7 +101,7 @@ All AWS resources are provisioned with **Terraform**, with state stored remotely
 
 #### CD Pipeline
 
-Deployments to production are automated via `.github/workflows/cd.yml`, triggered on every push to `main`. The pipeline runs three sequential jobs:
+Deployments to production are automated via `.github/workflows/deploy.yml`, triggered on every push to `main`. The pipeline runs three sequential jobs:
 
 | Job       | Steps                                                                                                                                                                                            |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
