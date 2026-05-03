@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, expect, it, vi } from "vitest";
 import type { SSMClient } from "@aws-sdk/client-ssm";
 import { loadSSMParameters, SSM_MAPPINGS } from "./index.js";
 
@@ -38,6 +38,7 @@ describe("loadSSMParameters", () => {
       [{ input: { Names: string[]; WithDecryption: boolean } }]
     >;
     const command = calls[0]?.[0];
+    assert(command !== undefined);
     expect(command.input.Names).toEqual([
       "/petroglyph/github/client-id",
       "/petroglyph/jwt/signing-secret",
