@@ -28,19 +28,29 @@ The plugin uses GitHub as an identity provider to authenticate the user against 
 sequenceDiagram
     participant Plugin
     participant CloudAPI as Cloud API
+    participant DynamoDB
     participant GitHub
 
-    Plugin->>CloudAPI: "Connect" clicked
-    CloudAPI-->>Plugin: redirect URL returned
-    Plugin->>GitHub: open browser (OAuth authorise URL)
-    GitHub-->>CloudAPI: user grants consent
-    GitHub-->>Plugin: obsidian://petroglyph/auth/callback?code=...
-    Plugin->>CloudAPI: POST /auth/callback {code}
-    CloudAPI->>GitHub: GET /user (GitHub API)
-    GitHub-->>CloudAPI: user profile
-    Note over CloudAPI: create/lookup user<br/>issue JWT + refresh token
+    Plugin->>CloudAPI: GET /auth/url?returnUri=obsidian://...
+    CloudAPI->>DynamoDB: store { state (UUID), returnUri, TTL 10 min }
+    CloudAPI-->>Plugin: { url: "github.com/login/oauth/authorize?...&state=..." }
+
+    Plugin->>GitHub: open browser to GitHub OAuth URL
+    Note over GitHub: user reviews scope<br/>and clicks "Authorise"
+    GitHub-->>Plugin: redirect browser to obsidian://petroglyph/auth/callback?code=xxx&state=xxx
+
+    Note over Plugin: Obsidian URI handler fires
+    Plugin->>CloudAPI: POST /auth/callback { code, state }
+    CloudAPI->>DynamoDB: lookup + delete state (one-time-use)
+    DynamoDB-->>CloudAPI: { returnUri, ttl }
+    CloudAPI->>GitHub: POST /login/oauth/access_token { code }
+    GitHub-->>CloudAPI: access_token
+    CloudAPI->>GitHub: GET /api.github.com/user
+    GitHub-->>CloudAPI: { id, login }
+    Note over CloudAPI: upsert user record<br/>issue JWT (1 h) + refresh token (90 d)
     CloudAPI-->>Plugin: { jwt, refreshToken, username }
-    Note over Plugin: store jwt, refreshToken, username<br/>via Obsidian saveData API
+
+    Note over Plugin: store jwt, refreshToken, username<br/>via Obsidian saveData API<br/>redirect to returnUri
 ```
 
 1. Plugin calls `GET /auth/url?returnUri=<obsidian-uri>` to obtain the GitHub OAuth authorisation URL.
