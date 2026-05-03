@@ -306,7 +306,17 @@ describe("POST /auth/callback", () => {
     expect(putCmd.input.Item.ttl).toBeLessThanOrEqual(after + ninetyDays);
   });
 
-  // ── Behaviour 9: 200 { jwt, refreshToken, username } ─────────────────────
+  // ── Behaviour 9: 200 { jwt, refreshToken, username } — returnUri not leaked
+
+  it("does not include returnUri in the response body", async () => {
+    setupDynamoMock(makeStateItem());
+    setupFetchMock();
+
+    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("returnUri");
+  });
 
   it("returns 200 with jwt, refreshToken, and username", async () => {
     setupDynamoMock(makeStateItem());
