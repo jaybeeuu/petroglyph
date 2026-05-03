@@ -15,6 +15,7 @@ const REQUEST_TIMEOUT_MS = Number.parseInt(
   process.env["SMOKE_TEST_REQUEST_TIMEOUT_MS"] ?? "10000",
   10,
 );
+const AUTH_URL_PATH = "/auth/url?returnUri=https%3A%2F%2Fexample.com";
 const lambdaFunctionUrl = process.env["LAMBDA_FUNCTION_URL"];
 
 function getErrorMessage(error: unknown): string {
@@ -162,7 +163,7 @@ async function main(): Promise<void> {
 
   for (const [path, validator] of [
     ["/health", assertStatusOkResponse],
-    ["/auth/url", assertGitHubAuthUrlResponse],
+    [AUTH_URL_PATH, assertGitHubAuthUrlResponse],
   ] satisfies ReadonlyArray<readonly [string, (body: unknown) => void]>) {
     try {
       const result = await runSmokeTest(path, validator);
