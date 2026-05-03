@@ -109,6 +109,8 @@ Deployments to production are automated via `.github/workflows/deploy.yml`, trig
 | `package` | `pnpm --filter @petroglyph/api package` → uploads `lambda.zip` as a GitHub Actions artifact                                                                                                                                                                              |
 | `deploy`  | Downloads the artifact, computes a content hash, uploads `lambda-<sha256>.zip` to S3 (`LAMBDA_ARTIFACT_BUCKET`) if needed, runs `terraform init` (S3 backend + DynamoDB locking), selects/creates the `production` workspace, applies, then smoke-tests the deployed API |
 
+That post-deploy smoke gate calls `/health` and `/auth/url` against the deployed Lambda function URL. The workflow reads that URL from the Terraform output `api_function_url`, so the output remains part of the deployment contract.
+
 AWS access in the `deploy` job uses OIDC — no long-lived credentials are stored. The GitHub Actions role ARN is provided via the `AWS_ROLE_ARN` secret on the `production` environment.
 
 The `deploy` job targets the `production` GitHub Actions environment, which can restrict deploys to `main` and require reviewer approval before production deployment proceeds.
