@@ -34,15 +34,17 @@ const GITHUB_USER_ID = 12345;
 const GITHUB_USERNAME = "testuser";
 const GITHUB_ACCESS_TOKEN = "gha_test_token_xyz";
 
-function makeStateItem(overrides: Partial<{ ttl: number; type: string }> = {}): {
+function makeStateItem(overrides: Partial<{ ttl: number; type: string; returnUri: string }> = {}): {
   tokenHash: string;
   type: string;
   ttl: number;
+  returnUri: string;
 } {
   return {
     tokenHash: VALID_STATE,
     type: "oauth_state",
     ttl: Math.floor(Date.now() / 1000) + 600,
+    returnUri: "obsidian://petroglyph/open",
     ...overrides,
   };
 }
@@ -139,6 +141,19 @@ describe("POST /auth/callback", () => {
 
     it("returns 401 when state has wrong type", async () => {
       setupDynamoMock(makeStateItem({ type: "refresh_token" }));
+      setupFetchMock();
+
+      const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+
+      expect(res.status).toBe(401);
+    });
+
+    it("returns 401 when state is missing returnUri", async () => {
+      setupDynamoMock({
+        tokenHash: VALID_STATE,
+        type: "oauth_state",
+        ttl: Math.floor(Date.now() / 1000) + 600,
+      });
       setupFetchMock();
 
       const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
