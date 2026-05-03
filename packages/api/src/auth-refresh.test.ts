@@ -44,7 +44,7 @@ function makeTokenItem(
   overrides: Partial<{ ttl: number; type: string; superseded: boolean }> = {},
 ): object {
   return {
-    token: "somehash",
+    tokenHash: "somehash",
     type: "refresh_token",
     userId: USER_ID,
     ttl: Math.floor(Date.now() / 1000) + 90 * 24 * 60 * 60,
@@ -196,8 +196,8 @@ describe("POST /auth/refresh", () => {
       updateShouldFail: true,
       scanPages: [
         [
-          { token: tokenHashA, userId: USER_ID },
-          { token: tokenHashB, userId: USER_ID },
+          { tokenHash: tokenHashA, userId: USER_ID },
+          { tokenHash: tokenHashB, userId: USER_ID },
         ],
       ],
     });
@@ -211,7 +211,7 @@ describe("POST /auth/refresh", () => {
     const deleteCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof DeleteCommand);
     expect(deleteCalls).toHaveLength(2);
     const deletedKeys = deleteCalls.map(
-      ([cmd]) => (cmd as { input: { Key: { token: string } } }).input.Key.token,
+      ([cmd]) => (cmd as { input: { Key: { tokenHash: string } } }).input.Key.tokenHash,
     );
     expect(deletedKeys).toContain(tokenHashA);
     expect(deletedKeys).toContain(tokenHashB);
@@ -263,8 +263,8 @@ describe("POST /auth/refresh", () => {
       tokenItem: makeTokenItem(),
       updateShouldFail: true,
       scanPages: [
-        [{ token: tokenHashA, userId: USER_ID }],
-        [{ token: tokenHashB, userId: USER_ID }],
+        [{ tokenHash: tokenHashA, userId: USER_ID }],
+        [{ tokenHash: tokenHashB, userId: USER_ID }],
       ],
     });
 
@@ -279,7 +279,7 @@ describe("POST /auth/refresh", () => {
     const deleteCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof DeleteCommand);
     expect(deleteCalls).toHaveLength(2);
     const deletedKeys = deleteCalls.map(
-      ([cmd]) => (cmd as { input: { Key: { token: string } } }).input.Key.token,
+      ([cmd]) => (cmd as { input: { Key: { tokenHash: string } } }).input.Key.tokenHash,
     );
     expect(deletedKeys).toContain(tokenHashA);
     expect(deletedKeys).toContain(tokenHashB);
@@ -328,7 +328,7 @@ describe("POST /auth/refresh", () => {
   it("marks the old token as superseded during rotation", async () => {
     const raw = randomUUID();
     const hash = createHash("sha256").update(raw).digest("hex");
-    setupDynamoMock({ tokenItem: { ...makeTokenItem(), token: hash } });
+    setupDynamoMock({ tokenItem: { ...makeTokenItem(), tokenHash: hash } });
 
     await postRefresh({ refreshToken: raw });
 
@@ -337,12 +337,12 @@ describe("POST /auth/refresh", () => {
     const [updateCmd] = updateCalls[0] as [
       {
         input: {
-          Key: { token: string };
+          Key: { tokenHash: string };
           ExpressionAttributeValues: { [key: string]: unknown };
         };
       },
     ];
-    expect(updateCmd.input.Key.token).toBe(hash);
+    expect(updateCmd.input.Key.tokenHash).toBe(hash);
     expect(updateCmd.input.ExpressionAttributeValues[":true"]).toBe(true);
   });
 
@@ -363,7 +363,7 @@ describe("POST /auth/refresh", () => {
       {
         input: {
           TableName: string;
-          Item: { token: string; type: string; userId: string; ttl: number };
+          Item: { tokenHash: string; type: string; userId: string; ttl: number };
         };
       },
     ];
@@ -372,10 +372,21 @@ describe("POST /auth/refresh", () => {
     expect(putCmd.input.Item.userId).toBe(USER_ID);
 
     const expectedHash = createHash("sha256").update(body.refreshToken).digest("hex");
-    expect(putCmd.input.Item.token).toBe(expectedHash);
+    expect(putCmd.input.Item.tokenHash).toBe(expectedHash);
 
     const ninetyDays = 90 * 24 * 60 * 60;
     expect(putCmd.input.Item.ttl).toBeGreaterThanOrEqual(before + ninetyDays);
     expect(putCmd.input.Item.ttl).toBeLessThanOrEqual(after + ninetyDays);
+  });
+
+  // ── Error paths ───────────────────────────────────────────────────────────
+
+  it("returns 500 when JWT_PRIVATE_KEY is not configured", async () => {
+    setupDynamoMock({ tokenItem: makeTokenItem() });
+    delete process.env["JWT_PRIVATE_KEY"];
+
+    const res = await postRefresh({ refreshToken: randomUUID() });
+
+    expect(res.status).toBe(500);
   });
 });

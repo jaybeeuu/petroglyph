@@ -54,7 +54,7 @@ app.get("/auth/url", async (c) => {
   await docClient.send(
     new PutCommand({
       TableName: TABLE_NAME,
-      Item: { token: state, type: "oauth_state", ttl },
+      Item: { tokenHash: state, type: "oauth_state", ttl },
     }),
   );
 

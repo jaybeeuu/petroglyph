@@ -1,7 +1,6 @@
 // @ts-check
-import rootConfig from "../../eslint.config.js";
 import { config } from "typescript-eslint";
 
-export default config(...rootConfig, {
+export default config({
   ignores: ["src/openapi-types.ts"],
 });

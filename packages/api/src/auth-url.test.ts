@@ -59,14 +59,14 @@ describe("GET /auth/url", () => {
       {
         input: {
           TableName: string;
-          Item: { token: string; type: string; ttl: number };
+          Item: { tokenHash: string; type: string; ttl: number };
         };
       },
     ];
     expect(command.input).toMatchObject({
       TableName: "petroglyph-refresh_tokens-default",
       Item: {
-        token: state,
+        tokenHash: state,
         type: "oauth_state",
       },
     });

@@ -372,4 +372,67 @@ describe("POST /sync/run", () => {
       "Bearer fresh-access-token",
     );
   });
+
+  it("queues PDF files based on .pdf extension even without proper MIME type", async () => {
+    mockOneDriveSsm();
+    mockDbSend.mockResolvedValue({});
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          value: [
+            {
+              id: "pdf-weird",
+              name: "document.pdf",
+              file: { mimeType: "application/octet-stream" }, // wrong MIME but .pdf extension
+            },
+          ],
+          "@odata.deltaLink":
+            "https://graph.microsoft.com/v1.0/me/drive/root:/OnyxBoox:/delta?token=delta-x",
+        }),
+    });
+
+    const response = await postSyncRun();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ queued: 1 });
+
+    const putItemCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof PutCommand);
+    expect(putItemCalls).toHaveLength(1);
+    const [putCommand] = putItemCalls[0] as [
+      { input: { Item: { fileId: string; filename: string } } },
+    ];
+    expect(putCommand.input.Item.fileId).toBe("pdf-weird");
+    expect(putCommand.input.Item.filename).toBe("document.pdf");
+  });
+
+  it("returns 500 when Graph delta request fails with non-ok status", async () => {
+    mockOneDriveSsm();
+    mockDbSend.mockResolvedValue({});
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 401,
+    });
+
+    const response = await postSyncRun();
+
+    expect(response.status).toBe(500);
+  });
+
+  it("returns 500 when Graph response has invalid shape (missing value array)", async () => {
+    mockOneDriveSsm();
+    mockDbSend.mockResolvedValue({});
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          items: [], // wrong property name
+          "@odata.deltaLink": "https://graph.microsoft.com/delta?token=x",
+        }),
+    });
+
+    const response = await postSyncRun();
+
+    expect(response.status).toBe(500);
+  });
 });

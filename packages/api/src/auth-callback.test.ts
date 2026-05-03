@@ -35,12 +35,12 @@ const GITHUB_USERNAME = "testuser";
 const GITHUB_ACCESS_TOKEN = "gha_test_token_xyz";
 
 function makeStateItem(overrides: Partial<{ ttl: number; type: string }> = {}): {
-  token: string;
+  tokenHash: string;
   type: string;
   ttl: number;
 } {
   return {
-    token: VALID_STATE,
+    tokenHash: VALID_STATE,
     type: "oauth_state",
     ttl: Math.floor(Date.now() / 1000) + 600,
     ...overrides,
@@ -157,8 +157,8 @@ describe("POST /auth/callback", () => {
 
     const deleteCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof DeleteCommand);
     expect(deleteCalls).toHaveLength(1);
-    const [deleteCmd] = deleteCalls[0] as [{ input: { Key: { token: string } } }];
-    expect(deleteCmd.input.Key.token).toBe(VALID_STATE);
+    const [deleteCmd] = deleteCalls[0] as [{ input: { Key: { tokenHash: string } } }];
+    expect(deleteCmd.input.Key.tokenHash).toBe(VALID_STATE);
   });
 
   // ── Behaviour 4: GitHub code exchange ────────────────────────────────────
@@ -272,7 +272,7 @@ describe("POST /auth/callback", () => {
       {
         input: {
           TableName: string;
-          Item: { token: string; type: string; userId: string; ttl: number };
+          Item: { tokenHash: string; type: string; userId: string; ttl: number };
         };
       },
     ];
@@ -284,7 +284,7 @@ describe("POST /auth/callback", () => {
     // stored token should be the SHA-256 hash of the returned UUID, not the UUID itself
     const { createHash } = await import("node:crypto");
     const expectedHash = createHash("sha256").update(body.refreshToken).digest("hex");
-    expect(putCmd.input.Item.token).toBe(expectedHash);
+    expect(putCmd.input.Item.tokenHash).toBe(expectedHash);
 
     const ninetyDays = 90 * 24 * 60 * 60;
     expect(putCmd.input.Item.ttl).toBeGreaterThanOrEqual(before + ninetyDays);
@@ -383,5 +383,55 @@ describe("POST /auth/callback", () => {
     const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
     expect(res.status).toBe(500);
+  });
+
+  it("returns 500 when JWT_PRIVATE_KEY is not configured", async () => {
+    setupDynamoMock(makeStateItem());
+    setupFetchMock();
+    delete process.env["JWT_PRIVATE_KEY"];
+
+    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(500);
+  });
+
+  it("returns 502 when GitHub token response has invalid shape", async () => {
+    setupDynamoMock(makeStateItem());
+    mockFetch.mockImplementation((url: string) => {
+      if (url === "https://github.com/login/oauth/access_token") {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ error: "invalid_grant" }), // missing access_token
+        } as Response);
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(502);
+  });
+
+  it("returns 502 when GitHub user response has invalid shape", async () => {
+    setupDynamoMock(makeStateItem());
+    mockFetch.mockImplementation((url: string) => {
+      if (url === "https://github.com/login/oauth/access_token") {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(makeGitHubTokenResponse()),
+        } as Response);
+      }
+      if (url === "https://api.github.com/user") {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: "not-a-number", login: GITHUB_USERNAME }), // id should be number
+        } as Response);
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(502);
   });
 });

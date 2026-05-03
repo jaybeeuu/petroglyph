@@ -6,13 +6,16 @@
   "devDependencies": {
     "@types/aws-lambda": "^8.10.145",
     "@types/node": "^25.5.2",
-    "esbuild": "^0.28.0"
+    "esbuild": "^0.28.0",
+    "openapi-typescript": "^7.13.0"
   },
   "scripts": {
     "build": "node esbuild.config.mjs",
     "package": "bash scripts/package.sh",
     "dev": "tsc -p tsconfig.build.json --watch",
+    "generate-types": "openapi-typescript openapi.yaml -o src/openapi-types.ts",
     "lint": "eslint .",
+    "prebuild": "pnpm generate-types",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
