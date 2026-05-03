@@ -314,7 +314,7 @@ describe("POST /auth/callback", () => {
 
     const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
-    const body = (await res.json()) as Record<string, unknown>;
+    const body = (await res.json()) as { [key: string]: unknown };
     expect(body).not.toHaveProperty("returnUri");
   });
 

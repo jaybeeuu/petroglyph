@@ -59,12 +59,11 @@ sequenceDiagram
 4. Obsidian's URI handler fires; plugin sends the code to `POST /auth/callback` on the cloud API.
 5. Cloud API validates the state token against DynamoDB and **deletes it immediately** (making it one-time-use) before proceeding with the code exchange.
 
-`GET /auth/url` now requires a non-empty `returnUri` query parameter. The API returns `400` if it is missing or empty, and stores the value alongside the one-time OAuth state record in DynamoDB so the auth round-trip keeps the caller's intended return target bound to server-side state.
-6. Cloud API exchanges the code for a GitHub access token, calls `GET /api.github.com/user` to retrieve the user's GitHub ID and username. Any failure from GitHub returns **502** to the plugin.
-7. Cloud API creates (or looks up) the user record in DynamoDB. The GitHub token is discarded.
-8. Cloud API issues:
-   - A short-lived **JWT** (RS256, TTL 1 hour, claims: `iss=petroglyph-api`, `aud=petroglyph-plugin`, `sub=<userId>`, `username=<githubLogin>`).
-   - A long-lived **refresh token** (opaque UUID, stored as **SHA-256 hash** in DynamoDB, TTL ~90 days).
+`GET /auth/url` now requires a non-empty `returnUri` query parameter. The API returns `400` if it is missing or empty, and stores the value alongside the one-time OAuth state record in DynamoDB so the auth round-trip keeps the caller's intended return target bound to server-side state. 6. Cloud API exchanges the code for a GitHub access token, calls `GET /api.github.com/user` to retrieve the user's GitHub ID and username. Any failure from GitHub returns **502** to the plugin. 7. Cloud API creates (or looks up) the user record in DynamoDB. The GitHub token is discarded. 8. Cloud API issues:
+
+- A short-lived **JWT** (RS256, TTL 1 hour, claims: `iss=petroglyph-api`, `aud=petroglyph-plugin`, `sub=<userId>`, `username=<githubLogin>`).
+- A long-lived **refresh token** (opaque UUID, stored as **SHA-256 hash** in DynamoDB, TTL ~90 days).
+
 9. Plugin stores `jwt`, `refreshToken`, and `username` via Obsidian's `saveData` API (written to the plugin's local data file — not `localStorage`).
 
 ### Session Lifecycle
