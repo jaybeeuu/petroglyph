@@ -103,11 +103,11 @@ All AWS resources are provisioned with **Terraform**, with state stored remotely
 
 Deployments to production are automated via `.github/workflows/deploy.yml`, triggered on every push to `main`. The pipeline runs three sequential jobs:
 
-| Job       | Steps                                                                                                                                                                                            |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `build`   | `pnpm install` → `pnpm build` → `pnpm test`                                                                                                                                                      |
-| `package` | `pnpm --filter @petroglyph/api package` → uploads `lambda-<sha>.zip` to S3 (`LAMBDA_ARTIFACT_BUCKET`)                                                                                            |
-| `deploy`  | Downloads artifact, runs `terraform init` (S3 backend + DynamoDB locking), selects/creates the `production` workspace, runs `terraform apply` with `api_zip_s3_bucket` and `api_zip_s3_key` vars |
+| Job       | Steps                                                                                                                                                                                                                                                                    |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `build`   | `pnpm install` → `pnpm build` → `pnpm test`                                                                                                                                                                                                                              |
+| `package` | `pnpm --filter @petroglyph/api package` → uploads `lambda.zip` as a GitHub Actions artifact                                                                                                                                                                              |
+| `deploy`  | Downloads the artifact, computes a content hash, uploads `lambda-<sha256>.zip` to S3 (`LAMBDA_ARTIFACT_BUCKET`) if needed, runs `terraform init` (S3 backend + DynamoDB locking), selects/creates the `production` workspace, applies, then smoke-tests the deployed API |
 
 AWS access in the `deploy` job uses OIDC — no long-lived credentials are stored. The GitHub Actions role ARN is provided via the `AWS_ROLE_ARN` secret on the `production` environment.
 
