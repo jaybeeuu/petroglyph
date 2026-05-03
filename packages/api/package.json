@@ -7,7 +7,8 @@
     "@types/aws-lambda": "^8.10.145",
     "@types/node": "^25.5.2",
     "esbuild": "^0.28.0",
-    "openapi-typescript": "^7.13.0"
+    "openapi-typescript": "^7.13.0",
+    "tsx": "^4.21.0"
   },
   "scripts": {
     "build": "node esbuild.config.mjs",
@@ -16,6 +17,7 @@
     "generate-types": "openapi-typescript openapi.yaml -o src/openapi-types.ts",
     "lint": "eslint .",
     "prebuild": "pnpm generate-types",
+    "smoke-test": "tsx scripts/smoke-test.ts",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
