@@ -60,101 +60,6 @@ async function makePlugin(initialData?: {
   return { plugin, savedData };
 }
 
-describe("handleAuthCallback", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.unstubAllGlobals();
-    vi.useFakeTimers();
-    vi.stubGlobal("window", makeWindowStub());
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
-
-  it("saves jwt, refreshToken and username on success and shows notice", async () => {
-    const { plugin } = await makePlugin();
-
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          jwt: "jwt-token",
-          refreshToken: "refresh-token",
-          username: "alice",
-        }),
-    });
-
-    await plugin.handleAuthCallback({ code: "abc", state: "xyz" });
-
-    expect(plugin.data.jwt).toBe("jwt-token");
-    expect(plugin.data.refreshToken).toBe("refresh-token");
-    expect(plugin.data.username).toBe("alice");
-    // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(plugin.saveData).toHaveBeenCalledWith(expect.objectContaining({ username: "alice" }));
-    expect(Notice).toHaveBeenCalledWith("Logged in as @alice");
-  });
-
-  it("shows 'Login failed' notice when response is not ok", async () => {
-    const { plugin } = await makePlugin();
-
-    global.fetch = vi.fn().mockResolvedValue({ ok: false });
-
-    await plugin.handleAuthCallback({ code: "bad", state: "bad" });
-
-    expect(plugin.data.jwt).toBeUndefined();
-    expect(Notice).toHaveBeenCalledWith("Login failed");
-  });
-
-  it("shows 'Login failed' notice on fetch error", async () => {
-    const { plugin } = await makePlugin();
-
-    global.fetch = vi.fn().mockRejectedValue(new Error("network error"));
-
-    await plugin.handleAuthCallback({ code: "err", state: "err" });
-
-    expect(Notice).toHaveBeenCalledWith("Login failed");
-  });
-
-  it("shows 'Login failed' notice when response body is missing fields", async () => {
-    const { plugin } = await makePlugin();
-
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ jwt: "token" }),
-    });
-
-    await plugin.handleAuthCallback({ code: "abc", state: "xyz" });
-
-    expect(plugin.data.jwt).toBeUndefined();
-    expect(Notice).toHaveBeenCalledWith("Login failed");
-  });
-
-  it("starts status polling after successful auth callback", async () => {
-    const { plugin } = await makePlugin();
-
-    const pollStatusSpy = vi.spyOn(plugin, "pollStatus").mockResolvedValue(undefined);
-    vi.spyOn(plugin, "scheduleRefresh").mockImplementation(() => {});
-
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          jwt: "jwt-token",
-          refreshToken: "refresh-token",
-          username: "alice",
-        }),
-    });
-
-    await plugin.handleAuthCallback({ code: "abc", state: "xyz" });
-
-    expect(pollStatusSpy).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(60_000);
-    expect(pollStatusSpy).toHaveBeenCalledOnce();
-  });
-});
-
 describe("openAuthUrl", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -172,6 +77,9 @@ describe("openAuthUrl", () => {
 
     await plugin.openAuthUrl();
 
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:3000/auth/url?returnUri=obsidian%3A%2F%2Fpetroglyph%2Fauth%2Fcallback",
+    );
     expect(window.open).toHaveBeenCalledWith(
       "https://github.com/login/oauth/authorize?...",
       "_blank",
@@ -833,6 +741,80 @@ describe("status polling lifecycle", () => {
     plugin.onunload();
 
     expect(clearIntervalMock).toHaveBeenCalledWith(99);
+  });
+});
+
+describe("petroglyph/auth/callback URI handler", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("registers credentials and starts auth state after successful callback", async () => {
+    const { plugin } = await makePlugin();
+    const savePluginDataSpy = vi.spyOn(plugin, "savePluginData").mockResolvedValue(undefined);
+    const scheduleRefreshSpy = vi.spyOn(plugin, "scheduleRefresh").mockImplementation(() => {});
+    const startStatusPollingSpy = vi
+      .spyOn(plugin, "startStatusPolling")
+      .mockImplementation(() => {});
+
+    await plugin.onload();
+
+    const registerProtocolHandler = plugin.registerObsidianProtocolHandler; // eslint-disable-line @typescript-eslint/unbound-method
+    const handler = vi
+      .mocked(registerProtocolHandler)
+      .mock.calls.find((call) => call[0] === "petroglyph/auth/callback")?.[1];
+
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.({
+      action: "callback",
+      jwt: "jwt-token",
+      refreshToken: "refresh-token",
+      username: "alice",
+    });
+
+    expect(plugin.data.jwt).toBe("jwt-token");
+    expect(plugin.data.refreshToken).toBe("refresh-token");
+    expect(plugin.data.username).toBe("alice");
+    expect(savePluginDataSpy).toHaveBeenCalledOnce();
+    expect(scheduleRefreshSpy).toHaveBeenCalledWith("jwt-token");
+    expect(startStatusPollingSpy).toHaveBeenCalledOnce();
+    expect(Notice).toHaveBeenCalledWith("Logged in as @alice");
+  });
+
+  it("shows login failed when auth params are missing", async () => {
+    const { plugin } = await makePlugin();
+    const savePluginDataSpy = vi.spyOn(plugin, "savePluginData").mockResolvedValue(undefined);
+    const scheduleRefreshSpy = vi.spyOn(plugin, "scheduleRefresh").mockImplementation(() => {});
+    const startStatusPollingSpy = vi
+      .spyOn(plugin, "startStatusPolling")
+      .mockImplementation(() => {});
+
+    await plugin.onload();
+
+    const registerProtocolHandler = plugin.registerObsidianProtocolHandler; // eslint-disable-line @typescript-eslint/unbound-method
+    const handler = vi
+      .mocked(registerProtocolHandler)
+      .mock.calls.find((call) => call[0] === "petroglyph/auth/callback")?.[1];
+
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.({ action: "callback", jwt: "jwt-token", username: "alice" });
+
+    expect(plugin.data.jwt).toBeUndefined();
+    expect(plugin.data.refreshToken).toBeUndefined();
+    expect(plugin.data.username).toBeUndefined();
+    expect(savePluginDataSpy).not.toHaveBeenCalled();
+    expect(scheduleRefreshSpy).not.toHaveBeenCalled();
+    expect(startStatusPollingSpy).not.toHaveBeenCalled();
+    expect(Notice).toHaveBeenCalledWith("Login failed: missing auth params");
   });
 });
 

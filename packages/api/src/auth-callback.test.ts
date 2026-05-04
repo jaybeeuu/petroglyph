@@ -91,17 +91,25 @@ function setupFetchMock(): void {
   });
 }
 
-async function postCallback(body: { code?: string; state?: string }): Promise<Response> {
-  return app.request("/auth/callback", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+async function getCallback(params: { code?: string; state?: string }): Promise<Response> {
+  const searchParams = new URLSearchParams();
+  if (params.code !== undefined) searchParams.set("code", params.code);
+  if (params.state !== undefined) searchParams.set("state", params.state);
+  return app.request(`/auth/callback?${searchParams.toString()}`, { method: "GET" });
+}
+
+function getRedirectUrl(res: Response): URL {
+  const location = res.headers.get("Location");
+  expect(location).not.toBeNull();
+  if (location === null) {
+    throw new Error("Expected redirect Location header");
+  }
+  return new URL(location);
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-describe("POST /auth/callback", () => {
+describe("GET /auth/callback", () => {
   beforeEach(() => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubEnv("GITHUB_CLIENT_ID", "test-client-id");
@@ -116,6 +124,32 @@ describe("POST /auth/callback", () => {
     vi.restoreAllMocks();
   });
 
+  describe("request validation", () => {
+    it("returns 400 when code is missing", async () => {
+      const res = await getCallback({ state: VALID_STATE });
+
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 400 when state is missing", async () => {
+      const res = await getCallback({ code: GITHUB_CODE });
+
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 400 when code is empty", async () => {
+      const res = await getCallback({ code: "", state: VALID_STATE });
+
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 400 when state is empty", async () => {
+      const res = await getCallback({ code: GITHUB_CODE, state: "" });
+
+      expect(res.status).toBe(400);
+    });
+  });
+
   // ── Behaviour 1: missing / invalid state → 401 ─────────────────────────
 
   describe("state validation", () => {
@@ -123,7 +157,7 @@ describe("POST /auth/callback", () => {
       setupDynamoMock(undefined);
       setupFetchMock();
 
-      const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+      const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
       expect(res.status).toBe(401);
     });
@@ -134,7 +168,7 @@ describe("POST /auth/callback", () => {
       setupDynamoMock(makeStateItem({ ttl: Math.floor(Date.now() / 1000) - 1 }));
       setupFetchMock();
 
-      const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+      const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
       expect(res.status).toBe(401);
     });
@@ -143,7 +177,7 @@ describe("POST /auth/callback", () => {
       setupDynamoMock(makeStateItem({ type: "refresh_token" }));
       setupFetchMock();
 
-      const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+      const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
       expect(res.status).toBe(401);
     });
@@ -156,7 +190,7 @@ describe("POST /auth/callback", () => {
       });
       setupFetchMock();
 
-      const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+      const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
       expect(res.status).toBe(401);
     });
@@ -168,7 +202,7 @@ describe("POST /auth/callback", () => {
     setupDynamoMock(makeStateItem());
     setupFetchMock();
 
-    await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
     const deleteCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof DeleteCommand);
     expect(deleteCalls).toHaveLength(1);
@@ -182,7 +216,7 @@ describe("POST /auth/callback", () => {
     setupDynamoMock(makeStateItem());
     setupFetchMock();
 
-    await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
     const exchangeCall = mockFetch.mock.calls.find(
       (args) => args[0] === "https://github.com/login/oauth/access_token",
@@ -207,7 +241,7 @@ describe("POST /auth/callback", () => {
     setupDynamoMock(makeStateItem());
     setupFetchMock();
 
-    await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
     const userCall = mockFetch.mock.calls.find((args) => args[0] === "https://api.github.com/user");
     expect(userCall).toBeDefined();
@@ -224,7 +258,7 @@ describe("POST /auth/callback", () => {
     setupFetchMock();
 
     vi.stubEnv("USERS_TABLE", "petroglyph-users-test");
-    await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
     const updateCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof UpdateCommand);
     expect(updateCalls).toHaveLength(1);
@@ -249,12 +283,19 @@ describe("POST /auth/callback", () => {
     setupFetchMock();
 
     const before = Math.floor(Date.now() / 1000);
-    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
     const after = Math.floor(Date.now() / 1000);
 
-    const body = (await res.json()) as { jwt: string };
+    expect(res.status).toBe(302);
+    const redirectUrl = getRedirectUrl(res);
+    const jwt = redirectUrl.searchParams.get("jwt");
+    expect(jwt).not.toBeNull();
+    if (jwt === null) {
+      throw new Error("Expected jwt redirect query param");
+    }
+
     const publicKey = await importSPKI(publicKeyPem, "RS256");
-    const { payload, protectedHeader } = await jwtVerify(body.jwt, publicKey, {
+    const { payload, protectedHeader } = await jwtVerify(jwt, publicKey, {
       issuer: "petroglyph-api",
       audience: "petroglyph-plugin",
     });
@@ -276,10 +317,16 @@ describe("POST /auth/callback", () => {
 
     vi.stubEnv("REFRESH_TOKENS_TABLE", "petroglyph-refresh_tokens-test");
     const before = Math.floor(Date.now() / 1000);
-    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
     const after = Math.floor(Date.now() / 1000);
 
-    const body = (await res.json()) as { refreshToken: string };
+    expect(res.status).toBe(302);
+    const redirectUrl = getRedirectUrl(res);
+    const refreshToken = redirectUrl.searchParams.get("refreshToken");
+    expect(refreshToken).not.toBeNull();
+    if (refreshToken === null) {
+      throw new Error("Expected refreshToken redirect query param");
+    }
 
     const putCalls = mockSend.mock.calls.filter(([cmd]) => cmd instanceof PutCommand);
     expect(putCalls).toHaveLength(1);
@@ -296,9 +343,8 @@ describe("POST /auth/callback", () => {
     expect(putCmd.input.Item.type).toBe("refresh_token");
     expect(putCmd.input.Item.userId).toBe(String(GITHUB_USER_ID));
 
-    // stored token should be the SHA-256 hash of the returned UUID, not the UUID itself
     const { createHash } = await import("node:crypto");
-    const expectedHash = createHash("sha256").update(body.refreshToken).digest("hex");
+    const expectedHash = createHash("sha256").update(refreshToken).digest("hex");
     expect(putCmd.input.Item.tokenHash).toBe(expectedHash);
 
     const ninetyDays = 90 * 24 * 60 * 60;
@@ -306,35 +352,47 @@ describe("POST /auth/callback", () => {
     expect(putCmd.input.Item.ttl).toBeLessThanOrEqual(after + ninetyDays);
   });
 
-  // ── Behaviour 9: 200 { jwt, refreshToken, username } — returnUri not leaked
+  // ── Behaviour 9: 302 redirect with jwt, refreshToken, username — returnUri not leaked
 
-  it("does not include returnUri in the response body", async () => {
+  it("redirects to the returnUri from the state item", async () => {
     setupDynamoMock(makeStateItem());
     setupFetchMock();
 
-    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
-    const body = (await res.json()) as { [key: string]: unknown };
-    expect(body).not.toHaveProperty("returnUri");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toMatch(/^obsidian:\/\/petroglyph\/open\?/);
   });
 
-  it("returns 200 with jwt, refreshToken, and username", async () => {
+  it("does not include returnUri as a query parameter in the redirect URL", async () => {
     setupDynamoMock(makeStateItem());
     setupFetchMock();
 
-    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      jwt: string;
-      refreshToken: string;
-      username: string;
-    };
-    expect(typeof body.jwt).toBe("string");
-    expect(body.jwt.length).toBeGreaterThan(0);
-    expect(typeof body.refreshToken).toBe("string");
-    expect(body.refreshToken.length).toBeGreaterThan(0);
-    expect(body.username).toBe(GITHUB_USERNAME);
+    const redirectUrl = getRedirectUrl(res);
+    expect(redirectUrl.searchParams.has("returnUri")).toBe(false);
+  });
+
+  it("redirects 302 with jwt, refreshToken, and username in query params", async () => {
+    setupDynamoMock(makeStateItem());
+    setupFetchMock();
+
+    const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(302);
+    const redirectUrl = getRedirectUrl(res);
+    const jwt = redirectUrl.searchParams.get("jwt");
+    const refreshToken = redirectUrl.searchParams.get("refreshToken");
+    const username = redirectUrl.searchParams.get("username");
+    expect(typeof jwt).toBe("string");
+    expect(typeof refreshToken).toBe("string");
+    if (jwt === null || refreshToken === null) {
+      throw new Error("Expected jwt and refreshToken redirect query params");
+    }
+    expect(jwt.length).toBeGreaterThan(0);
+    expect(refreshToken.length).toBeGreaterThan(0);
+    expect(username).toBe(GITHUB_USERNAME);
   });
 
   // ── Error paths ───────────────────────────────────────────────────────────
@@ -353,7 +411,7 @@ describe("POST /auth/callback", () => {
       return Promise.reject(new Error(`Unexpected fetch: ${url}`));
     });
 
-    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
     expect(res.status).toBe(502);
   });
@@ -378,7 +436,7 @@ describe("POST /auth/callback", () => {
       return Promise.reject(new Error(`Unexpected fetch: ${url}`));
     });
 
-    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
     expect(res.status).toBe(502);
   });
@@ -387,7 +445,7 @@ describe("POST /auth/callback", () => {
     setupDynamoMock(makeStateItem(), { rejectGet: true });
     setupFetchMock();
 
-    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
     expect(res.status).toBe(500);
   });
@@ -396,7 +454,7 @@ describe("POST /auth/callback", () => {
     setupDynamoMock(makeStateItem());
     delete process.env["GITHUB_CLIENT_ID"];
 
-    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
     expect(res.status).toBe(500);
   });
@@ -405,7 +463,7 @@ describe("POST /auth/callback", () => {
     setupDynamoMock(makeStateItem());
     delete process.env["GITHUB_CLIENT_SECRET"];
 
-    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
     expect(res.status).toBe(500);
   });
@@ -415,7 +473,7 @@ describe("POST /auth/callback", () => {
     setupFetchMock();
     delete process.env["JWT_PRIVATE_KEY"];
 
-    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
     expect(res.status).toBe(500);
   });
@@ -432,7 +490,7 @@ describe("POST /auth/callback", () => {
       return Promise.reject(new Error(`Unexpected fetch: ${url}`));
     });
 
-    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
     expect(res.status).toBe(502);
   });
@@ -455,7 +513,7 @@ describe("POST /auth/callback", () => {
       return Promise.reject(new Error(`Unexpected fetch: ${url}`));
     });
 
-    const res = await postCallback({ code: GITHUB_CODE, state: VALID_STATE });
+    const res = await getCallback({ code: GITHUB_CODE, state: VALID_STATE });
 
     expect(res.status).toBe(502);
   });
