@@ -20,8 +20,9 @@ import { docClient } from "./db.js";
 const TABLE_NAME = process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
 
 const EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
+  { method: "GET", path: "/health" },
   { method: "GET", path: "/auth/url" },
-  { method: "POST", path: "/auth/callback" },
+  { method: "GET", path: "/auth/callback" },
   { method: "POST", path: "/auth/refresh" },
   { method: "POST", path: "/onedrive/lifecycle" },
 ];
@@ -72,7 +73,7 @@ app.get("/auth/url", async (c) => {
   return c.json({ url: url.toString() });
 });
 
-app.post("/auth/callback", (c) => handleAuthCallback(c));
+app.get("/auth/callback", (c) => handleAuthCallback(c));
 
 app.post("/auth/refresh", (c) => handleAuthRefresh(c));
 

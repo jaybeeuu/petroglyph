@@ -42,13 +42,13 @@ describe("auth middleware", () => {
 
   describe("missing or malformed Authorization header", () => {
     it("returns 401 when Authorization header is absent", async () => {
-      const res = await app.request("/health");
+      const res = await app.request("/status");
       expect(res.status).toBe(401);
       expect(await res.json()).toEqual({ error: "UNAUTHORIZED" });
     });
 
     it("returns 401 when Authorization header is not Bearer scheme", async () => {
-      const res = await app.request("/health", {
+      const res = await app.request("/status", {
         headers: { Authorization: "Basic dXNlcjpwYXNz" },
       });
       expect(res.status).toBe(401);
@@ -65,7 +65,7 @@ describe("auth middleware", () => {
         .setExpirationTime(new Date(Date.now() - 60_000))
         .sign(privateKey);
 
-      const res = await app.request("/health", {
+      const res = await app.request("/status", {
         headers: { Authorization: `Bearer ${token}` },
       });
       expect(res.status).toBe(401);
@@ -81,7 +81,7 @@ describe("auth middleware", () => {
         .setExpirationTime("1h")
         .sign(wrongKeyPair.privateKey);
 
-      const res = await app.request("/health", {
+      const res = await app.request("/status", {
         headers: { Authorization: `Bearer ${token}` },
       });
       expect(res.status).toBe(401);
@@ -92,7 +92,7 @@ describe("auth middleware", () => {
   describe("valid JWT", () => {
     it("passes through to the route handler", async () => {
       const token = await makeValidToken();
-      const res = await app.request("/health", {
+      const res = await app.request("/status", {
         headers: { Authorization: `Bearer ${token}` },
       });
       expect(res.status).toBe(200);
@@ -117,6 +117,11 @@ describe("auth middleware", () => {
   });
 
   describe("exempt routes", () => {
+    it("does not require auth for GET /health", async () => {
+      const res = await app.request("/health");
+      expect(res.status).toBe(200);
+    });
+
     it("does not require auth for GET /auth/url", async () => {
       vi.stubEnv("GITHUB_CLIENT_ID", "test-client-id");
       vi.stubEnv("GITHUB_REDIRECT_URI", "obsidian://petroglyph/auth/callback");
