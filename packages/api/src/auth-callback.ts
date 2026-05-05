@@ -28,11 +28,6 @@ interface GitHubUser {
   login: string;
 }
 
-interface CallbackRequestBody {
-  code: string;
-  state: string;
-}
-
 class UpstreamError extends Error {
   constructor(message: string) {
     super(message);
@@ -195,8 +190,16 @@ async function storeRefreshToken(refreshToken: string, userId: string): Promise<
 }
 
 export async function handleAuthCallback(c: Context): Promise<Response> {
-  const body = await c.req.json<CallbackRequestBody>();
-  const { code, state } = body;
+  const code = c.req.query("code");
+  const state = c.req.query("state");
+
+  if (typeof code !== "string" || code.length === 0) {
+    return c.json({ error: "code is required" }, 400);
+  }
+
+  if (typeof state !== "string" || state.length === 0) {
+    return c.json({ error: "state is required" }, 400);
+  }
 
   const stateItem = await lookUpState(state);
   const now = Math.floor(Date.now() / 1000);
@@ -229,5 +232,10 @@ export async function handleAuthCallback(c: Context): Promise<Response> {
   const refreshToken = randomUUID();
   await storeRefreshToken(refreshToken, userId);
 
-  return c.json({ jwt, refreshToken, username });
+  const redirectUrl = new URL(stateItem.returnUri);
+  redirectUrl.searchParams.set("jwt", jwt);
+  redirectUrl.searchParams.set("refreshToken", refreshToken);
+  redirectUrl.searchParams.set("username", username);
+
+  return c.redirect(redirectUrl.toString(), 302);
 }

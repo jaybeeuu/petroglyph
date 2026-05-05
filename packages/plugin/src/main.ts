@@ -1,6 +1,6 @@
 import { Notice, Plugin, normalizePath } from "obsidian";
 import { PetroglyphSettingTab } from "./settings.js";
-import type { AuthCallbackParams, FileChange, PluginData, SyncProfile } from "./types.js";
+import type { FileChange, PluginData, SyncProfile } from "./types.js";
 import { hasStringProp, isRecord } from "./validate.js";
 
 const DEFAULT_DATA: PluginData = {
@@ -402,13 +402,22 @@ export class PetroglyphPlugin extends Plugin {
     }
 
     this.registerObsidianProtocolHandler("petroglyph/auth/callback", async (params) => {
-      const code = params["code"];
-      const state = params["state"];
-      if (typeof code !== "string" || typeof state !== "string") {
-        new Notice("Login failed: missing code or state");
+      const jwt = params["jwt"];
+      const refreshToken = params["refreshToken"];
+      const username = params["username"];
+      if (
+        typeof jwt !== "string" ||
+        typeof refreshToken !== "string" ||
+        typeof username !== "string"
+      ) {
+        new Notice("Login failed: missing auth params");
         return;
       }
-      await this.handleAuthCallback({ code, state });
+      this.setCredentials(jwt, refreshToken, username);
+      await this.savePluginData();
+      this.scheduleRefresh(jwt);
+      this.startStatusPolling();
+      new Notice(`Logged in as @${username}`);
     });
 
     this.registerObsidianProtocolHandler("petroglyph/oauth/callback", async (params) => {
@@ -623,7 +632,10 @@ export class PetroglyphPlugin extends Plugin {
 
   async openAuthUrl(): Promise<void> {
     try {
-      const response = await fetch(`${this._data.apiBaseUrl}/auth/url`);
+      const returnUri = "obsidian://petroglyph/auth/callback";
+      const response = await fetch(
+        `${this._data.apiBaseUrl}/auth/url?returnUri=${encodeURIComponent(returnUri)}`,
+      );
       if (!response.ok) {
         new Notice("Failed to get auth URL");
         return;
@@ -706,42 +718,6 @@ export class PetroglyphPlugin extends Plugin {
       }
     } catch {
       // Network errors are silently ignored; the next poll will retry.
-    }
-  }
-
-  async handleAuthCallback(params: AuthCallbackParams): Promise<void> {
-    try {
-      const response = await fetch(`${this._data.apiBaseUrl}/auth/callback`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(params),
-      });
-
-      if (!response.ok) {
-        new Notice("Login failed");
-        return;
-      }
-
-      const body: unknown = await response.json();
-      if (!isRecord(body)) {
-        new Notice("Login failed");
-        return;
-      }
-      if (
-        !hasStringProp(body, "jwt") ||
-        !hasStringProp(body, "refreshToken") ||
-        !hasStringProp(body, "username")
-      ) {
-        new Notice("Login failed");
-        return;
-      }
-      this.setCredentials(body.jwt, body.refreshToken, body.username);
-      await this.savePluginData();
-      this.scheduleRefresh(body.jwt);
-      this.startStatusPolling();
-      new Notice(`Logged in as @${body.username}`);
-    } catch {
-      new Notice("Login failed");
     }
   }
 }

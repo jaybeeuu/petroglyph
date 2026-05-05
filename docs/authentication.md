@@ -30,17 +30,16 @@ sequenceDiagram
     participant CloudAPI as Cloud API
     participant DynamoDB
     participant GitHub
+    participant Browser
 
     Plugin->>CloudAPI: GET /auth/url?returnUri=obsidian://...
     CloudAPI->>DynamoDB: store { state (UUID), returnUri, TTL 10 min }
     CloudAPI-->>Plugin: { url: "github.com/login/oauth/authorize?...&state=..." }
 
-    Plugin->>GitHub: open browser to GitHub OAuth URL
+    Plugin->>Browser: open GitHub OAuth URL
+    Browser->>GitHub: load authorisation page
     Note over GitHub: user reviews scope<br/>and clicks "Authorise"
-    GitHub-->>Plugin: redirect browser to obsidian://petroglyph/auth/callback?code=xxx&state=xxx
-
-    Note over Plugin: Obsidian URI handler fires
-    Plugin->>CloudAPI: POST /auth/callback { code, state }
+    GitHub-->>CloudAPI: redirect browser to GET /auth/callback?code=xxx&state=xxx
     CloudAPI->>DynamoDB: lookup + delete state (one-time-use)
     DynamoDB-->>CloudAPI: { returnUri, ttl }
     CloudAPI->>GitHub: POST /login/oauth/access_token { code }
@@ -48,23 +47,25 @@ sequenceDiagram
     CloudAPI->>GitHub: GET /api.github.com/user
     GitHub-->>CloudAPI: { id, login }
     Note over CloudAPI: upsert user record<br/>issue JWT (1 h) + refresh token (90 d)
-    CloudAPI-->>Plugin: { jwt, refreshToken, username }
+    CloudAPI-->>Browser: 302 Location: obsidian://...?jwt=...&refreshToken=...&username=...
+    Browser->>Plugin: open obsidian://...?jwt=...&refreshToken=...&username=...
 
-    Note over Plugin: store jwt, refreshToken, username<br/>via Obsidian saveData API<br/>redirect to returnUri
+    Note over Plugin: Obsidian URI handler fires<br/>store jwt, refreshToken, username<br/>via Obsidian saveData API
 ```
 
 1. Plugin calls `GET /auth/url?returnUri=<obsidian-uri>` to obtain the GitHub OAuth authorisation URL.
 2. User grants consent on GitHub.
-3. GitHub redirects to `obsidian://petroglyph/auth/callback?code=...`.
-4. Obsidian's URI handler fires; plugin sends the code to `POST /auth/callback` on the cloud API.
-5. Cloud API validates the state token against DynamoDB and **deletes it immediately** (making it one-time-use) before proceeding with the code exchange.
-
-`GET /auth/url` now requires a non-empty `returnUri` query parameter. The API returns `400` if it is missing or empty, and stores the value alongside the one-time OAuth state record in DynamoDB so the auth round-trip keeps the caller's intended return target bound to server-side state. 6. Cloud API exchanges the code for a GitHub access token, calls `GET /api.github.com/user` to retrieve the user's GitHub ID and username. Any failure from GitHub returns **502** to the plugin. 7. Cloud API creates (or looks up) the user record in DynamoDB. The GitHub token is discarded. 8. Cloud API issues:
+3. GitHub redirects the browser directly to `GET /auth/callback?code=...&state=...` on the cloud API.
+4. Cloud API validates the state token against DynamoDB and **deletes it immediately** (making it one-time-use) before proceeding with the code exchange.
+5. `GET /auth/url` requires a non-empty `returnUri` query parameter. The API returns `400` if it is missing or empty, and stores the value alongside the one-time OAuth state record in DynamoDB so the auth round-trip keeps the caller's intended return target bound to server-side state.
+6. Cloud API exchanges the code for a GitHub access token, calls `GET /api.github.com/user` to retrieve the user's GitHub ID and username, and returns **502** if a GitHub call fails.
+7. Cloud API creates (or looks up) the user record in DynamoDB, discards the GitHub token, and issues:
 
 - A short-lived **JWT** (RS256, TTL 1 hour, claims: `iss=petroglyph-api`, `aud=petroglyph-plugin`, `sub=<userId>`, `username=<githubLogin>`).
 - A long-lived **refresh token** (opaque UUID, stored as **SHA-256 hash** in DynamoDB, TTL ~90 days).
 
-9. Plugin stores `jwt`, `refreshToken`, and `username` via Obsidian's `saveData` API (written to the plugin's local data file — not `localStorage`).
+8. Cloud API returns a `302` redirect to `${returnUri}?jwt=...&refreshToken=...&username=...`, using the `returnUri` loaded from the DynamoDB state item rather than any client-supplied callback input.
+9. Obsidian's URI handler fires, and the plugin stores `jwt`, `refreshToken`, and `username` via Obsidian's `saveData` API (written to the plugin's local data file — not `localStorage`).
 
 ### Session Lifecycle
 
@@ -154,7 +155,7 @@ The plugin polls `GET /status` on a **60-second interval** (`window.setInterval`
 Polling starts:
 
 - On `onload`, if a stored JWT is present.
-- Immediately after a successful GitHub login (`POST /auth/callback`).
+- Immediately after a successful GitHub login redirect completes (`GET /auth/callback` → `obsidian://...?jwt=...`).
 
 Polling is cancelled (interval cleared, ID set to `null`) in:
 
@@ -163,11 +164,11 @@ Polling is cancelled (interval cleared, ID set to `null`) in:
 
 ### GitHub OAuth App Registration
 
-| Field        | Value                                 |
-| ------------ | ------------------------------------- |
-| Type         | GitHub OAuth App (not a GitHub App)   |
-| Callback URL | `obsidian://petroglyph/auth/callback` |
-| Scopes       | `read:user`                           |
+| Field        | Value                                    |
+| ------------ | ---------------------------------------- |
+| Type         | GitHub OAuth App (not a GitHub App)      |
+| Callback URL | `https://<petroglyph-api>/auth/callback` |
+| Scopes       | `read:user`                              |
 
 > The `read:user` scope is used only to retrieve the user's GitHub ID and public profile. No repository access is requested.
 
