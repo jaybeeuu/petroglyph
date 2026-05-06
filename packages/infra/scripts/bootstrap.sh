@@ -196,6 +196,20 @@ POLICY_DOC=$(cat << EOF
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "AcmCertificates",
+      "Effect": "Allow",
+      "Action": [
+        "acm:RequestCertificate",
+        "acm:DescribeCertificate",
+        "acm:DeleteCertificate",
+        "acm:ListCertificates",
+        "acm:AddTagsToCertificate",
+        "acm:ListTagsForCertificate",
+        "acm:GetCertificate"
+      ],
+      "Resource": "*"
+    },
+    {
       "Sid": "IdentityCheck",
       "Effect": "Allow",
       "Action": "sts:GetCallerIdentity",
