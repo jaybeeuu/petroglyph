@@ -36,6 +36,12 @@ variable "processor_zip_s3_key" {
   default     = ""
 }
 
+variable "api_custom_domain" {
+  description = "Custom domain name for the API (e.g. api.petroglyph.page). Empty string disables custom domain resources."
+  type        = string
+  default     = ""
+}
+
 variable "retention_days" {
   description = "Number of days after which staged PDF objects are expired"
   type        = number

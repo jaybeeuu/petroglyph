@@ -129,7 +129,8 @@ jobs:
         run: |
           terraform apply -auto-approve -refresh=false \
             -var="api_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
-            -var="api_zip_s3_key=lambda-${{ steps.artifact-hash.outputs.hash }}.zip"
+            -var="api_zip_s3_key=lambda-${{ steps.artifact-hash.outputs.hash }}.zip" \
+            -var="api_custom_domain=api.petroglyph.page"
       - name: Capture API function URL
         id: api-function-url
         working-directory: packages/infra
