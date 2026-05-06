@@ -141,6 +141,276 @@ with zipfile.ZipFile('$TMPDIR/lambda.zip', 'w') as z:
   success "Placeholder zip uploaded"
 fi
 
+# ── Step 6: GitHub Actions deploy role ───────────────────────────────────────
+#
+# This role is assumed by GitHub Actions via OIDC. It is not managed by
+# Terraform (to avoid a chicken-and-egg problem where Terraform needs the role
+# to run). It must be created once via this script.
+
+GITHUB_ACTIONS_ROLE="petroglyph-github-actions-deploy-production"
+DEPLOY_POLICY_NAME="petroglyph-github-actions-deploy-production"
+
+info "Checking GitHub OIDC provider..."
+OIDC_PROVIDER_ARN="arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
+if $AWS iam get-open-id-connect-provider --open-id-connect-provider-arn "$OIDC_PROVIDER_ARN" &>/dev/null; then
+  success "GitHub OIDC provider already exists"
+else
+  info "Creating GitHub OIDC provider..."
+  $AWS iam create-open-id-connect-provider \
+    --url "https://token.actions.githubusercontent.com" \
+    --client-id-list "sts.amazonaws.com" \
+    --thumbprint-list "6938fd4d98bab03faadb97b34396831e3780aea1"
+  success "GitHub OIDC provider created"
+fi
+
+info "Checking deploy role ($GITHUB_ACTIONS_ROLE)..."
+if $AWS iam get-role --role-name "$GITHUB_ACTIONS_ROLE" &>/dev/null; then
+  success "Deploy role already exists"
+else
+  info "Creating deploy role..."
+  $AWS iam create-role \
+    --role-name "$GITHUB_ACTIONS_ROLE" \
+    --assume-role-policy-document "{
+      \"Version\": \"2012-10-17\",
+      \"Statement\": [{
+        \"Effect\": \"Allow\",
+        \"Principal\": {
+          \"Federated\": \"${OIDC_PROVIDER_ARN}\"
+        },
+        \"Action\": \"sts:AssumeRoleWithWebIdentity\",
+        \"Condition\": {
+          \"StringEquals\": {
+            \"token.actions.githubusercontent.com:sub\": \"repo:jaybeeuu/petroglyph:environment:production\",
+            \"token.actions.githubusercontent.com:aud\": \"sts.amazonaws.com\"
+          }
+        }
+      }]
+    }"
+  success "Deploy role created"
+fi
+
+info "Checking deploy managed policy ($DEPLOY_POLICY_NAME)..."
+POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${DEPLOY_POLICY_NAME}"
+POLICY_DOC=$(cat << EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "IdentityCheck",
+      "Effect": "Allow",
+      "Action": "sts:GetCallerIdentity",
+      "Resource": "*"
+    },
+    {
+      "Sid": "TerraformStateAndArtifactsBuckets",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+        "s3:GetBucketVersioning",
+        "s3:GetBucketTagging",
+        "s3:PutBucketTagging",
+        "s3:GetEncryptionConfiguration",
+        "s3:PutEncryptionConfiguration",
+        "s3:GetLifecycleConfiguration",
+        "s3:PutLifecycleConfiguration"
+      ],
+      "Resource": [
+        "arn:aws:s3:::petroglyph-terraform-state-${ACCOUNT_ID}",
+        "arn:aws:s3:::petroglyph-lambda-artifacts-${ACCOUNT_ID}",
+        "arn:aws:s3:::petroglyph-staged-pdfs-production"
+      ]
+    },
+    {
+      "Sid": "TerraformStateAndArtifactsObjects",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:AbortMultipartUpload",
+        "s3:ListMultipartUploadParts"
+      ],
+      "Resource": [
+        "arn:aws:s3:::petroglyph-terraform-state-${ACCOUNT_ID}/*",
+        "arn:aws:s3:::petroglyph-lambda-artifacts-${ACCOUNT_ID}/*",
+        "arn:aws:s3:::petroglyph-staged-pdfs-production/*"
+      ]
+    },
+    {
+      "Sid": "DynamoDbProjectTables",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:DescribeTable",
+        "dynamodb:CreateTable",
+        "dynamodb:UpdateTable",
+        "dynamodb:DeleteTable",
+        "dynamodb:TagResource",
+        "dynamodb:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-terraform-locks",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-users-production",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-refresh-tokens-production",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-profiles-production",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-file-records-production"
+      ]
+    },
+    {
+      "Sid": "DynamoDbListTables",
+      "Effect": "Allow",
+      "Action": "dynamodb:ListTables",
+      "Resource": "*"
+    },
+    {
+      "Sid": "LambdaProjectFunctions",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:GetFunctionCodeSigningConfig",
+        "lambda:ListVersionsByFunction",
+        "lambda:CreateFunction",
+        "lambda:UpdateFunctionCode",
+        "lambda:UpdateFunctionConfiguration",
+        "lambda:DeleteFunction",
+        "lambda:AddPermission",
+        "lambda:RemovePermission",
+        "lambda:GetPolicy",
+        "lambda:GetFunctionUrlConfig",
+        "lambda:CreateFunctionUrlConfig",
+        "lambda:UpdateFunctionUrlConfig",
+        "lambda:DeleteFunctionUrlConfig",
+        "lambda:TagResource",
+        "lambda:UntagResource",
+        "lambda:ListTags"
+      ],
+      "Resource": "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-*"
+    },
+    {
+      "Sid": "ManageProjectRoles",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:PassRole"
+      ],
+      "Resource": "arn:aws:iam::${ACCOUNT_ID}:role/petroglyph-*"
+    },
+    {
+      "Sid": "ApiGatewayV2ForProject",
+      "Effect": "Allow",
+      "Action": [
+        "apigateway:GET",
+        "apigateway:POST",
+        "apigateway:PATCH",
+        "apigateway:DELETE"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProjectLogGroups",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:DeleteLogGroup",
+        "logs:PutRetentionPolicy",
+        "logs:TagResource",
+        "logs:UntagResource",
+        "logs:DescribeLogGroups",
+        "logs:ListTagsForResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProjectQueues",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:CreateQueue",
+        "sqs:DeleteQueue",
+        "sqs:GetQueueAttributes",
+        "sqs:SetQueueAttributes",
+        "sqs:TagQueue",
+        "sqs:UntagQueue",
+        "sqs:ListQueueTags"
+      ],
+      "Resource": "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-*"
+    },
+    {
+      "Sid": "ProjectSsmParameters",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:DescribeParameters",
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:PutParameter",
+        "ssm:DeleteParameter",
+        "ssm:AddTagsToResource",
+        "ssm:RemoveTagsFromResource",
+        "ssm:ListTagsForResource"
+      ],
+      "Resource": [
+        "arn:aws:ssm:eu-west-2:${ACCOUNT_ID}:parameter/petroglyph/*",
+        "*"
+      ]
+    },
+    {
+      "Sid": "ProjectCloudWatchAlarms",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:TagResource",
+        "cloudwatch:UntagResource",
+        "cloudwatch:ListTagsForResource"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+EOF
+)
+
+if $AWS iam get-policy --policy-arn "$POLICY_ARN" &>/dev/null; then
+  success "Deploy managed policy already exists"
+else
+  info "Creating deploy managed policy..."
+  $AWS iam create-policy \
+    --policy-name "$DEPLOY_POLICY_NAME" \
+    --policy-document "$POLICY_DOC"
+  success "Deploy managed policy created"
+fi
+
+info "Checking managed policy is attached to role..."
+if $AWS iam list-attached-role-policies --role-name "$GITHUB_ACTIONS_ROLE" \
+    --query "AttachedPolicies[?PolicyArn=='${POLICY_ARN}']" --output text | grep -q .; then
+  success "Managed policy already attached"
+else
+  info "Attaching managed policy to role..."
+  $AWS iam attach-role-policy \
+    --role-name "$GITHUB_ACTIONS_ROLE" \
+    --policy-arn "$POLICY_ARN"
+  success "Managed policy attached"
+fi
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 echo ""
@@ -149,6 +419,12 @@ echo "  Bootstrap complete."
 echo ""
 echo "  TF_STATE_BUCKET        = $TF_STATE_BUCKET"
 echo "  LAMBDA_ARTIFACT_BUCKET = $LAMBDA_ARTIFACT_BUCKET"
+echo "  DEPLOY_ROLE_ARN        = arn:aws:iam::${ACCOUNT_ID}:role/${GITHUB_ACTIONS_ROLE}"
+echo ""
+echo "  Set these GitHub Actions secrets:"
+echo "    AWS_ROLE_ARN        = arn:aws:iam::${ACCOUNT_ID}:role/${GITHUB_ACTIONS_ROLE}"
+echo "    TF_STATE_BUCKET     = $TF_STATE_BUCKET"
+echo "    LAMBDA_ARTIFACT_BUCKET = $LAMBDA_ARTIFACT_BUCKET"
 echo ""
 echo "  Next step: pnpm tf:apply --profile $PROFILE"
 echo "════════════════════════════════════════════════════════════════"
