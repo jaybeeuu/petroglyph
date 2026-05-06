@@ -1,6 +1,7 @@
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { randomUUID } from "node:crypto";
 import { handleAuthCallback } from "./auth-callback.js";
 import { handleAuthRefresh } from "./auth-refresh.js";
@@ -28,6 +29,15 @@ const EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
 ];
 
 const app = new Hono<{ Variables: AppVariables }>();
+
+app.use(
+  "*",
+  cors({
+    origin: ["app://obsidian.md", "capacitor://localhost", "http://localhost"],
+    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowHeaders: ["Authorization", "Content-Type"],
+  }),
+);
 
 app.use("*", (c, next) => {
   const isExempt = EXEMPT_ROUTES.some(
