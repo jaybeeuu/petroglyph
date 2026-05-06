@@ -334,6 +334,7 @@ POLICY_DOC=$(cat << EOF
       "Action": [
         "apigateway:GET",
         "apigateway:POST",
+        "apigateway:PUT",
         "apigateway:PATCH",
         "apigateway:DELETE"
       ],
