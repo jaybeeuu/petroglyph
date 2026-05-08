@@ -78,7 +78,7 @@ describe("openAuthUrl", () => {
     await plugin.openAuthUrl();
 
     expect(global.fetch).toHaveBeenCalledWith(
-      "http://localhost:3000/auth/url?returnUri=obsidian%3A%2F%2Fpetroglyph%2Fauth%2Fcallback",
+      "https://api.petroglyph.page/auth/url?returnUri=obsidian%3A%2F%2Fpetroglyph%2Fauth%2Fcallback",
     );
     expect(window.open).toHaveBeenCalledWith(
       "https://github.com/login/oauth/authorize?...",
@@ -137,7 +137,7 @@ describe("loadPluginData / savePluginData", () => {
 
   it("uses defaults when no saved data exists", async () => {
     const { plugin } = await makePlugin();
-    expect(plugin.data.apiBaseUrl).toBe("http://localhost:3000");
+    expect(plugin.data.apiBaseUrl).toBe("https://api.petroglyph.page");
     expect(plugin.data.jwt).toBeUndefined();
   });
 
@@ -302,7 +302,7 @@ describe("performRefresh", () => {
     await plugin.performRefresh();
 
     expect(global.fetch).toHaveBeenCalledWith(
-      "http://localhost:3000/auth/refresh",
+      "https://api.petroglyph.page/auth/refresh",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ refreshToken: "old-refresh" }),
@@ -469,7 +469,7 @@ describe("openOneDriveAuthUrl", () => {
     await plugin.openOneDriveAuthUrl();
 
     expect(global.fetch).toHaveBeenCalledWith(
-      "http://localhost:3000/onedrive/auth-url",
+      "https://api.petroglyph.page/onedrive/auth-url",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer jwt-token" }) as unknown as {
           [key: string]: string;
@@ -541,7 +541,7 @@ describe("handleOneDriveCallback", () => {
     await plugin.handleOneDriveCallback({ code: "abc", state: "xyz" });
 
     expect(global.fetch).toHaveBeenCalledWith(
-      "http://localhost:3000/onedrive/connect",
+      "https://api.petroglyph.page/onedrive/connect",
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({ Authorization: "Bearer jwt-token" }) as unknown as {
@@ -591,7 +591,7 @@ describe("pollStatus", () => {
     await plugin.pollStatus();
 
     expect(global.fetch).toHaveBeenCalledWith(
-      "http://localhost:3000/status",
+      "https://api.petroglyph.page/status",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer jwt-token" }) as unknown as {
           [key: string]: string;
