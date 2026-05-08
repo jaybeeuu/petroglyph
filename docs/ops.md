@@ -94,3 +94,68 @@ Once applied, the following values are needed as GitHub Actions secrets on the `
 | `LAMBDA_ARTIFACT_BUCKET` | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`           |
 
 Configure the `production` environment so only `main` can deploy, and require deployment review before the `deploy` job proceeds. See [CONTRIBUTING.md](../CONTRIBUTING.md#cd-secrets) for how to configure these secrets.
+
+---
+
+## Third-party App Registration
+
+Terraform creates SSM parameters with `value = "PLACEHOLDER"` on first apply (with `lifecycle { ignore_changes = [value] }` so CD never overwrites real values). After bootstrapping, the real credentials must be stored manually using the steps below.
+
+### GitHub OAuth App
+
+Used for user login (`GET /auth/url` → `GET /auth/callback`).
+
+1. Go to **github.com → Settings → Developer settings → OAuth Apps → New OAuth App**.
+2. Fill in:
+   | Field | Value |
+   |---|---|
+   | Application name | `petroglyph` |
+   | Homepage URL | `https://api.petroglyph.page` |
+   | Authorization callback URL | `https://api.petroglyph.page/auth/callback` |
+3. Click **Register application**, then **Generate a new client secret**.
+4. Copy the **Client ID** and **Client secret**.
+5. Store in SSM (overwrite the placeholder):
+   ```sh
+   aws ssm put-parameter --profile petroglyph-admin \
+     --name /petroglyph/github/client-id \
+     --value "<client-id>" --type SecureString --overwrite
+
+   aws ssm put-parameter --profile petroglyph-admin \
+     --name /petroglyph/github/client-secret \
+     --value "<client-secret>" --type SecureString --overwrite
+   ```
+6. Force a Lambda cold start to pick up the new values:
+   ```sh
+   aws lambda update-function-configuration --profile petroglyph-admin \
+     --function-name petroglyph-api-production \
+     --description "force cold start $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+   ```
+
+### Microsoft Entra ID App (OneDrive)
+
+Used for OneDrive connection (`GET /onedrive/auth-url` → `GET /onedrive/connect`).
+
+1. Go to [portal.azure.com](https://portal.azure.com) → search **App registrations** → **New registration**.
+2. Fill in:
+   | Field | Value |
+   |---|---|
+   | Name | `petroglyph` |
+   | Supported account types | **Accounts in any organizational directory and personal Microsoft accounts** (the "Any Entra ID Tenant + Personal Microsoft accounts" option) |
+   | Redirect URI platform | **Web** |
+   | Redirect URI | `https://api.petroglyph.page/onedrive/connect` |
+3. Click **Register**. Copy the **Application (client) ID** from the overview page.
+4. Go to **API permissions → Add a permission → Microsoft Graph → Delegated permissions**. Add:
+   - `Files.Read`
+   - `offline_access`
+5. Go to **Certificates & secrets → New client secret**. Copy the **Value** immediately (it is only shown once).
+6. Store in SSM (overwrite the placeholder):
+   ```sh
+   aws ssm put-parameter --profile petroglyph-admin \
+     --name /petroglyph/onedrive/client-id \
+     --value "<application-client-id>" --type SecureString --overwrite
+
+   aws ssm put-parameter --profile petroglyph-admin \
+     --name /petroglyph/onedrive/client-secret \
+     --value "<client-secret-value>" --type SecureString --overwrite
+   ```
+7. Force a Lambda cold start (same command as step 6 in the GitHub section above).
