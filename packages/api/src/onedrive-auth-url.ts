@@ -33,7 +33,7 @@ export async function handleOnedriveAuthUrl(
   await docClient.send(
     new PutCommand({
       TableName: TABLE_NAME,
-      Item: { token: state, type: "onedrive_state", verifier, ttl },
+      Item: { tokenHash: state, type: "onedrive_state", verifier, ttl },
     }),
   );
 

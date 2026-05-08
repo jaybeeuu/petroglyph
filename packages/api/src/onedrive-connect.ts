@@ -23,7 +23,7 @@ interface ConnectRequestBody {
 }
 
 interface OnedriveStateItem {
-  token: string;
+  tokenHash: string;
   type: string;
   verifier: string;
   ttl: number;
@@ -55,12 +55,12 @@ function parseConnectBody(body: unknown): ConnectRequestBody | null {
 
 function parseOnedriveStateItem(item: unknown): OnedriveStateItem | null {
   if (!isRecord(item)) return null;
-  if (typeof item["token"] !== "string") return null;
+  if (typeof item["tokenHash"] !== "string") return null;
   if (typeof item["type"] !== "string") return null;
   if (typeof item["verifier"] !== "string") return null;
   if (typeof item["ttl"] !== "number") return null;
   return {
-    token: item["token"],
+    tokenHash: item["tokenHash"],
     type: item["type"],
     verifier: item["verifier"],
     ttl: item["ttl"],
@@ -87,7 +87,7 @@ async function lookupStateItem(state: string): Promise<OnedriveStateItem | null>
   const result = await docClient.send(
     new GetCommand({
       TableName: refreshTokensTable(),
-      Key: { token: state },
+      Key: { tokenHash: state },
     }),
   );
   return parseOnedriveStateItem(result.Item);
@@ -97,7 +97,7 @@ async function deleteStateItem(state: string): Promise<void> {
   await docClient.send(
     new DeleteCommand({
       TableName: refreshTokensTable(),
-      Key: { token: state },
+      Key: { tokenHash: state },
     }),
   );
 }
