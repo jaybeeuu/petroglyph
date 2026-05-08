@@ -115,6 +115,7 @@ Used for user login (`GET /auth/url` → `GET /auth/callback`).
 3. Click **Register application**, then **Generate a new client secret**.
 4. Copy the **Client ID** and **Client secret**.
 5. Store in SSM (overwrite the placeholder):
+
    ```sh
    aws ssm put-parameter --profile petroglyph-admin \
      --name /petroglyph/github/client-id \
@@ -124,6 +125,7 @@ Used for user login (`GET /auth/url` → `GET /auth/callback`).
      --name /petroglyph/github/client-secret \
      --value "<client-secret>" --type SecureString --overwrite
    ```
+
 6. Force a Lambda cold start to pick up the new values:
    ```sh
    aws lambda update-function-configuration --profile petroglyph-admin \
@@ -149,6 +151,7 @@ Used for OneDrive connection (`GET /onedrive/auth-url` → `GET /onedrive/connec
    - `offline_access`
 5. Go to **Certificates & secrets → New client secret**. Copy the **Value** immediately (it is only shown once).
 6. Store in SSM (overwrite the placeholder):
+
    ```sh
    aws ssm put-parameter --profile petroglyph-admin \
      --name /petroglyph/onedrive/client-id \
@@ -158,4 +161,5 @@ Used for OneDrive connection (`GET /onedrive/auth-url` → `GET /onedrive/connec
      --name /petroglyph/onedrive/client-secret \
      --value "<client-secret-value>" --type SecureString --overwrite
    ```
+
 7. Force a Lambda cold start (same command as step 6 in the GitHub section above).
