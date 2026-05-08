@@ -4,7 +4,7 @@ import type { FileChange, PluginData, SyncProfile } from "./types.js";
 import { hasStringProp, isRecord } from "./validate.js";
 
 const DEFAULT_DATA: PluginData = {
-  apiBaseUrl: "http://localhost:3000",
+  apiBaseUrl: "https://api.petroglyph.page",
   syncIntervalMinutes: 5,
   changeTokens: {},
 };
