@@ -521,6 +521,7 @@ describe("handleOneDriveCallback", () => {
 
   it("sets oneDriveConnected=true and saves data on success", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", refreshToken: "r", username: "alice" });
+    const refreshSettingsUiSpy = vi.spyOn(plugin, "refreshSettingsUi").mockImplementation(() => {});
 
     global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
 
@@ -531,6 +532,7 @@ describe("handleOneDriveCallback", () => {
     expect(plugin.saveData).toHaveBeenCalledWith(
       expect.objectContaining({ oneDriveConnected: true }),
     );
+    expect(refreshSettingsUiSpy).toHaveBeenCalledOnce();
   });
 
   it("calls POST /onedrive/connect with JWT Bearer and params", async () => {
@@ -602,6 +604,7 @@ describe("pollStatus", () => {
 
   it("updates oneDriveConnected from response and saves data", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", refreshToken: "r", username: "alice" });
+    const refreshSettingsUiSpy = vi.spyOn(plugin, "refreshSettingsUi").mockImplementation(() => {});
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -615,6 +618,27 @@ describe("pollStatus", () => {
     expect(plugin.saveData).toHaveBeenCalledWith(
       expect.objectContaining({ oneDriveConnected: true }),
     );
+    expect(refreshSettingsUiSpy).toHaveBeenCalledOnce();
+  });
+
+  it("refreshes settings when status polling updates oneDriveStatus", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      refreshToken: "r",
+      username: "alice",
+      oneDriveStatus: "ok",
+    });
+    const refreshSettingsUiSpy = vi.spyOn(plugin, "refreshSettingsUi").mockImplementation(() => {});
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ oneDrive: { status: "reconnect_required" } }),
+    });
+
+    await plugin.pollStatus();
+
+    expect(plugin.data.oneDriveStatus).toBe("reconnect_required");
+    expect(refreshSettingsUiSpy).toHaveBeenCalledOnce();
   });
 
   it("does nothing when no JWT is stored", async () => {
@@ -763,6 +787,7 @@ describe("petroglyph/auth/callback URI handler", () => {
     const startStatusPollingSpy = vi
       .spyOn(plugin, "startStatusPolling")
       .mockImplementation(() => {});
+    const refreshSettingsUiSpy = vi.spyOn(plugin, "refreshSettingsUi").mockImplementation(() => {});
 
     await plugin.onload();
 
@@ -786,6 +811,7 @@ describe("petroglyph/auth/callback URI handler", () => {
     expect(savePluginDataSpy).toHaveBeenCalledOnce();
     expect(scheduleRefreshSpy).toHaveBeenCalledWith("jwt-token");
     expect(startStatusPollingSpy).toHaveBeenCalledOnce();
+    expect(refreshSettingsUiSpy).toHaveBeenCalledOnce();
     expect(Notice).toHaveBeenCalledWith("Logged in as @alice");
   });
 
