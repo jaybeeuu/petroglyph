@@ -1,3 +1,4 @@
+import { is, isObject } from "@jaybeeuu/is";
 import { PutParameterCommand } from "@aws-sdk/client-ssm";
 import { DeleteCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
@@ -42,55 +43,32 @@ class UpstreamError extends Error {
   }
 }
 
-function isRecord(value: unknown): value is { [key: string]: unknown } {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasStringProp<K extends string>(
-  value: { [key: string]: unknown },
-  key: K,
-): value is { [key: string]: unknown } & { [P in K]: string } {
-  return typeof value[key] === "string";
-}
-
-function hasNumberProp<K extends string>(
-  value: { [key: string]: unknown },
-  key: K,
-): value is { [key: string]: unknown } & { [P in K]: number } {
-  return typeof value[key] === "number";
-}
-
 function parseConnectBody(body: unknown): ConnectRequestBody | null {
-  if (!isRecord(body)) return null;
-  if (typeof body["code"] !== "string" || body["code"].length === 0) return null;
-  if (typeof body["state"] !== "string" || body["state"].length === 0) return null;
-  return { code: body["code"], state: body["state"] };
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
+  const b = body as Record<string, unknown>;
+  if (typeof b["code"] !== "string" || b["code"].length === 0) return null;
+  if (typeof b["state"] !== "string" || b["state"].length === 0) return null;
+  return { code: b["code"], state: b["state"] };
 }
 
-function isOnedriveStateItem(value: unknown): value is OnedriveStateItem {
-  return (
-    isRecord(value) &&
-    hasStringProp(value, "tokenHash") &&
-    hasStringProp(value, "type") &&
-    hasStringProp(value, "verifier") &&
-    hasNumberProp(value, "ttl")
-  );
-}
+const isOnedriveStateItem = isObject<OnedriveStateItem>({
+  tokenHash: is("string"),
+  type: is("string"),
+  verifier: is("string"),
+  ttl: is("number"),
+});
+
+const isMicrosoftTokenResponse = isObject<MicrosoftTokenResponse>({
+  access_token: is("string"),
+  refresh_token: is("string"),
+  expires_in: is("number"),
+});
 
 function parseMicrosoftTokenResponse(data: unknown): MicrosoftTokenResponse {
-  if (
-    !isRecord(data) ||
-    typeof data["access_token"] !== "string" ||
-    typeof data["refresh_token"] !== "string" ||
-    typeof data["expires_in"] !== "number"
-  ) {
+  if (!isMicrosoftTokenResponse(data)) {
     throw new UpstreamError("Invalid Microsoft token response shape");
   }
-  return {
-    access_token: data["access_token"],
-    refresh_token: data["refresh_token"],
-    expires_in: data["expires_in"],
-  };
+  return data;
 }
 
 async function lookupStateItem(state: string): Promise<OnedriveStateItem | null> {
