@@ -142,9 +142,12 @@ Used for OneDrive connection (`GET /onedrive/auth-url` → `GET /onedrive/connec
    | Field | Value |
    |---|---|
    | Name | `petroglyph` |
-   | Supported account types | **Accounts in any organizational directory and personal Microsoft accounts** (the "Any Entra ID Tenant + Personal Microsoft accounts" option) |
+   | Supported account types | **Accounts in any organizational directory (Any Microsoft Entra ID tenant - Multitenant) and personal Microsoft accounts (e.g. Skype, Xbox)** |
    | Redirect URI platform | **Web** |
    | Redirect URI | `https://api.petroglyph.page/onedrive/connect` |
+
+   > **⚠ Important — Supported account types**: The value above must be selected exactly. If you choose a single-tenant or organisation-only option, personal Microsoft account holders will receive an `unauthorized_client: The client does not exist or is not enabled for consumers` error when attempting to connect OneDrive.
+
 3. Click **Register**. Copy the **Application (client) ID** from the overview page.
 4. Go to **API permissions → Add a permission → Microsoft Graph → Delegated permissions**. Add:
    - `Files.Read`
