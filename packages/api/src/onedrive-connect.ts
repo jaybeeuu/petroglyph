@@ -45,7 +45,7 @@ class UpstreamError extends Error {
 
 function parseConnectBody(body: unknown): ConnectRequestBody | null {
   if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
-  const b = body as Record<string, unknown>;
+  const b = body as { [key: string]: unknown };
   if (typeof b["code"] !== "string" || b["code"].length === 0) return null;
   if (typeof b["state"] !== "string" || b["state"].length === 0) return null;
   return { code: b["code"], state: b["state"] };
