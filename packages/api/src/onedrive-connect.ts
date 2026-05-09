@@ -46,6 +46,20 @@ function isRecord(value: unknown): value is { [key: string]: unknown } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function hasStringProp<K extends string>(
+  value: { [key: string]: unknown },
+  key: K,
+): value is { [key: string]: unknown } & { [P in K]: string } {
+  return typeof value[key] === "string";
+}
+
+function hasNumberProp<K extends string>(
+  value: { [key: string]: unknown },
+  key: K,
+): value is { [key: string]: unknown } & { [P in K]: number } {
+  return typeof value[key] === "number";
+}
+
 function parseConnectBody(body: unknown): ConnectRequestBody | null {
   if (!isRecord(body)) return null;
   if (typeof body["code"] !== "string" || body["code"].length === 0) return null;
@@ -53,18 +67,14 @@ function parseConnectBody(body: unknown): ConnectRequestBody | null {
   return { code: body["code"], state: body["state"] };
 }
 
-function parseOnedriveStateItem(item: unknown): OnedriveStateItem | null {
-  if (!isRecord(item)) return null;
-  if (typeof item["tokenHash"] !== "string") return null;
-  if (typeof item["type"] !== "string") return null;
-  if (typeof item["verifier"] !== "string") return null;
-  if (typeof item["ttl"] !== "number") return null;
-  return {
-    tokenHash: item["tokenHash"],
-    type: item["type"],
-    verifier: item["verifier"],
-    ttl: item["ttl"],
-  };
+function isOnedriveStateItem(value: unknown): value is OnedriveStateItem {
+  return (
+    isRecord(value) &&
+    hasStringProp(value, "tokenHash") &&
+    hasStringProp(value, "type") &&
+    hasStringProp(value, "verifier") &&
+    hasNumberProp(value, "ttl")
+  );
 }
 
 function parseMicrosoftTokenResponse(data: unknown): MicrosoftTokenResponse {
@@ -90,7 +100,7 @@ async function lookupStateItem(state: string): Promise<OnedriveStateItem | null>
       Key: { tokenHash: state },
     }),
   );
-  return parseOnedriveStateItem(result.Item);
+  return isOnedriveStateItem(result.Item) ? result.Item : null;
 }
 
 async function deleteStateItem(state: string): Promise<void> {
