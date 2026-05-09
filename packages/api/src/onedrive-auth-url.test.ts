@@ -85,14 +85,14 @@ describe("GET /onedrive/auth-url", () => {
       {
         input: {
           TableName: string;
-          Item: { token: string; type: string; verifier: string; ttl: number };
+          Item: { tokenHash: string; type: string; verifier: string; ttl: number };
         };
       },
     ];
     expect(command.input).toMatchObject({
       TableName: "petroglyph-refresh_tokens-default",
       Item: {
-        token: state,
+        tokenHash: state,
         type: "onedrive_state",
       },
     });

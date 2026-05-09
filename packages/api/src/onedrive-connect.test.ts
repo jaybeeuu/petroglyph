@@ -48,7 +48,7 @@ function makeStateItem(
   overrides: Partial<{ ttl: number; type: string; verifier: string }> = {},
 ): object {
   return {
-    token: VALID_STATE,
+    tokenHash: VALID_STATE,
     type: "onedrive_state",
     verifier: VALID_VERIFIER,
     ttl: Math.floor(Date.now() / 1000) + 600,
@@ -220,8 +220,8 @@ describe("POST /onedrive/connect", () => {
 
     const deleteCalls = mockDbSend.mock.calls.filter(([cmd]) => cmd instanceof DeleteCommand);
     expect(deleteCalls).toHaveLength(1);
-    const [deleteCmd] = deleteCalls[0] as [{ input: { Key: { token: string } } }];
-    expect(deleteCmd.input.Key.token).toBe(VALID_STATE);
+    const [deleteCmd] = deleteCalls[0] as [{ input: { Key: { tokenHash: string } } }];
+    expect(deleteCmd.input.Key.tokenHash).toBe(VALID_STATE);
   });
 
   // ── Behaviour 4: Microsoft token exchange success ────────────────────────

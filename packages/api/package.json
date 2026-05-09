@@ -27,6 +27,7 @@
     "@aws-sdk/client-ssm": "^3.1024.0",
     "@aws-sdk/lib-dynamodb": "^3.1024.0",
     "@aws-sdk/s3-request-presigner": "^3.1024.0",
+    "@jaybeeuu/is": "^2.1.1",
     "@petroglyph/core": "workspace:*",
     "hono": "^4.12.10",
     "jose": "^6.2.2",
