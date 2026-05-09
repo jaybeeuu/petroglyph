@@ -17,6 +17,7 @@
 
 locals {
   has_custom_domain = var.api_custom_domain != ""
+  api_base_url      = local.has_custom_domain ? "https://${var.api_custom_domain}" : aws_apigatewayv2_api.petroglyph_api.api_endpoint
 }
 
 resource "aws_acm_certificate" "api" {
