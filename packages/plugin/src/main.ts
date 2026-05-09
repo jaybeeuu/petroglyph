@@ -185,6 +185,7 @@ export class PetroglyphPlugin extends Plugin {
   private _refreshTimeoutId: number | null = null;
   private _statusPollIntervalId: number | null = null;
   private _syncPollIntervalId: number | null = null;
+  private _settingTab: PetroglyphSettingTab | null = null;
 
   get data(): Readonly<PluginData> {
     return this._data;
@@ -220,6 +221,10 @@ export class PetroglyphPlugin extends Plugin {
 
   setOneDriveConnected(connected: boolean): void {
     this._data = { ...this._data, oneDriveConnected: connected };
+  }
+
+  refreshSettingsUi(): void {
+    this._settingTab?.display();
   }
 
   startStatusPolling(): void {
@@ -375,7 +380,8 @@ export class PetroglyphPlugin extends Plugin {
     await this.loadPluginData();
     await this.loadProfiles();
 
-    this.addSettingTab(new PetroglyphSettingTab(this.app, this));
+    this._settingTab = new PetroglyphSettingTab(this.app, this);
+    this.addSettingTab(this._settingTab);
 
     // Register manual commands
     if (typeof this.addCommand === "function") {
@@ -415,6 +421,7 @@ export class PetroglyphPlugin extends Plugin {
       }
       this.setCredentials(jwt, refreshToken, username);
       await this.savePluginData();
+      this.refreshSettingsUi();
       this.scheduleRefresh(jwt);
       this.startStatusPolling();
       new Notice(`Logged in as @${username}`);
@@ -690,6 +697,7 @@ export class PetroglyphPlugin extends Plugin {
       }
       this.setOneDriveConnected(true);
       await this.savePluginData();
+      this.refreshSettingsUi();
       this.startSyncPolling();
       new Notice("OneDrive connected");
     } catch {
@@ -708,13 +716,24 @@ export class PetroglyphPlugin extends Plugin {
       if (!isRecord(body)) return;
       const oneDrive = body["oneDrive"];
       if (isRecord(oneDrive)) {
+        let stateChanged = false;
         if (typeof oneDrive["connected"] === "boolean") {
-          this.setOneDriveConnected(oneDrive["connected"]);
+          if (this._data.oneDriveConnected !== oneDrive["connected"]) {
+            this.setOneDriveConnected(oneDrive["connected"]);
+            stateChanged = true;
+          }
         }
         if (typeof oneDrive["status"] === "string") {
-          this._data = { ...this._data, oneDriveStatus: oneDrive["status"] };
+          if (this._data.oneDriveStatus !== oneDrive["status"]) {
+            this._data = { ...this._data, oneDriveStatus: oneDrive["status"] };
+            stateChanged = true;
+          }
+        }
+        if (!stateChanged) {
+          return;
         }
         await this.savePluginData();
+        this.refreshSettingsUi();
       }
     } catch {
       // Network errors are silently ignored; the next poll will retry.

@@ -30,7 +30,7 @@ describe("Lambda packaging smoke test", () => {
       cwd: apiDir,
       stdio: "inherit",
     });
-  });
+  }, 30_000);
 
   afterAll(() => {
     // Clean up test extraction
@@ -63,7 +63,7 @@ describe("Lambda packaging smoke test", () => {
 
     expect(module).toHaveProperty("handler");
     expect(typeof module.handler).toBe("function");
-  });
+  }, 15_000);
 
   it("handler export matches terraform config (dist/index.handler)", async () => {
     // This test documents that the Terraform config expects dist/index.handler

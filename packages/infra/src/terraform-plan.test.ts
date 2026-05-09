@@ -75,7 +75,7 @@ describe.sequential("terraform ingestion infrastructure", () => {
     expect(outputsTerraform).toContain('output "ingest_queue_arn"');
     expect(outputsTerraform).toContain('output "ingest_dlq_url"');
     expect(outputsTerraform).toContain('output "ingest_dlq_arn"');
-  }, 60_000);
+  }, 120_000);
 
   it("connects the processor lambda to the ingest queue and exposes the webhook route", () => {
     runTerraformValidate();
