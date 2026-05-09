@@ -521,9 +521,7 @@ describe("handleOneDriveCallback", () => {
 
   it("sets oneDriveConnected=true and saves data on success", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", refreshToken: "r", username: "alice" });
-    const refreshSettingsUiSpy = vi
-      .spyOn(plugin, "refreshSettingsUi")
-      .mockImplementation(() => {});
+    const refreshSettingsUiSpy = vi.spyOn(plugin, "refreshSettingsUi").mockImplementation(() => {});
 
     global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
 
@@ -606,9 +604,7 @@ describe("pollStatus", () => {
 
   it("updates oneDriveConnected from response and saves data", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", refreshToken: "r", username: "alice" });
-    const refreshSettingsUiSpy = vi
-      .spyOn(plugin, "refreshSettingsUi")
-      .mockImplementation(() => {});
+    const refreshSettingsUiSpy = vi.spyOn(plugin, "refreshSettingsUi").mockImplementation(() => {});
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -632,9 +628,7 @@ describe("pollStatus", () => {
       username: "alice",
       oneDriveStatus: "ok",
     });
-    const refreshSettingsUiSpy = vi
-      .spyOn(plugin, "refreshSettingsUi")
-      .mockImplementation(() => {});
+    const refreshSettingsUiSpy = vi.spyOn(plugin, "refreshSettingsUi").mockImplementation(() => {});
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -793,9 +787,7 @@ describe("petroglyph/auth/callback URI handler", () => {
     const startStatusPollingSpy = vi
       .spyOn(plugin, "startStatusPolling")
       .mockImplementation(() => {});
-    const refreshSettingsUiSpy = vi
-      .spyOn(plugin, "refreshSettingsUi")
-      .mockImplementation(() => {});
+    const refreshSettingsUiSpy = vi.spyOn(plugin, "refreshSettingsUi").mockImplementation(() => {});
 
     await plugin.onload();
 
