@@ -191,7 +191,7 @@ Connecting OneDrive is a separate, explicit step after logging in. It uses Micro
 
 > Supports both personal accounts (outlook.com, hotmail.com, live.com) and work/school accounts (Microsoft 365 / Entra ID). Multi-tenant registration is required for personal account support.
 
-The Entra ID client secret is stored in **SSM Parameter Store (SecureString)**.
+The Entra ID **client ID** and **client secret** are stored in **SSM Parameter Store (SecureString)**. Both are required for the token exchange in step 9.
 
 ### Flow
 
@@ -227,7 +227,7 @@ sequenceDiagram
 6. The Obsidian plugin's URI handler receives the obsidian:// redirect and extracts `code` and `state`.
 7. Plugin sends `{ code, state }` to `POST /onedrive/connect` on the cloud API (JWT-protected, so the user must be authenticated).
 8. Cloud API validates the state token against DynamoDB (`type='onedrive_state'`, TTL check) → 401 if invalid or expired. The state record is deleted immediately after lookup (one-time-use), and the PKCE `verifier` is read from it.
-9. Cloud API completes the PKCE token exchange with Microsoft using the code and retrieved verifier, receiving an **access token** (TTL ~1 hour) and a **refresh token** (TTL up to 90 days with `offline_access`). Returns 502 if the exchange fails.
+9. Cloud API completes the PKCE token exchange with Microsoft using the code, retrieved verifier, and client secret (loaded from SSM), receiving an **access token** (TTL ~1 hour) and a **refresh token** (TTL up to 90 days with `offline_access`). Returns 502 if the exchange fails.
 10. `access_token`, `refresh_token`, and `token-expiry` (ISO 8601) are each stored as **SSM SecureString** parameters (with `Overwrite=true`).
 11. Cloud API attempts to register a **Microsoft Graph change notification subscription** for the user's OneDrive. Failure is non-blocking — a warning is logged and the request continues.
 12. Cloud API upserts a **SyncProfile** in DynamoDB (`PK=userId`, `SK='default'`, `oneDriveConnected=true`).

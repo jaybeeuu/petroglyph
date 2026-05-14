@@ -97,11 +97,15 @@ async function exchangeCodeForTokens(
   const clientId = process.env["MICROSOFT_CLIENT_ID"];
   if (!clientId) throw new Error("MICROSOFT_CLIENT_ID env var not set");
 
+  const clientSecret = process.env["MICROSOFT_CLIENT_SECRET"];
+  if (!clientSecret) throw new Error("MICROSOFT_CLIENT_SECRET env var not set");
+
   const redirectUri = process.env["MICROSOFT_REDIRECT_URI"];
   if (!redirectUri) throw new Error("MICROSOFT_REDIRECT_URI env var not set");
 
   const params = new URLSearchParams({
     client_id: clientId,
+    client_secret: clientSecret,
     grant_type: "authorization_code",
     code,
     redirect_uri: redirectUri,
