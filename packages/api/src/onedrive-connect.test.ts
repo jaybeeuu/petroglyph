@@ -305,7 +305,7 @@ describe("POST /onedrive/connect", () => {
     expect(tokenCmd.input.Key.tokenHash).toBe(USER_ID);
     expect(tokenCmd.input.ExpressionAttributeValues[":accessToken"]).toBe(MS_ACCESS_TOKEN);
     expect(tokenCmd.input.ExpressionAttributeValues[":refreshToken"]).toBe(MS_REFRESH_TOKEN);
-    
+
     const expirySeconds = tokenCmd.input.ExpressionAttributeValues[":expirySeconds"];
     expect(expirySeconds).toBeGreaterThanOrEqual(before + MS_EXPIRES_IN);
     expect(expirySeconds).toBeLessThanOrEqual(after + MS_EXPIRES_IN);
@@ -384,7 +384,7 @@ describe("POST /onedrive/connect", () => {
 
     const updateCalls = mockDbSend.mock.calls.filter(([cmd]) => cmd instanceof UpdateCommand);
     expect(updateCalls).toHaveLength(2); // tokens update + sync profile update
-    
+
     const [syncProfileCmd] = updateCalls[1] as [
       {
         input: {

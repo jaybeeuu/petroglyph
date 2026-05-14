@@ -4,1031 +4,1031 @@
  */
 
 export interface paths {
-    "/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Health check
-         * @description Returns 200 OK if service is running
-         */
-        get: operations["getHealth"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+  "/health": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/auth/url": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get GitHub OAuth authorization URL
-         * @description Returns a GitHub OAuth URL for the user to authorize the app
-         */
-        get: operations["getAuthUrl"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * Health check
+     * @description Returns 200 OK if service is running
+     */
+    get: operations["getHealth"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/url": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/auth/callback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Handle GitHub OAuth callback
-         * @description Exchange OAuth code for JWT and refresh token
-         */
-        post: operations["postAuthCallback"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * Get GitHub OAuth authorization URL
+     * @description Returns a GitHub OAuth URL for the user to authorize the app
+     */
+    get: operations["getAuthUrl"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/callback": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/auth/refresh": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Refresh JWT access token
-         * @description Exchange a valid refresh token for a new JWT and refresh token
-         */
-        post: operations["postAuthRefresh"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    get?: never;
+    put?: never;
+    /**
+     * Handle GitHub OAuth callback
+     * @description Exchange OAuth code for JWT and refresh token
+     */
+    post: operations["postAuthCallback"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/refresh": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get connection status
-         * @description Returns GitHub and OneDrive connection status for authenticated user
-         */
-        get: operations["getStatus"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    get?: never;
+    put?: never;
+    /**
+     * Refresh JWT access token
+     * @description Exchange a valid refresh token for a new JWT and refresh token
+     */
+    post: operations["postAuthRefresh"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/status": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/profiles": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List sync profiles
-         * @description Returns all sync profiles for authenticated user
-         */
-        get: operations["listProfiles"];
-        put?: never;
-        /**
-         * Create sync profile
-         * @description Create a new sync profile for authenticated user
-         */
-        post: operations["createProfile"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * Get connection status
+     * @description Returns GitHub and OneDrive connection status for authenticated user
+     */
+    get: operations["getStatus"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/profiles": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/profiles/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Profile ID */
-                id: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * Get sync profile
-         * @description Get a specific sync profile by ID
-         */
-        get: operations["getProfile"];
-        /**
-         * Update sync profile
-         * @description Update an existing sync profile
-         */
-        put: operations["updateProfile"];
-        post?: never;
-        /**
-         * Delete sync profile
-         * @description Delete a sync profile
-         */
-        delete: operations["deleteProfile"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * List sync profiles
+     * @description Returns all sync profiles for authenticated user
+     */
+    get: operations["listProfiles"];
+    put?: never;
+    /**
+     * Create sync profile
+     * @description Create a new sync profile for authenticated user
+     */
+    post: operations["createProfile"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/profiles/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Profile ID */
+        id: string;
+      };
+      cookie?: never;
     };
-    "/files/changes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get file changes
-         * @description Paginated list of file changes (new PDFs to sync)
-         */
-        get: operations["getFileChanges"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * Get sync profile
+     * @description Get a specific sync profile by ID
+     */
+    get: operations["getProfile"];
+    /**
+     * Update sync profile
+     * @description Update an existing sync profile
+     */
+    put: operations["updateProfile"];
+    post?: never;
+    /**
+     * Delete sync profile
+     * @description Delete a sync profile
+     */
+    delete: operations["deleteProfile"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/files/changes": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/onedrive/auth-url": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get OneDrive OAuth authorization URL
-         * @description Returns a Microsoft OneDrive OAuth URL for the user
-         */
-        get: operations["getOneDriveAuthUrl"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * Get file changes
+     * @description Paginated list of file changes (new PDFs to sync)
+     */
+    get: operations["getFileChanges"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/onedrive/auth-url": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/onedrive/connect": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Complete OneDrive OAuth flow
-         * @description Exchange OneDrive OAuth code for access tokens
-         */
-        post: operations["postOneDriveConnect"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    /**
+     * Get OneDrive OAuth authorization URL
+     * @description Returns a Microsoft OneDrive OAuth URL for the user
+     */
+    get: operations["getOneDriveAuthUrl"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/onedrive/connect": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/onedrive/lifecycle": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Handle OneDrive lifecycle notifications
-         * @description Microsoft Graph subscription lifecycle webhook endpoint
-         */
-        post: operations["postOneDriveLifecycle"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    get?: never;
+    put?: never;
+    /**
+     * Complete OneDrive OAuth flow
+     * @description Exchange OneDrive OAuth code for access tokens
+     */
+    post: operations["postOneDriveConnect"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/onedrive/lifecycle": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/sync/run": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Run manual sync
-         * @description Manually trigger a sync operation to check for new files
-         */
-        post: operations["postSyncRun"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    get?: never;
+    put?: never;
+    /**
+     * Handle OneDrive lifecycle notifications
+     * @description Microsoft Graph subscription lifecycle webhook endpoint
+     */
+    post: operations["postOneDriveLifecycle"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/sync/run": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    "/sync/reset": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reset sync state
-         * @description Clear local sync state and restart from beginning
-         */
-        post: operations["postSyncReset"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
+    get?: never;
+    put?: never;
+    /**
+     * Run manual sync
+     * @description Manually trigger a sync operation to check for new files
+     */
+    post: operations["postSyncRun"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/sync/reset": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
+    get?: never;
+    put?: never;
+    /**
+     * Reset sync state
+     * @description Clear local sync state and restart from beginning
+     */
+    post: operations["postSyncReset"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
-    schemas: {
-        Error: {
-            error: string;
-            details?: Record<string, never>[];
-        };
-        HealthResponse: {
-            /** @enum {string} */
-            status: "ok";
-        };
-        AuthUrlResponse: {
-            /**
-             * Format: uri
-             * @description GitHub OAuth authorization URL with state parameter
-             */
-            url: string;
-        };
-        AuthCallbackRequest: {
-            /** @description OAuth authorization code from GitHub */
-            code: string;
-            /** @description State token to prevent CSRF */
-            state: string;
-        };
-        AuthTokenResponse: {
-            /** @description Short-lived JWT access token (1 hour) */
-            jwt: string;
-            /** @description Long-lived refresh token (90 days) */
-            refreshToken: string;
-        };
-        AuthRefreshRequest: {
-            /** @description Valid refresh token */
-            refreshToken: string;
-        };
-        StatusResponse: {
-            github: {
-                connected: boolean;
-                username?: string;
-            };
-            oneDrive: {
-                connected: boolean;
-            };
-            /** @enum {string} */
-            oneDriveStatus: "connected" | "disconnected" | "never_connected" | "reconnect_required";
-        };
-        SyncProfile: {
-            /** Format: uuid */
-            profileId: string;
-            userId: string;
-            name: string;
-            /** @description OneDrive folder path to sync from */
-            sourceFolderPath: string;
-            /** @description Obsidian vault path to sync to */
-            destinationVaultPath: string;
-            /** @default 5 */
-            pollingIntervalMinutes: number;
-            /** @default true */
-            enabled: boolean;
-            /** @description Whether this is the currently active profile */
-            active: boolean;
-            /** Format: date-time */
-            createdAt: string;
-            /** Format: date-time */
-            updatedAt: string;
-        };
-        CreateProfileRequest: {
-            name: string;
-            sourceFolderPath: string;
-            destinationVaultPath: string;
-            pollingIntervalMinutes?: number;
-            enabled?: boolean;
-        };
-        UpdateProfileRequest: {
-            name?: string;
-            sourceFolderPath?: string;
-            destinationVaultPath?: string;
-            pollingIntervalMinutes?: number;
-            enabled?: boolean;
-            active?: boolean;
-        };
-        FileChange: {
-            fileId: string;
-            /**
-             * Format: uri
-             * @description Pre-signed S3 URL to download PDF (15 minute expiry)
-             */
-            s3PresignedUrl: string;
-            filename: string;
-            /** Format: date-time */
-            createdAt: string;
-            pageCount?: number;
-        };
-        FileChangesResponse: {
-            files: components["schemas"]["FileChange"][];
-            /** @description Cursor token for pagination (base64url encoded) */
-            nextToken?: string;
-            /** @description If true, client should clear local change token and refetch from start */
-            resetToken?: boolean;
-        };
-        OneDriveAuthUrlResponse: {
-            /**
-             * Format: uri
-             * @description Microsoft OneDrive OAuth authorization URL
-             */
-            url: string;
-        };
-        OneDriveConnectRequest: {
-            /** @description OAuth authorization code from Microsoft */
-            code: string;
-        };
-        OneDriveConnectResponse: {
-            success: boolean;
-        };
-        /** @description Microsoft Graph subscription lifecycle notification */
-        OneDriveLifecycleNotification: {
-            subscriptionId?: string;
-            /** Format: date-time */
-            subscriptionExpirationDateTime?: string;
-            changeType?: string;
-            resource?: string;
-            clientState?: string;
-        };
-        SyncRunResponse: {
-            /** @description Number of new files queued for processing */
-            queued: number;
-        };
-        SyncResetResponse: {
-            success: boolean;
-        };
+  schemas: {
+    Error: {
+      error: string;
+      details?: Record<string, never>[];
     };
-    responses: never;
-    parameters: never;
-    requestBodies: never;
-    headers: never;
-    pathItems: never;
+    HealthResponse: {
+      /** @enum {string} */
+      status: "ok";
+    };
+    AuthUrlResponse: {
+      /**
+       * Format: uri
+       * @description GitHub OAuth authorization URL with state parameter
+       */
+      url: string;
+    };
+    AuthCallbackRequest: {
+      /** @description OAuth authorization code from GitHub */
+      code: string;
+      /** @description State token to prevent CSRF */
+      state: string;
+    };
+    AuthTokenResponse: {
+      /** @description Short-lived JWT access token (1 hour) */
+      jwt: string;
+      /** @description Long-lived refresh token (90 days) */
+      refreshToken: string;
+    };
+    AuthRefreshRequest: {
+      /** @description Valid refresh token */
+      refreshToken: string;
+    };
+    StatusResponse: {
+      github: {
+        connected: boolean;
+        username?: string;
+      };
+      oneDrive: {
+        connected: boolean;
+      };
+      /** @enum {string} */
+      oneDriveStatus: "connected" | "disconnected" | "never_connected" | "reconnect_required";
+    };
+    SyncProfile: {
+      /** Format: uuid */
+      profileId: string;
+      userId: string;
+      name: string;
+      /** @description OneDrive folder path to sync from */
+      sourceFolderPath: string;
+      /** @description Obsidian vault path to sync to */
+      destinationVaultPath: string;
+      /** @default 5 */
+      pollingIntervalMinutes: number;
+      /** @default true */
+      enabled: boolean;
+      /** @description Whether this is the currently active profile */
+      active: boolean;
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    CreateProfileRequest: {
+      name: string;
+      sourceFolderPath: string;
+      destinationVaultPath: string;
+      pollingIntervalMinutes?: number;
+      enabled?: boolean;
+    };
+    UpdateProfileRequest: {
+      name?: string;
+      sourceFolderPath?: string;
+      destinationVaultPath?: string;
+      pollingIntervalMinutes?: number;
+      enabled?: boolean;
+      active?: boolean;
+    };
+    FileChange: {
+      fileId: string;
+      /**
+       * Format: uri
+       * @description Pre-signed S3 URL to download PDF (15 minute expiry)
+       */
+      s3PresignedUrl: string;
+      filename: string;
+      /** Format: date-time */
+      createdAt: string;
+      pageCount?: number;
+    };
+    FileChangesResponse: {
+      files: components["schemas"]["FileChange"][];
+      /** @description Cursor token for pagination (base64url encoded) */
+      nextToken?: string;
+      /** @description If true, client should clear local change token and refetch from start */
+      resetToken?: boolean;
+    };
+    OneDriveAuthUrlResponse: {
+      /**
+       * Format: uri
+       * @description Microsoft OneDrive OAuth authorization URL
+       */
+      url: string;
+    };
+    OneDriveConnectRequest: {
+      /** @description OAuth authorization code from Microsoft */
+      code: string;
+    };
+    OneDriveConnectResponse: {
+      success: boolean;
+    };
+    /** @description Microsoft Graph subscription lifecycle notification */
+    OneDriveLifecycleNotification: {
+      subscriptionId?: string;
+      /** Format: date-time */
+      subscriptionExpirationDateTime?: string;
+      changeType?: string;
+      resource?: string;
+      clientState?: string;
+    };
+    SyncRunResponse: {
+      /** @description Number of new files queued for processing */
+      queued: number;
+    };
+    SyncResetResponse: {
+      success: boolean;
+    };
+  };
+  responses: never;
+  parameters: never;
+  requestBodies: never;
+  headers: never;
+  pathItems: never;
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    getHealth: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Service is healthy */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HealthResponse"];
-                };
-            };
-        };
+  getHealth: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    getAuthUrl: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
+    requestBody?: never;
+    responses: {
+      /** @description Service is healthy */
+      200: {
+        headers: {
+          [name: string]: unknown;
         };
-        requestBody?: never;
-        responses: {
-            /** @description OAuth URL generated successfully */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AuthUrlResponse"];
-                };
-            };
-            /** @description Missing OAuth configuration */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
+        content: {
+          "application/json": components["schemas"]["HealthResponse"];
         };
+      };
     };
-    postAuthCallback: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AuthCallbackRequest"];
-            };
-        };
-        responses: {
-            /** @description Authentication successful */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AuthTokenResponse"];
-                };
-            };
-            /** @description Invalid request body */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Invalid state or authorization code */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Server error during authentication */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
+  };
+  getAuthUrl: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    postAuthRefresh: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
+    requestBody?: never;
+    responses: {
+      /** @description OAuth URL generated successfully */
+      200: {
+        headers: {
+          [name: string]: unknown;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AuthRefreshRequest"];
-            };
+        content: {
+          "application/json": components["schemas"]["AuthUrlResponse"];
         };
-        responses: {
-            /** @description Token refreshed successfully */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AuthTokenResponse"];
-                };
-            };
-            /** @description Missing refresh token */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Invalid, expired, or reused refresh token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
+      };
+      /** @description Missing OAuth configuration */
+      500: {
+        headers: {
+          [name: string]: unknown;
         };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
     };
-    getStatus: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Status retrieved successfully */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StatusResponse"];
-                };
-            };
-            /** @description Unauthorized - invalid or missing JWT */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
+  };
+  postAuthCallback: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    listProfiles: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Profiles retrieved successfully */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncProfile"][];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AuthCallbackRequest"];
+      };
     };
-    createProfile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
+    responses: {
+      /** @description Authentication successful */
+      200: {
+        headers: {
+          [name: string]: unknown;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateProfileRequest"];
-            };
+        content: {
+          "application/json": components["schemas"]["AuthTokenResponse"];
         };
-        responses: {
-            /** @description Profile created successfully */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncProfile"];
-                };
-            };
-            /** @description Invalid request body */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
+      };
+      /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown;
         };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Invalid state or authorization code */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Server error during authentication */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
     };
-    getProfile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Profile ID */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Profile retrieved successfully */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncProfile"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Profile not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
+  };
+  postAuthRefresh: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    updateProfile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Profile ID */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateProfileRequest"];
-            };
-        };
-        responses: {
-            /** @description Profile updated successfully */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncProfile"];
-                };
-            };
-            /** @description Invalid request body */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Profile not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AuthRefreshRequest"];
+      };
     };
-    deleteProfile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Profile ID */
-                id: string;
-            };
-            cookie?: never;
+    responses: {
+      /** @description Token refreshed successfully */
+      200: {
+        headers: {
+          [name: string]: unknown;
         };
-        requestBody?: never;
-        responses: {
-            /** @description Profile deleted successfully */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Profile not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
+        content: {
+          "application/json": components["schemas"]["AuthTokenResponse"];
         };
+      };
+      /** @description Missing refresh token */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Invalid, expired, or reused refresh token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
     };
-    getFileChanges: {
-        parameters: {
-            query?: {
-                /** @description Cursor token from previous response for pagination */
-                after?: string;
-                /** @description Maximum number of results per page */
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description File changes retrieved successfully */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FileChangesResponse"];
-                };
-            };
-            /** @description Invalid query parameters */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
+  };
+  getStatus: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    getOneDriveAuthUrl: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
+    requestBody?: never;
+    responses: {
+      /** @description Status retrieved successfully */
+      200: {
+        headers: {
+          [name: string]: unknown;
         };
-        requestBody?: never;
-        responses: {
-            /** @description OAuth URL generated successfully */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OneDriveAuthUrlResponse"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Missing OAuth configuration */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
+        content: {
+          "application/json": components["schemas"]["StatusResponse"];
         };
+      };
+      /** @description Unauthorized - invalid or missing JWT */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
     };
-    postOneDriveConnect: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OneDriveConnectRequest"];
-            };
-        };
-        responses: {
-            /** @description OneDrive connected successfully */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OneDriveConnectResponse"];
-                };
-            };
-            /** @description Invalid request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Server error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
+  };
+  listProfiles: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    postOneDriveLifecycle: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
+    requestBody?: never;
+    responses: {
+      /** @description Profiles retrieved successfully */
+      200: {
+        headers: {
+          [name: string]: unknown;
         };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["OneDriveLifecycleNotification"];
-            };
+        content: {
+          "application/json": components["schemas"]["SyncProfile"][];
         };
-        responses: {
-            /** @description Notification processed */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation token response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
         };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
     };
-    postSyncRun: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Sync completed successfully */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncRunResponse"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Sync failed */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
+  };
+  createProfile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
     };
-    postSyncReset: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Sync reset successfully */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncResetResponse"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Reset failed */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateProfileRequest"];
+      };
     };
+    responses: {
+      /** @description Profile created successfully */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SyncProfile"];
+        };
+      };
+      /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  getProfile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Profile ID */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Profile retrieved successfully */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SyncProfile"];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Profile not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  updateProfile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Profile ID */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateProfileRequest"];
+      };
+    };
+    responses: {
+      /** @description Profile updated successfully */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SyncProfile"];
+        };
+      };
+      /** @description Invalid request body */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Profile not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  deleteProfile: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Profile ID */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Profile deleted successfully */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Profile not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  getFileChanges: {
+    parameters: {
+      query?: {
+        /** @description Cursor token from previous response for pagination */
+        after?: string;
+        /** @description Maximum number of results per page */
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description File changes retrieved successfully */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FileChangesResponse"];
+        };
+      };
+      /** @description Invalid query parameters */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  getOneDriveAuthUrl: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description OAuth URL generated successfully */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OneDriveAuthUrlResponse"];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Missing OAuth configuration */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  postOneDriveConnect: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["OneDriveConnectRequest"];
+      };
+    };
+    responses: {
+      /** @description OneDrive connected successfully */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OneDriveConnectResponse"];
+        };
+      };
+      /** @description Invalid request */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Server error */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  postOneDriveLifecycle: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["OneDriveLifecycleNotification"];
+      };
+    };
+    responses: {
+      /** @description Notification processed */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation token response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  postSyncRun: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Sync completed successfully */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SyncRunResponse"];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Sync failed */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  postSyncReset: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Sync reset successfully */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SyncResetResponse"];
+        };
+      };
+      /** @description Unauthorized */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description Reset failed */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
 }
