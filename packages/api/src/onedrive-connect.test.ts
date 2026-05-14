@@ -516,24 +516,18 @@ describe("GET /onedrive/connect", () => {
   // ── Auth exemption ────────────────────────────────────────────────────────
 
   it("does not require Authorization header (is auth-exempt)", async () => {
-    const res = await app.request(
-      `/onedrive/connect?code=${VALID_CODE}&state=${VALID_STATE}`,
-      {
-        method: "GET",
-      },
-    );
+    const res = await app.request(`/onedrive/connect?code=${VALID_CODE}&state=${VALID_STATE}`, {
+      method: "GET",
+    });
 
     expect(res.status).toBe(302);
   });
 
   it("ignores Authorization header even if provided", async () => {
-    const res = await app.request(
-      `/onedrive/connect?code=${VALID_CODE}&state=${VALID_STATE}`,
-      {
-        method: "GET",
-        headers: { Authorization: "Bearer invalid-token" },
-      },
-    );
+    const res = await app.request(`/onedrive/connect?code=${VALID_CODE}&state=${VALID_STATE}`, {
+      method: "GET",
+      headers: { Authorization: "Bearer invalid-token" },
+    });
 
     expect(res.status).toBe(302);
   });

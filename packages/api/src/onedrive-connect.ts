@@ -205,9 +205,7 @@ async function upsertSyncProfile(userId: string): Promise<void> {
   );
 }
 
-export function handleOnedriveCallbackBridge(
-  c: Context<{ Variables: AppVariables }>,
-): Response {
+export function handleOnedriveCallbackBridge(c: Context<{ Variables: AppVariables }>): Response {
   const code = c.req.query("code");
   const state = c.req.query("state");
 

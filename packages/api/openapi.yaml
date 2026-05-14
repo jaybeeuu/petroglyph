@@ -635,6 +635,33 @@ paths:
                 $ref: "#/components/schemas/Error"
 
   /onedrive/connect:
+    get:
+      summary: Handle Microsoft OAuth callback redirect
+      description: Bridge endpoint that redirects Microsoft's OAuth callback to the Obsidian plugin URI handler. Preserves code and state query parameters.
+      operationId: getOneDriveCallbackBridge
+      security: []
+      parameters:
+        - name: code
+          in: query
+          description: Authorization code from Microsoft OAuth
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          description: State parameter for PKCE validation
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to obsidian://petroglyph/oauth/callback with code and state parameters
+        "400":
+          description: Missing required query parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     post:
       summary: Complete OneDrive OAuth flow
       description: Exchange OneDrive OAuth code for access tokens

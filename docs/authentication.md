@@ -198,15 +198,20 @@ The Entra ID client secret is stored in **SSM Parameter Store (SecureString)**.
 ```mermaid
 sequenceDiagram
     participant Plugin
-    participant CloudAPI as Cloud API
+    participant Browser
+    participant CloudAPI as Cloud API (callback bridge)
     participant Microsoft
 
     Plugin->>CloudAPI: "Connect OneDrive" clicked
-    CloudAPI-->>Plugin: redirect URL (with PKCE challenge)
-    Plugin->>Microsoft: open browser (Microsoft login URL)
-    Microsoft-->>CloudAPI: user grants consent
-    Microsoft-->>Plugin: obsidian://petroglyph/oauth/callback?code=...
-    Plugin->>CloudAPI: POST /onedrive/connect {code, state}
+    CloudAPI-->>Plugin: auth URL + state (with PKCE challenge)
+    Plugin->>Browser: open browser (Microsoft login URL)
+    Browser->>Microsoft: user login + consent
+    Microsoft-->>Browser: redirect to GET /onedrive/connect?code=...&state=...
+    Browser->>CloudAPI: GET /onedrive/connect?code=...&state=...
+    Note over CloudAPI: callback bridge endpoint (auth-exempt)
+    CloudAPI-->>Browser: 302 redirect to obsidian://petroglyph/oauth/callback?code=...&state=...
+    Browser->>Plugin: obsidian:// URI handler receives callback
+    Plugin->>CloudAPI: POST /onedrive/connect {code, state} (JWT-protected)
     Note over CloudAPI: validate & delete state token<br/>(retrieve PKCE verifier from DynamoDB)
     CloudAPI->>Microsoft: token exchange (code + verifier)
     Microsoft-->>CloudAPI: access token + refresh token
@@ -215,16 +220,18 @@ sequenceDiagram
 ```
 
 1. User clicks **"Connect OneDrive"** in plugin settings.
-2. Plugin requests a redirect URL from the cloud API. The API generates a PKCE `code_verifier` and `code_challenge`, stores the verifier in DynamoDB temporarily, and returns the Microsoft authorisation URL.
-3. Plugin opens the browser to Microsoft login.
-4. User consents. Microsoft redirects to `obsidian://petroglyph/oauth/callback?code=...`.
-5. Plugin sends `{ code, state }` to `POST /onedrive/connect` on the cloud API (JWT-protected).
-6. Cloud API validates the state token against DynamoDB (`type='onedrive_state'`, TTL check) → 401 if invalid or expired. The state record is deleted immediately after lookup (one-time-use), and the PKCE `verifier` is read from it.
-7. Cloud API completes the PKCE token exchange with Microsoft using the code and retrieved verifier, receiving an **access token** (TTL ~1 hour) and a **refresh token** (TTL up to 90 days with `offline_access`). Returns 502 if the exchange fails.
-8. `access_token`, `refresh_token`, and `token-expiry` (ISO 8601) are each stored as **SSM SecureString** parameters (with `Overwrite=true`).
-9. Cloud API attempts to register a **Microsoft Graph change notification subscription** for the user's OneDrive. Failure is non-blocking — a warning is logged and the request continues.
-10. Cloud API upserts a **SyncProfile** in DynamoDB (`PK=userId`, `SK='default'`, `oneDriveConnected=true`).
-11. Returns `{ status: 'connected' }` to the plugin.
+2. Plugin requests an auth URL from the cloud API. The API generates a PKCE `code_verifier` and `code_challenge`, stores the verifier in DynamoDB temporarily (state token), and returns the Microsoft authorisation URL with state.
+3. Plugin opens the browser to the Microsoft login URL.
+4. User logs in and grants consent to Microsoft. Microsoft redirects the browser to the API's **callback bridge endpoint** (`GET /onedrive/connect`) — this is the registered OAuth redirect URI. The endpoint is **auth-exempt** because the browser has no JWT (it's an unauthenticated OAuth response).
+5. The callback bridge endpoint receives `code` and `state` as query parameters, validates them, and redirects the browser to `obsidian://petroglyph/oauth/callback?code=...&state=...` (a 302 redirect). This bridges the browser (which cannot directly receive obsidian:// URIs in the OAuth response) to the Obsidian URI handler.
+6. The Obsidian plugin's URI handler receives the obsidian:// redirect and extracts `code` and `state`.
+7. Plugin sends `{ code, state }` to `POST /onedrive/connect` on the cloud API (JWT-protected, so the user must be authenticated).
+8. Cloud API validates the state token against DynamoDB (`type='onedrive_state'`, TTL check) → 401 if invalid or expired. The state record is deleted immediately after lookup (one-time-use), and the PKCE `verifier` is read from it.
+9. Cloud API completes the PKCE token exchange with Microsoft using the code and retrieved verifier, receiving an **access token** (TTL ~1 hour) and a **refresh token** (TTL up to 90 days with `offline_access`). Returns 502 if the exchange fails.
+10. `access_token`, `refresh_token`, and `token-expiry` (ISO 8601) are each stored as **SSM SecureString** parameters (with `Overwrite=true`).
+11. Cloud API attempts to register a **Microsoft Graph change notification subscription** for the user's OneDrive. Failure is non-blocking — a warning is logged and the request continues.
+12. Cloud API upserts a **SyncProfile** in DynamoDB (`PK=userId`, `SK='default'`, `oneDriveConnected=true`).
+13. Returns `{ status: 'connected' }` to the plugin.
 
 ### Token Lifecycle
 
