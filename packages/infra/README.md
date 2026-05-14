@@ -126,7 +126,7 @@ All resources also carry an `environment` tag set to `terraform.workspace`.
 
 ## Ingest SQS, DLQ, and Lambda Trigger
 
-The ingest infrastructure provisions an SQS queue for webhook-driven ingestion, a dead-letter queue (DLQ) for failed jobs, and a CloudWatch alarm on DLQ depth. The processor Lambda is triggered by the SQS queue, with a visibility timeout set longer than the Lambda timeout to avoid duplicate processing. Failed jobs are sent to the DLQ, and the alarm triggers an SNS email notification. The processor Lambda environment is wired with `MICROSOFT_CLIENT_ID` and has tightly scoped SQS IAM permissions. Webhook route and output changes are reflected in the Terraform configuration.
+The ingest infrastructure provisions an SQS queue for webhook-driven ingestion, a dead-letter queue (DLQ) for failed jobs, and a CloudWatch alarm on DLQ depth. The processor Lambda is triggered by the SQS queue, with a visibility timeout set longer than the Lambda timeout to avoid duplicate processing. Failed jobs are sent to the DLQ, and the alarm triggers an SNS email notification. The processor Lambda environment is wired with `MICROSOFT_CLIENT_ID` (for MS Graph requests) and has tightly scoped SQS IAM permissions. Both API Handler and Processor Lambdas also require `MICROSOFT_CLIENT_SECRET` (loaded from SSM via `ONEDRIVE_CLIENT_SECRET_SSM_PATH`) for token exchange requests to Microsoft. Webhook route and output changes are reflected in the Terraform configuration.
 
 ---
 

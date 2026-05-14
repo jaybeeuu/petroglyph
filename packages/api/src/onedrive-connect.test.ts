@@ -133,6 +133,7 @@ describe("POST /onedrive/connect", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
     vi.stubEnv("MICROSOFT_CLIENT_ID", "test-ms-client-id");
+    vi.stubEnv("MICROSOFT_CLIENT_SECRET", "test-ms-client-secret");
     vi.stubEnv("MICROSOFT_REDIRECT_URI", "obsidian://petroglyph/onedrive/callback");
     vi.stubEnv("GRAPH_NOTIFICATION_URL", "https://api.example.com/graph/notify");
     vi.stubEnv("SYNC_PROFILES_TABLE", "petroglyph-sync-profiles-test");
@@ -226,7 +227,7 @@ describe("POST /onedrive/connect", () => {
 
   // ── Behaviour 4: Microsoft token exchange success ────────────────────────
 
-  it("POSTs to Microsoft token endpoint with correct params", async () => {
+  it("POSTs to Microsoft token endpoint with correct params including client_secret", async () => {
     setupDynamoMock(makeStateItem());
     setupFetchMock();
 
@@ -242,11 +243,31 @@ describe("POST /onedrive/connect", () => {
 
     const sentParams = new URLSearchParams(options.body as string);
     expect(sentParams.get("client_id")).toBe("test-ms-client-id");
+    expect(sentParams.get("client_secret")).toBe("test-ms-client-secret");
     expect(sentParams.get("grant_type")).toBe("authorization_code");
     expect(sentParams.get("code")).toBe(VALID_CODE);
     expect(sentParams.get("redirect_uri")).toBe("obsidian://petroglyph/onedrive/callback");
     expect(sentParams.get("code_verifier")).toBe(VALID_VERIFIER);
     expect(sentParams.get("scope")).toBe("files.read offline_access");
+  });
+
+  it("returns 500 when MICROSOFT_CLIENT_SECRET is not configured", async () => {
+    setupDynamoMock(makeStateItem());
+    setupFetchMock();
+    delete process.env["MICROSOFT_CLIENT_SECRET"];
+
+    const res = await postConnect({ code: VALID_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(500);
+  });
+
+  it("returns 502 when Microsoft rejects token exchange due to wrong client_secret", async () => {
+    setupDynamoMock(makeStateItem());
+    setupFetchMock({ msTokenOk: false });
+
+    const res = await postConnect({ code: VALID_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(502);
   });
 
   // ── Behaviour 5: Microsoft token exchange non-ok → 502 ──────────────────
@@ -537,6 +558,7 @@ describe("GET /onedrive/connect", () => {
   it("does not interfere with POST /onedrive/connect", async () => {
     setupDynamoMock(makeStateItem());
     setupFetchMock();
+    vi.stubEnv("MICROSOFT_CLIENT_SECRET", "test-ms-client-secret");
 
     const token = await makeToken();
     const res = await app.request("/onedrive/connect", {

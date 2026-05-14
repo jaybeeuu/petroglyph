@@ -138,6 +138,7 @@ describe("loadSSMParameters", () => {
         { Name: "/petroglyph/jwt/private-key", Value: "jwt-private" },
         { Name: "/petroglyph/jwt/public-key", Value: "jwt-public" },
         { Name: "/petroglyph/onedrive/client-id", Value: "onedrive-id" },
+        { Name: "/petroglyph/onedrive/client-secret", Value: "onedrive-secret" },
       ],
     });
     const mockClient = {
@@ -151,6 +152,7 @@ describe("loadSSMParameters", () => {
       JWT_PRIVATE_KEY_SSM_PATH: "/petroglyph/jwt/private-key",
       JWT_PUBLIC_KEY_SSM_PATH: "/petroglyph/jwt/public-key",
       ONEDRIVE_CLIENT_ID_SSM_PATH: "/petroglyph/onedrive/client-id",
+      ONEDRIVE_CLIENT_SECRET_SSM_PATH: "/petroglyph/onedrive/client-secret",
     };
 
     await loadSSMParameters(mockClient, SSM_MAPPINGS, env);
@@ -161,5 +163,6 @@ describe("loadSSMParameters", () => {
     expect(env["JWT_PRIVATE_KEY"]).toBe("jwt-private");
     expect(env["JWT_PUBLIC_KEY"]).toBe("jwt-public");
     expect(env["MICROSOFT_CLIENT_ID"]).toBe("onedrive-id"); // Note: ONEDRIVE maps to MICROSOFT
+    expect(env["MICROSOFT_CLIENT_SECRET"]).toBe("onedrive-secret"); // Note: ONEDRIVE maps to MICROSOFT
   });
 });

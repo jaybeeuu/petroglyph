@@ -140,6 +140,7 @@ describe("Lambda environment variable configuration", () => {
       "JWT_PRIVATE_KEY",
       "JWT_PUBLIC_KEY",
       "MICROSOFT_CLIENT_ID", // mapped from ONEDRIVE_CLIENT_ID_SSM_PATH
+      "MICROSOFT_CLIENT_SECRET", // mapped from ONEDRIVE_CLIENT_SECRET_SSM_PATH
     ]);
 
     // These vars have defaults in code and are optional
