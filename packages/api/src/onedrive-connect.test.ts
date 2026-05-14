@@ -422,3 +422,134 @@ describe("POST /onedrive/connect", () => {
     expect(res.status).toBe(401);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────────
+// GET /onedrive/connect — OAuth callback bridge
+// ───────────────────────────────────────────────────────────────────────────────
+
+describe("GET /onedrive/connect", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
+    vi.stubEnv("MICROSOFT_CLIENT_ID", "test-ms-client-id");
+    vi.stubEnv("MICROSOFT_REDIRECT_URI", "obsidian://petroglyph/onedrive/callback");
+    vi.stubEnv("GRAPH_NOTIFICATION_URL", "https://api.example.com/graph/notify");
+    vi.stubEnv("SYNC_PROFILES_TABLE", "petroglyph-sync-profiles-test");
+    vi.stubEnv("REFRESH_TOKENS_TABLE", "petroglyph-refresh_tokens-test");
+    mockDbSend.mockClear();
+    mockSsmSend.mockClear();
+    mockFetch.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    resetKeyCache();
+  });
+
+  // ── Browser callback happy path ───────────────────────────────────────────
+
+  it("accepts code and state as query params and redirects to obsidian:// deep link", async () => {
+    const res = await app.request(`/onedrive/connect?code=${VALID_CODE}&state=${VALID_STATE}`, {
+      method: "GET",
+    });
+
+    expect(res.status).toBe(302);
+    const location = res.headers.get("Location");
+    expect(location).toBe(
+      `obsidian://petroglyph/oauth/callback?code=${VALID_CODE}&state=${VALID_STATE}`,
+    );
+  });
+
+  // ── Missing query params ──────────────────────────────────────────────────
+
+  it("returns 400 when code query param is missing", async () => {
+    const res = await app.request(`/onedrive/connect?state=${VALID_STATE}`, {
+      method: "GET",
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/code/i);
+  });
+
+  it("returns 400 when state query param is missing", async () => {
+    const res = await app.request(`/onedrive/connect?code=${VALID_CODE}`, {
+      method: "GET",
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/state/i);
+  });
+
+  it("returns 400 when both code and state query params are missing", async () => {
+    const res = await app.request("/onedrive/connect", {
+      method: "GET",
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/(code|state)/i);
+  });
+
+  it("returns 400 when code query param is empty string", async () => {
+    const res = await app.request(`/onedrive/connect?code=&state=${VALID_STATE}`, {
+      method: "GET",
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/code/i);
+  });
+
+  it("returns 400 when state query param is empty string", async () => {
+    const res = await app.request(`/onedrive/connect?code=${VALID_CODE}&state=`, {
+      method: "GET",
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/state/i);
+  });
+
+  // ── Auth exemption ────────────────────────────────────────────────────────
+
+  it("does not require Authorization header (is auth-exempt)", async () => {
+    const res = await app.request(`/onedrive/connect?code=${VALID_CODE}&state=${VALID_STATE}`, {
+      method: "GET",
+    });
+
+    expect(res.status).toBe(302);
+  });
+
+  it("ignores Authorization header even if provided", async () => {
+    const res = await app.request(`/onedrive/connect?code=${VALID_CODE}&state=${VALID_STATE}`, {
+      method: "GET",
+      headers: { Authorization: "Bearer invalid-token" },
+    });
+
+    expect(res.status).toBe(302);
+  });
+
+  // ── Verify POST still works ───────────────────────────────────────────────
+
+  it("does not interfere with POST /onedrive/connect", async () => {
+    setupDynamoMock(makeStateItem());
+    setupFetchMock();
+
+    const token = await makeToken();
+    const res = await app.request("/onedrive/connect", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ code: VALID_CODE, state: VALID_STATE }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status: string };
+    expect(body.status).toBe("connected");
+  });
+});

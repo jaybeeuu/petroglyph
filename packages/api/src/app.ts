@@ -8,7 +8,7 @@ import { handleAuthRefresh } from "./auth-refresh.js";
 import { authMiddleware, type AppVariables } from "./auth-middleware.js";
 import { onedriveMiddleware } from "./onedrive-middleware.js";
 import { handleOnedriveAuthUrl } from "./onedrive-auth-url.js";
-import { handleOnedriveConnect } from "./onedrive-connect.js";
+import { handleOnedriveCallbackBridge, handleOnedriveConnect } from "./onedrive-connect.js";
 import { handleOnedriveLifecycle } from "./onedrive-lifecycle.js";
 import { handleFilesChanges } from "./files-changes.js";
 import { handleListProfiles, handleCreateProfile } from "./profiles.js";
@@ -26,6 +26,7 @@ const EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: "GET", path: "/auth/callback" },
   { method: "POST", path: "/auth/refresh" },
   { method: "POST", path: "/onedrive/lifecycle" },
+  { method: "GET", path: "/onedrive/connect" },
 ];
 
 const app = new Hono<{ Variables: AppVariables }>();
@@ -98,6 +99,8 @@ app.put("/profiles/:id", (c) => handlePutProfile(c));
 app.delete("/profiles/:id", (c) => handleDeleteProfile(c));
 
 app.get("/onedrive/auth-url", (c) => handleOnedriveAuthUrl(c));
+
+app.get("/onedrive/connect", (c) => handleOnedriveCallbackBridge(c));
 
 app.post("/onedrive/connect", (c) => handleOnedriveConnect(c));
 

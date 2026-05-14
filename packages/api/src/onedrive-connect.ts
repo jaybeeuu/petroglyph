@@ -205,6 +205,25 @@ async function upsertSyncProfile(userId: string): Promise<void> {
   );
 }
 
+export function handleOnedriveCallbackBridge(c: Context<{ Variables: AppVariables }>): Response {
+  const code = c.req.query("code");
+  const state = c.req.query("state");
+
+  if (!code || code.length === 0) {
+    return c.json({ error: "Missing required query param: code" }, 400);
+  }
+
+  if (!state || state.length === 0) {
+    return c.json({ error: "Missing required query param: state" }, 400);
+  }
+
+  const redirectUrl = new URL("obsidian://petroglyph/oauth/callback");
+  redirectUrl.searchParams.set("code", code);
+  redirectUrl.searchParams.set("state", state);
+
+  return c.redirect(redirectUrl.toString(), 302);
+}
+
 export async function handleOnedriveConnect(
   c: Context<{ Variables: AppVariables }>,
 ): Promise<Response> {

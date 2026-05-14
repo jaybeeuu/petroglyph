@@ -206,7 +206,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    get?: never;
+    /**
+     * Handle Microsoft OAuth callback redirect
+     * @description Bridge endpoint that redirects Microsoft's OAuth callback to the Obsidian plugin URI handler. Preserves code and state query parameters.
+     */
+    get: operations["getOneDriveCallbackBridge"];
     put?: never;
     /**
      * Complete OneDrive OAuth flow
@@ -866,6 +870,38 @@ export interface operations {
       };
       /** @description Missing OAuth configuration */
       500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+    };
+  };
+  getOneDriveCallbackBridge: {
+    parameters: {
+      query: {
+        /** @description Authorization code from Microsoft OAuth */
+        code: string;
+        /** @description State parameter for PKCE validation */
+        state: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Redirect to obsidian://petroglyph/oauth/callback with code and state parameters */
+      302: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing required query parameters */
+      400: {
         headers: {
           [name: string]: unknown;
         };
