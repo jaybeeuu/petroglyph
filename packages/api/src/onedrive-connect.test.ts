@@ -1,17 +1,11 @@
-import { PutParameterCommand } from "@aws-sdk/client-ssm";
 import { DeleteCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockDbSend = vi.hoisted(() => vi.fn());
-const mockSsmSend = vi.hoisted(() => vi.fn().mockResolvedValue({}));
 
 vi.mock("./db.js", () => ({
   docClient: { send: mockDbSend },
-}));
-
-vi.mock("./ssm.js", () => ({
-  ssmClient: { send: mockSsmSend },
 }));
 
 const mockFetch = vi.hoisted(() => vi.fn());
@@ -139,7 +133,6 @@ describe("POST /onedrive/connect", () => {
     vi.stubEnv("SYNC_PROFILES_TABLE", "petroglyph-sync-profiles-test");
     vi.stubEnv("REFRESH_TOKENS_TABLE", "petroglyph-refresh_tokens-test");
     mockDbSend.mockClear();
-    mockSsmSend.mockClear();
     mockFetch.mockClear();
   });
 
@@ -283,48 +276,40 @@ describe("POST /onedrive/connect", () => {
 
   // ── Behaviour 6: tokens stored in SSM ───────────────────────────────────
 
-  it("stores access token, refresh token, and expiry in SSM as SecureString", async () => {
+  it("stores access token, refresh token, and expiry in DynamoDB refresh_tokens table", async () => {
     setupDynamoMock(makeStateItem());
     setupFetchMock();
 
-    const before = Date.now();
+    const before = Math.floor(Date.now() / 1000);
     await postConnect({ code: VALID_CODE, state: VALID_STATE });
-    const after = Date.now();
+    const after = Math.floor(Date.now() / 1000);
 
-    const ssmCalls = mockSsmSend.mock.calls.filter(([cmd]) => cmd instanceof PutParameterCommand);
-    expect(ssmCalls).toHaveLength(3);
+    const updateCalls = mockDbSend.mock.calls.filter(([cmd]) => cmd instanceof UpdateCommand);
+    const [tokenCmd] = updateCalls[0] as [
+      {
+        input: {
+          TableName: string;
+          Key: { tokenHash: string };
+          UpdateExpression: string;
+          ExpressionAttributeValues: {
+            ":accessToken": string;
+            ":refreshToken": string;
+            ":expirySeconds": number;
+            ":now": string;
+          };
+        };
+      },
+    ];
 
-    const byName = Object.fromEntries(
-      ssmCalls.map(([cmd]) => {
-        const { Name, Value, Type, Overwrite } = (
-          cmd as {
-            input: {
-              Name: string;
-              Value: string;
-              Type: string;
-              Overwrite: boolean;
-            };
-          }
-        ).input;
-        return [Name, { Value, Type, Overwrite }];
-      }),
-    );
-
-    expect(byName["/petroglyph/onedrive/access-token"]?.Value).toBe(MS_ACCESS_TOKEN);
-    expect(byName["/petroglyph/onedrive/access-token"]?.Type).toBe("SecureString");
-    expect(byName["/petroglyph/onedrive/access-token"]?.Overwrite).toBe(true);
-
-    expect(byName["/petroglyph/onedrive/refresh-token"]?.Value).toBe(MS_REFRESH_TOKEN);
-    expect(byName["/petroglyph/onedrive/refresh-token"]?.Type).toBe("SecureString");
-    expect(byName["/petroglyph/onedrive/refresh-token"]?.Overwrite).toBe(true);
-
-    const expiryValue = byName["/petroglyph/onedrive/token-expiry"]?.Value;
-    expect(expiryValue).toBeDefined();
-    const expiryMs = new Date(expiryValue as string).getTime();
-    expect(expiryMs).toBeGreaterThanOrEqual(before + MS_EXPIRES_IN * 1000);
-    expect(expiryMs).toBeLessThanOrEqual(after + MS_EXPIRES_IN * 1000);
-    expect(byName["/petroglyph/onedrive/token-expiry"]?.Type).toBe("SecureString");
-    expect(byName["/petroglyph/onedrive/token-expiry"]?.Overwrite).toBe(true);
+    expect(tokenCmd.input.TableName).toBe("petroglyph-refresh_tokens-test");
+    expect(tokenCmd.input.Key.tokenHash).toBe(USER_ID);
+    expect(tokenCmd.input.ExpressionAttributeValues[":accessToken"]).toBe(MS_ACCESS_TOKEN);
+    expect(tokenCmd.input.ExpressionAttributeValues[":refreshToken"]).toBe(MS_REFRESH_TOKEN);
+    
+    const expirySeconds = tokenCmd.input.ExpressionAttributeValues[":expirySeconds"];
+    expect(expirySeconds).toBeGreaterThanOrEqual(before + MS_EXPIRES_IN);
+    expect(expirySeconds).toBeLessThanOrEqual(after + MS_EXPIRES_IN);
+    expect(typeof tokenCmd.input.ExpressionAttributeValues[":now"]).toBe("string");
   });
 
   // ── Behaviour 7: Graph subscription registered ───────────────────────────
@@ -398,8 +383,9 @@ describe("POST /onedrive/connect", () => {
     await postConnect({ code: VALID_CODE, state: VALID_STATE });
 
     const updateCalls = mockDbSend.mock.calls.filter(([cmd]) => cmd instanceof UpdateCommand);
-    expect(updateCalls).toHaveLength(1);
-    const [updateCmd] = updateCalls[0] as [
+    expect(updateCalls).toHaveLength(2); // tokens update + sync profile update
+    
+    const [syncProfileCmd] = updateCalls[1] as [
       {
         input: {
           TableName: string;
@@ -408,11 +394,11 @@ describe("POST /onedrive/connect", () => {
         };
       },
     ];
-    expect(updateCmd.input.TableName).toBe("petroglyph-sync-profiles-test");
-    expect(updateCmd.input.Key.userId).toBe(USER_ID);
-    expect(updateCmd.input.Key.profileId).toBe("default");
-    expect(updateCmd.input.ExpressionAttributeValues[":true"]).toBe(true);
-    expect(typeof updateCmd.input.ExpressionAttributeValues[":now"]).toBe("string");
+    expect(syncProfileCmd.input.TableName).toBe("petroglyph-sync-profiles-test");
+    expect(syncProfileCmd.input.Key.userId).toBe(USER_ID);
+    expect(syncProfileCmd.input.Key.profileId).toBe("default");
+    expect(syncProfileCmd.input.ExpressionAttributeValues[":true"]).toBe(true);
+    expect(typeof syncProfileCmd.input.ExpressionAttributeValues[":now"]).toBe("string");
   });
 
   // ── Behaviour 9: returns 200 { status: 'connected' } ────────────────────
@@ -458,7 +444,6 @@ describe("GET /onedrive/connect", () => {
     vi.stubEnv("SYNC_PROFILES_TABLE", "petroglyph-sync-profiles-test");
     vi.stubEnv("REFRESH_TOKENS_TABLE", "petroglyph-refresh_tokens-test");
     mockDbSend.mockClear();
-    mockSsmSend.mockClear();
     mockFetch.mockClear();
   });
 
