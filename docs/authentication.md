@@ -229,7 +229,7 @@ sequenceDiagram
 8. Cloud API validates the state token against DynamoDB (`type='onedrive_state'`, TTL check) → 401 if invalid or expired. The state record is deleted immediately after lookup (one-time-use), and the PKCE `verifier` is read from it.
 9. Cloud API completes the PKCE token exchange with Microsoft using the code, retrieved verifier, and client secret (loaded from SSM), receiving an **access token** (TTL ~1 hour) and a **refresh token** (TTL up to 90 days with `offline_access`). Returns 502 if the exchange fails.
 10. `access_token`, `refresh_token`, and `token-expiry` (ISO 8601) are each stored as **SSM SecureString** parameters (with `Overwrite=true`).
-11. Cloud API attempts to register a **Microsoft Graph change notification subscription** for the user's OneDrive. Failure is non-blocking — a warning is logged and the request continues.
+11. Cloud API attempts to register a **Microsoft Graph change notification subscription** for the user's OneDrive. The requested `expirationDateTime` is capped to Graph's maximum allowed window so registration does not fail due to an out-of-range expiry. Failure is still non-blocking — a warning is logged and the request continues.
 12. Cloud API upserts a **SyncProfile** in DynamoDB (`PK=userId`, `SK='default'`, `oneDriveConnected=true`).
 13. Returns `{ status: 'connected' }` to the plugin.
 
