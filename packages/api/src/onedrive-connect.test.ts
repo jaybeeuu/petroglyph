@@ -347,9 +347,9 @@ describe("POST /onedrive/connect", () => {
     expect(sentBody.clientState).toBe(USER_ID);
 
     const expiryMs = new Date(sentBody.expirationDateTime).getTime();
-    const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
-    expect(expiryMs).toBeGreaterThanOrEqual(before + threeDaysMs);
-    expect(expiryMs).toBeLessThanOrEqual(after + threeDaysMs);
+    const maxGraphSubscriptionMs = 4230 * 60 * 1000;
+    expect(expiryMs).toBeGreaterThanOrEqual(before + maxGraphSubscriptionMs - 5000);
+    expect(expiryMs).toBeLessThanOrEqual(after + maxGraphSubscriptionMs);
   });
 
   it("returns 200 even when Graph subscription registration fails", async () => {
