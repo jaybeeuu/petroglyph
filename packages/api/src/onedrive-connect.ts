@@ -153,7 +153,10 @@ async function registerGraphSubscription(accessToken: string, userId: string): P
     return;
   }
 
-  const expirationDateTime = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+  const graphSubscriptionMaxMinutes = 4230;
+  const expirationDateTime = new Date(
+    Date.now() + graphSubscriptionMaxMinutes * 60 * 1000,
+  ).toISOString();
 
   const response = await fetch("https://graph.microsoft.com/v1.0/subscriptions", {
     method: "POST",
