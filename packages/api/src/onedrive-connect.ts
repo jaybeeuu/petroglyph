@@ -171,8 +171,10 @@ async function registerGraphSubscription(accessToken: string, userId: string): P
   });
 
   if (!response.ok) {
+    const text = await response.text();
     console.warn(
       `[onedrive-connect] Graph subscription registration failed: ${response.status} ${response.statusText}`,
+      text,
     );
   }
 }

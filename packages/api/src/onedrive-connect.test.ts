@@ -93,6 +93,7 @@ function setupFetchMock(options: { msTokenOk?: boolean; graphOk?: boolean } = {}
         status: graphOk ? 201 : 500,
         statusText: graphOk ? "Created" : "Internal Server Error",
         json: () => Promise.resolve({ id: "sub-123" }),
+        text: () => Promise.resolve('{"error":"Invalid request"}'),
       } as Response);
     }
     return Promise.reject(new Error(`Unexpected fetch: ${url}`));
