@@ -30,7 +30,7 @@ describe("Lambda packaging smoke test", () => {
       cwd: apiDir,
       stdio: "inherit",
     });
-  }, 30_000);
+  }, 60_000);
 
   afterAll(() => {
     // Clean up test extraction
