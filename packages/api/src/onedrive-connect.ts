@@ -1,14 +1,8 @@
 import { is, isObject } from "@jaybeeuu/is";
-import { PutParameterCommand } from "@aws-sdk/client-ssm";
 import { DeleteCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import type { AppVariables } from "./auth-middleware.js";
 import { docClient } from "./db.js";
-import { ssmClient } from "./ssm.js";
-
-const SSM_ACCESS_TOKEN = "/petroglyph/onedrive/access-token";
-const SSM_REFRESH_TOKEN = "/petroglyph/onedrive/refresh-token";
-const SSM_TOKEN_EXPIRY = "/petroglyph/onedrive/token-expiry";
 
 function refreshTokensTable(): string {
   return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
@@ -128,39 +122,28 @@ async function exchangeCodeForTokens(
   return parseMicrosoftTokenResponse(await response.json());
 }
 
-async function storeTokensInSsm(
+async function storeTokensInDynamoDB(
+  userId: string,
   accessToken: string,
   refreshToken: string,
   expiresIn: number,
 ): Promise<void> {
-  const expiry = new Date(Date.now() + expiresIn * 1000).toISOString();
+  const expirySeconds = Math.floor(Date.now() / 1000) + expiresIn;
 
-  await Promise.all([
-    ssmClient.send(
-      new PutParameterCommand({
-        Name: SSM_ACCESS_TOKEN,
-        Value: accessToken,
-        Type: "SecureString",
-        Overwrite: true,
-      }),
-    ),
-    ssmClient.send(
-      new PutParameterCommand({
-        Name: SSM_REFRESH_TOKEN,
-        Value: refreshToken,
-        Type: "SecureString",
-        Overwrite: true,
-      }),
-    ),
-    ssmClient.send(
-      new PutParameterCommand({
-        Name: SSM_TOKEN_EXPIRY,
-        Value: expiry,
-        Type: "SecureString",
-        Overwrite: true,
-      }),
-    ),
-  ]);
+  await docClient.send(
+    new UpdateCommand({
+      TableName: refreshTokensTable(),
+      Key: { tokenHash: userId },
+      UpdateExpression:
+        "SET accessToken = :accessToken, refreshToken = :refreshToken, expirySeconds = :expirySeconds, updatedAt = :now",
+      ExpressionAttributeValues: {
+        ":accessToken": accessToken,
+        ":refreshToken": refreshToken,
+        ":expirySeconds": expirySeconds,
+        ":now": new Date().toISOString(),
+      },
+    }),
+  );
 }
 
 async function registerGraphSubscription(accessToken: string, userId: string): Promise<void> {
@@ -259,9 +242,8 @@ export async function handleOnedriveConnect(
     throw err;
   }
 
-  await storeTokensInSsm(tokens.access_token, tokens.refresh_token, tokens.expires_in);
-
   const userId = c.get("userId");
+  await storeTokensInDynamoDB(userId, tokens.access_token, tokens.refresh_token, tokens.expires_in);
   await registerGraphSubscription(tokens.access_token, userId);
   await upsertSyncProfile(userId);
 
