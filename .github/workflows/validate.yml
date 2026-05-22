@@ -53,6 +53,11 @@ jobs:
             packages/*/*.tsbuildinfo
           key: dist-${{ github.sha }}
       - run: pnpm build
+      - name: Verify OpenAPI types are up to date
+        run: |
+          pnpm --filter @petroglyph/api generate-types
+          pnpm --filter @petroglyph/api-client generate-types
+          git diff --exit-code
 
   lint:
     needs: [build]
