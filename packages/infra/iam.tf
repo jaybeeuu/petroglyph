@@ -77,6 +77,7 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
           "${local.ssm_arn_prefix}/petroglyph/github/*",
           "${local.ssm_arn_prefix}/petroglyph/jwt/*",
           "${local.ssm_arn_prefix}/petroglyph/onedrive/*",
+          "${local.ssm_arn_prefix}/petroglyph/config/*",
         ]
       },
       {
