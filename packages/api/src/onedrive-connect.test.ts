@@ -35,6 +35,7 @@ const VALID_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 const MS_ACCESS_TOKEN = "ms-access-token-abc";
 const MS_REFRESH_TOKEN = "ms-refresh-token-def";
 const MS_EXPIRES_IN = 3600;
+const MS_DRIVE_ID = "drive-123";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -69,8 +70,10 @@ function setupDynamoMock(stateItem: object | undefined): void {
   });
 }
 
-function setupFetchMock(options: { msTokenOk?: boolean; graphOk?: boolean } = {}): void {
-  const { msTokenOk = true, graphOk = true } = options;
+function setupFetchMock(
+  options: { msTokenOk?: boolean; graphOk?: boolean; graphDriveOk?: boolean } = {},
+): void {
+  const { msTokenOk = true, graphOk = true, graphDriveOk = true } = options;
 
   mockFetch.mockImplementation((url: string) => {
     if (url === "https://login.microsoftonline.com/common/oauth2/v2.0/token") {
@@ -85,6 +88,20 @@ function setupFetchMock(options: { msTokenOk?: boolean; graphOk?: boolean } = {}
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve(makeMsTokenResponse()),
+      } as Response);
+    }
+    if (url === "https://graph.microsoft.com/v1.0/me/drive") {
+      if (!graphDriveOk) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          statusText: "Internal Server Error",
+          json: () => Promise.resolve({}),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ id: MS_DRIVE_ID }),
       } as Response);
     }
     if (url === "https://graph.microsoft.com/v1.0/subscriptions") {
@@ -131,6 +148,7 @@ describe("POST /onedrive/connect", () => {
     vi.stubEnv("MICROSOFT_CLIENT_SECRET", "test-ms-client-secret");
     vi.stubEnv("MICROSOFT_REDIRECT_URI", "obsidian://petroglyph/onedrive/callback");
     vi.stubEnv("GRAPH_NOTIFICATION_URL", "https://api.example.com/graph/notify");
+    vi.stubEnv("GRAPH_LIFECYCLE_URL", "https://api.example.com/graph/lifecycle");
     vi.stubEnv("SYNC_PROFILES_TABLE", "petroglyph-sync-profiles-test");
     vi.stubEnv("REFRESH_TOKENS_TABLE", "petroglyph-refresh_tokens-test");
     mockDbSend.mockClear();
@@ -337,13 +355,15 @@ describe("POST /onedrive/connect", () => {
     const sentBody = JSON.parse(options.body as string) as {
       changeType: string;
       notificationUrl: string;
+      lifecycleNotificationUrl?: string;
       resource: string;
       expirationDateTime: string;
       clientState: string;
     };
     expect(sentBody.changeType).toBe("updated");
     expect(sentBody.notificationUrl).toBe("https://api.example.com/graph/notify");
-    expect(sentBody.resource).toBe("/me/drive/root/children");
+    expect(sentBody.lifecycleNotificationUrl).toBe("https://api.example.com/graph/lifecycle");
+    expect(sentBody.resource).toBe(`/drives/${MS_DRIVE_ID}/root`);
     expect(sentBody.clientState).toBe(USER_ID);
 
     const expiryMs = new Date(sentBody.expirationDateTime).getTime();
