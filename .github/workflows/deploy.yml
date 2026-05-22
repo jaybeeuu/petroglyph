@@ -63,10 +63,15 @@ jobs:
             packages/*/*.tsbuildinfo
           key: dist-${{ github.sha }}
       - run: pnpm --filter @petroglyph/api package
+      - run: pnpm --filter @petroglyph/ingest-onedrive package
       - uses: actions/upload-artifact@v4
         with:
           name: lambda-zip
           path: packages/api/lambda.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ingest-onedrive-zip
+          path: packages/ingest-onedrive/lambda.zip
 
   deploy:
     needs: [package]
@@ -93,6 +98,10 @@ jobs:
         with:
           name: lambda-zip
           path: packages/api
+      - uses: actions/download-artifact@v4
+        with:
+          name: ingest-onedrive-zip
+          path: packages/ingest-onedrive
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -102,6 +111,11 @@ jobs:
         run: |
           HASH=$(sha256sum packages/api/lambda.zip | cut -d' ' -f1)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
+      - name: Compute ingest lambda content hash
+        id: ingest-artifact-hash
+        run: |
+          HASH=$(sha256sum packages/ingest-onedrive/lambda.zip | cut -d' ' -f1)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
       - name: Upload lambda zip to S3
         run: |
           KEY="lambda-${{ steps.artifact-hash.outputs.hash }}.zip"
@@ -109,6 +123,14 @@ jobs:
             echo "Artifact already exists at $KEY — skipping upload"
           else
             aws s3 cp packages/api/lambda.zip s3://${{ secrets.LAMBDA_ARTIFACT_BUCKET }}/$KEY
+          fi
+      - name: Upload ingest lambda zip to S3
+        run: |
+          KEY="ingest-onedrive-${{ steps.ingest-artifact-hash.outputs.hash }}.zip"
+          if aws s3api head-object --bucket ${{ secrets.LAMBDA_ARTIFACT_BUCKET }} --key "$KEY" 2>/dev/null; then
+            echo "Artifact already exists at $KEY — skipping upload"
+          else
+            aws s3 cp packages/ingest-onedrive/lambda.zip s3://${{ secrets.LAMBDA_ARTIFACT_BUCKET }}/$KEY
           fi
       - uses: hashicorp/setup-terraform@v4
       - name: Terraform init
@@ -130,6 +152,8 @@ jobs:
           terraform apply -auto-approve -refresh=false \
             -var="api_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
             -var="api_zip_s3_key=lambda-${{ steps.artifact-hash.outputs.hash }}.zip" \
+            -var="ingest_onedrive_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
+            -var="ingest_onedrive_zip_s3_key=ingest-onedrive-${{ steps.ingest-artifact-hash.outputs.hash }}.zip" \
             -var="api_custom_domain=api.petroglyph.page"
       - name: Capture API function URL
         id: api-function-url
