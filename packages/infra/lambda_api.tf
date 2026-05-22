@@ -29,7 +29,8 @@ resource "aws_lambda_function" "petroglyph_api" {
       ONEDRIVE_CLIENT_SECRET_SSM_PATH = aws_ssm_parameter.onedrive_client_secret.name
       GITHUB_REDIRECT_URI            = "${local.api_base_url}/auth/callback"
       MICROSOFT_REDIRECT_URI         = "${local.api_base_url}/onedrive/connect"
-      GRAPH_NOTIFICATION_URL         = "${local.api_base_url}/onedrive/lifecycle"
+      GRAPH_NOTIFICATION_URL         = "${local.api_base_url}/webhooks/onedrive"
+      GRAPH_LIFECYCLE_URL            = "${local.api_base_url}/onedrive/lifecycle"
       REFRESH_TOKENS_TABLE           = aws_dynamodb_table.refresh_tokens.name
       USERS_TABLE                    = aws_dynamodb_table.users.name
       SYNC_PROFILES_TABLE            = aws_dynamodb_table.sync_profiles.name
