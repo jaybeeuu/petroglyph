@@ -7,6 +7,7 @@
   "scripts": {
     "build": "pnpm -r run build",
     "dev": "pnpm -r --parallel run dev",
+    "package": "pnpm -r --parallel --if-present run package",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "pnpm -r run lint",

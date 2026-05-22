@@ -62,8 +62,7 @@ jobs:
             packages/*/dist
             packages/*/*.tsbuildinfo
           key: dist-${{ github.sha }}
-      - run: pnpm --filter @petroglyph/api package
-      - run: pnpm --filter @petroglyph/ingest-onedrive package
+      - run: pnpm package
       - uses: actions/upload-artifact@v4
         with:
           name: lambda-zip
