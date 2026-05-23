@@ -90,6 +90,7 @@ describe.sequential("terraform ingestion infrastructure", () => {
       /resource "aws_lambda_event_source_mapping" "processor_ingest_queue" \{[\s\S]*event_source_arn\s*=\s*aws_sqs_queue\.ingest\.arn[\s\S]*function_name\s*=\s*aws_lambda_function\.petroglyph_processor\[0\]\.arn[\s\S]*batch_size\s*=\s*10/,
     );
     expect(lambdaIngestionTerraform).toContain('route_key = "POST /webhooks/onedrive"');
+    expect(lambdaIngestionTerraform).toContain('route_key = "GET /webhooks/onedrive"');
     expect(lambdaIngestionTerraform).toContain(
       'source_arn    = "${aws_apigatewayv2_api.petroglyph_api.execution_arn}/*/*/webhooks/onedrive"',
     );

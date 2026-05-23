@@ -89,6 +89,14 @@ resource "aws_apigatewayv2_route" "onedrive_webhook_post" {
   target    = "integrations/${aws_apigatewayv2_integration.petroglyph_ingest_onedrive[0].id}"
 }
 
+resource "aws_apigatewayv2_route" "onedrive_webhook_get" {
+  count = var.ingest_onedrive_zip_s3_bucket != "" ? 1 : 0
+
+  api_id    = aws_apigatewayv2_api.petroglyph_api.id
+  route_key = "GET /webhooks/onedrive"
+  target    = "integrations/${aws_apigatewayv2_integration.petroglyph_ingest_onedrive[0].id}"
+}
+
 resource "aws_lambda_permission" "api_gateway_ingest_onedrive" {
   count = var.ingest_onedrive_zip_s3_bucket != "" ? 1 : 0
 
