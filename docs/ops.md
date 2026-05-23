@@ -97,6 +97,21 @@ Configure the `production` environment so only `main` can deploy, and require de
 
 ---
 
+## Lambda Packaging (ESM)
+
+Petroglyph Lambdas are deployed from zipped artifacts stored in S3. Any Lambda package must include its runtime dependencies in the zip — bare `node_modules` are **not** deployed.
+
+- **Bundled Lambdas (ESM)**: The API and ingest-onedrive Lambdas are bundled with esbuild to **ESM** output so runtime dependencies (for example `zod`) are included.
+- **Non-Lambda packages (ESM)**: Keep these as bare **ESM** modules to preserve tree-shaking. Do not emit CommonJS builds.
+- **Packaging entrypoint**: `pnpm package` runs each package’s `package` script (via `--if-present`) before deploy.
+
+When adding a new Lambda:
+
+1. Add a `package` script that produces `lambda.zip` (bundled ESM).
+2. Ensure the deploy workflow uploads the new zip and passes its S3 key to Terraform.
+
+---
+
 ## Third-party App Registration
 
 Terraform creates SSM parameters with `value = "PLACEHOLDER"` on first apply (with `lifecycle { ignore_changes = [value] }` so CD never overwrites real values). After bootstrapping, the real credentials must be stored manually using the steps below.
