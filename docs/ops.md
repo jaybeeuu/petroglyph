@@ -101,10 +101,12 @@ Configure the `production` environment so only `main` can deploy, and require de
 
 Petroglyph Lambdas are deployed from zipped artifacts stored in S3. Any Lambda package must include its runtime dependencies in the zip — bare `node_modules` are **not** deployed.
 
-- **Bundled Lambdas**: The API and ingest-onedrive Lambdas are bundled with esbuild to **ESM** output so runtime dependencies (for example `zod`) are included.
-- **Non-Lambda packages**: Keep these as bare **ESM** modules to preserve tree-shaking and avoid unnecessary bundling.
+- **Bundled Lambdas (ESM)**: The API and ingest-onedrive Lambdas are bundled with esbuild to **ESM** output so runtime dependencies (for example `zod`) are included.
+- **Non-Lambda packages (ESM)**: Keep these as bare **ESM** modules to preserve tree-shaking. Do not emit CommonJS builds.
+- **Packaging entrypoint**: `pnpm package` runs each package’s `package` script (via `--if-present`) before deploy.
 
 When adding a new Lambda:
+
 1. Add a `package` script that produces `lambda.zip` (bundled ESM).
 2. Ensure the deploy workflow uploads the new zip and passes its S3 key to Terraform.
 
