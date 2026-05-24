@@ -306,61 +306,28 @@ describe("POST /onedrive/lifecycle", () => {
     expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("reconnect_required");
   });
 
-  it("returns 202 before subscriptionRemoved work finishes", async () => {
-    let resolveUpdate: (() => void) | undefined;
-    mockDbSend.mockImplementation((command: unknown) => {
-      if (command instanceof UpdateCommand) {
-        return new Promise((resolve) => {
-          resolveUpdate = () => {
-            resolve({});
-          };
-        });
-      }
+  it("returns 202 after subscriptionRemoved work finishes", async () => {
+    mockDbSend.mockResolvedValue({});
 
-      return Promise.resolve({});
-    });
-
-    const requestPromise: Promise<Response> = Promise.resolve(
-      app.request("/onedrive/lifecycle", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          value: [
-            {
-              lifecycleEvent: "subscriptionRemoved",
-              clientState: "user-789",
-            },
-          ],
-        }),
+    const response = await app.request("/onedrive/lifecycle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        value: [
+          {
+            lifecycleEvent: "subscriptionRemoved",
+            clientState: "user-789",
+          },
+        ],
       }),
-    );
-
-    const response = await Promise.race([
-      requestPromise.then(() => "response" as const),
-      new Promise<"timeout">((resolve) => {
-        setTimeout(() => {
-          resolve("timeout");
-        }, 20);
-      }),
-    ]);
-
-    expect(response).toBe("response");
-    await vi.waitFor(() => {
-      expect(resolveUpdate).toBeTypeOf("function");
     });
-    resolveUpdate?.();
 
-    const completedResponse = await requestPromise;
-    expect(completedResponse.status).toBe(202);
-
-    await vi.waitFor(() => {
-      expect(updateCalls()).toHaveLength(1);
-    });
+    expect(response.status).toBe(202);
+    expect(updateCalls()).toHaveLength(1);
   });
 
-  it("returns 202 before reauthorization work finishes", async () => {
+  it("returns 202 after reauthorization work finishes", async () => {
     setupSsmMock(new Date(Date.now() + 5 * 60 * 1000).toISOString());
-    let resolveRenewal: (() => void) | undefined;
     mockFetch.mockImplementation((url: string) => {
       if (url === "https://login.microsoftonline.com/common/oauth2/v2.0/token") {
         return Promise.resolve({
@@ -374,66 +341,41 @@ describe("POST /onedrive/lifecycle", () => {
         } as Response);
       }
       if (url === "https://graph.microsoft.com/v1.0/subscriptions/sub-123") {
-        return new Promise((resolve) => {
-          resolveRenewal = () => {
-            resolve({
-              ok: true,
-              json: () =>
-                Promise.resolve({
-                  id: "sub-123",
-                  expirationDateTime: "2026-04-14T00:00:00.000Z",
-                }),
-            } as Response);
-          };
-        });
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              id: "sub-123",
+              expirationDateTime: "2026-04-14T00:00:00.000Z",
+            }),
+        } as Response);
       }
       return Promise.reject(new Error(`Unexpected fetch: ${url}`));
     });
 
-    const requestPromise: Promise<Response> = Promise.resolve(
-      app.request("/onedrive/lifecycle", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          value: [
-            {
-              lifecycleEvent: "reauthorizationRequired",
-              clientState: "user-123",
-              subscriptionId: "sub-123",
-            },
-          ],
-        }),
+    const response = await app.request("/onedrive/lifecycle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        value: [
+          {
+            lifecycleEvent: "reauthorizationRequired",
+            clientState: "user-123",
+            subscriptionId: "sub-123",
+          },
+        ],
       }),
-    );
-
-    const response = await Promise.race([
-      requestPromise.then(() => "response" as const),
-      new Promise<"timeout">((resolve) => {
-        setTimeout(() => {
-          resolve("timeout");
-        }, 20);
-      }),
-    ]);
-
-    expect(response).toBe("response");
-    await vi.waitFor(() => {
-      expect(resolveRenewal).toBeTypeOf("function");
     });
-    resolveRenewal?.();
 
-    const completedResponse = await requestPromise;
-    expect(completedResponse.status).toBe(202);
-
-    await vi.waitFor(() => {
-      expect(updateCalls()).toHaveLength(1);
-      expect(
-        putParameterCalls().some(
-          ([command]) =>
-            (command as { input: { Name: string } }).input.Name ===
-            "/petroglyph/onedrive/subscription-expiry",
-        ),
-      ).toBe(true);
-    });
+    expect(response.status).toBe(202);
+    expect(updateCalls()).toHaveLength(1);
+    expect(
+      putParameterCalls().some(
+        ([command]) =>
+          (command as { input: { Name: string } }).input.Name ===
+          "/petroglyph/onedrive/subscription-expiry",
+      ),
+    ).toBe(true);
   });
 
   it("returns 202 after lifecycle processing succeeds", async () => {
