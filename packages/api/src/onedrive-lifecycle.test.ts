@@ -96,7 +96,7 @@ describe("POST /onedrive/lifecycle", () => {
     expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("reconnect_required");
   });
 
-  it("refreshes the token and renews the subscription for reauthorizationRequired events", async () => {
+  it("refreshes the token and reauthorizes the subscription for reauthorizationRequired events", async () => {
     setupDbMock([
       { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
     ]);
@@ -112,14 +112,9 @@ describe("POST /onedrive/lifecycle", () => {
             }),
         } as Response);
       }
-      if (url === "https://graph.microsoft.com/v1.0/subscriptions/sub-123") {
+      if (url === "https://graph.microsoft.com/v1.0/subscriptions/sub-123/reauthorize") {
         return Promise.resolve({
           ok: true,
-          json: () =>
-            Promise.resolve({
-              id: "sub-123",
-              expirationDateTime: "2026-04-14T00:00:00.000Z",
-            }),
         } as Response);
       }
       return Promise.reject(new Error(`Unexpected fetch: ${url}`));
@@ -151,14 +146,14 @@ describe("POST /onedrive/lifecycle", () => {
 
     const renewCall = await vi.waitFor(() => {
       const call = mockFetch.mock.calls.find(
-        ([url]) => url === "https://graph.microsoft.com/v1.0/subscriptions/sub-123",
+        ([url]) => url === "https://graph.microsoft.com/v1.0/subscriptions/sub-123/reauthorize",
       );
       expect(call).toBeDefined();
       return call;
     });
 
     const [, renewOptions] = renewCall as [string, RequestInit];
-    expect(renewOptions.method).toBe("PATCH");
+    expect(renewOptions.method).toBe("POST");
     expect((renewOptions.headers as { [key: string]: string })["Authorization"]).toBe(
       "Bearer new-access-token",
     );
@@ -246,7 +241,7 @@ describe("POST /onedrive/lifecycle", () => {
     expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("reconnect_required");
   });
 
-  it("marks the user as reconnect_required when subscription renewal fails", async () => {
+  it("marks the user as reconnect_required when subscription reauthorization fails", async () => {
     setupDbMock([
       { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
     ]);
@@ -262,7 +257,7 @@ describe("POST /onedrive/lifecycle", () => {
             }),
         } as Response);
       }
-      if (url === "https://graph.microsoft.com/v1.0/subscriptions/sub-456") {
+      if (url === "https://graph.microsoft.com/v1.0/subscriptions/sub-456/reauthorize") {
         return Promise.resolve({
           ok: false,
           status: 500,
@@ -345,14 +340,9 @@ describe("POST /onedrive/lifecycle", () => {
             }),
         } as Response);
       }
-      if (url === "https://graph.microsoft.com/v1.0/subscriptions/sub-123") {
+      if (url === "https://graph.microsoft.com/v1.0/subscriptions/sub-123/reauthorize") {
         return Promise.resolve({
           ok: true,
-          json: () =>
-            Promise.resolve({
-              id: "sub-123",
-              expirationDateTime: "2026-04-14T00:00:00.000Z",
-            }),
         } as Response);
       }
       return Promise.reject(new Error(`Unexpected fetch: ${url}`));
