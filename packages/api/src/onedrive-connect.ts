@@ -202,6 +202,12 @@ async function registerGraphSubscription(accessToken: string, userId: string): P
     clientState: userId,
     ...(lifecycleNotificationUrl ? { lifecycleNotificationUrl } : {}),
   };
+  console.info("[onedrive-connect] Registering Graph subscription", {
+    notificationUrl,
+    resource: requestBody.resource,
+    expirationDateTime,
+    lifecycleNotificationUrl: lifecycleNotificationUrl ?? null,
+  });
 
   const response = await fetch("https://graph.microsoft.com/v1.0/subscriptions", {
     method: "POST",
@@ -218,7 +224,11 @@ async function registerGraphSubscription(accessToken: string, userId: string): P
       `[onedrive-connect] Graph subscription registration failed: ${response.status} ${response.statusText}`,
       text,
     );
+    return;
   }
+  console.info("[onedrive-connect] Graph subscription created", {
+    status: response.status,
+  });
 }
 
 async function upsertSyncProfile(userId: string): Promise<void> {
@@ -262,15 +272,24 @@ export async function handleOnedriveConnect(
   const body = parseConnectBody(rawBody);
 
   if (!body) {
+    console.warn("[onedrive-connect] Missing code/state in request body");
     return c.json({ error: "Missing required fields: code and state" }, 400);
   }
 
   const { code, state } = body;
+  const userId = c.get("userId");
+  console.info("[onedrive-connect] Starting connect flow", { userId });
 
   const stateItem = await lookupStateItem(state);
   const now = Math.floor(Date.now() / 1000);
 
   if (!stateItem || stateItem.type !== "onedrive_state" || stateItem.ttl < now) {
+    console.warn("[onedrive-connect] Invalid or expired state", {
+      userId,
+      stateType: stateItem?.type ?? null,
+      stateExpiry: stateItem?.ttl ?? null,
+      now,
+    });
     return c.json({ error: "Invalid or expired state" }, 401);
   }
 
@@ -281,15 +300,21 @@ export async function handleOnedriveConnect(
     tokens = await exchangeCodeForTokens(code, stateItem.verifier);
   } catch (err) {
     if (err instanceof UpstreamError) {
+      console.warn("[onedrive-connect] Microsoft token exchange failed", {
+        userId,
+        message: err.message,
+      });
       return c.json({ error: "Microsoft token exchange failed" }, 502);
     }
     throw err;
   }
 
-  const userId = c.get("userId");
+  console.info("[onedrive-connect] Microsoft token exchange succeeded", { userId });
   await storeTokensInDynamoDB(userId, tokens.access_token, tokens.refresh_token, tokens.expires_in);
+  console.info("[onedrive-connect] Stored Microsoft tokens in DynamoDB", { userId });
   await registerGraphSubscription(tokens.access_token, userId);
   await upsertSyncProfile(userId);
+  console.info("[onedrive-connect] OneDrive profile updated", { userId });
 
   return c.json({ status: "connected" });
 }
