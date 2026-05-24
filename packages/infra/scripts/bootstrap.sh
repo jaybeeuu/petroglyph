@@ -426,6 +426,134 @@ else
   success "Managed policy attached"
 fi
 
+# ── Step 7: petroglyph-admin IAM user ────────────────────────────────────────
+#
+# A scoped admin user for running terraform apply locally. Attach the same
+# deploy policy as the GitHub Actions role so local and CI have identical
+# permissions.
+
+ADMIN_USER="petroglyph-admin"
+
+info "Checking IAM user ($ADMIN_USER)..."
+if $AWS iam get-user --user-name "$ADMIN_USER" &>/dev/null; then
+  success "User $ADMIN_USER already exists"
+else
+  info "Creating IAM user $ADMIN_USER..."
+  $AWS iam create-user --user-name "$ADMIN_USER" \
+    --tags Key=purpose,Value=local-admin
+  success "User $ADMIN_USER created"
+fi
+
+info "Checking $DEPLOY_POLICY_NAME is attached to $ADMIN_USER..."
+if $AWS iam list-attached-user-policies --user-name "$ADMIN_USER" \
+    --query "AttachedPolicies[?PolicyArn=='${POLICY_ARN}']" --output text | grep -q .; then
+  success "Deploy policy already attached to $ADMIN_USER"
+else
+  info "Attaching deploy policy to $ADMIN_USER..."
+  $AWS iam attach-user-policy \
+    --user-name "$ADMIN_USER" \
+    --policy-arn "$POLICY_ARN"
+  success "Deploy policy attached to $ADMIN_USER"
+fi
+
+# ── Step 8: petroglyph-readonly IAM user ─────────────────────────────────────
+#
+# A read-only user for local developer machines and AI agents. Can read logs,
+# DynamoDB, SSM parameters, and Lambda config but cannot mutate anything.
+# Use the petroglyph-readonly profile for day-to-day work instead of admin.
+
+READONLY_USER="petroglyph-readonly"
+READONLY_POLICY_NAME="petroglyph-readonly"
+READONLY_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${READONLY_POLICY_NAME}"
+READONLY_POLICY_DOC=$(cat << EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DynamoDBRead",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:DescribeTable",
+        "dynamodb:ListTables"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SSMRead",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+        "ssm:DescribeParameters"
+      ],
+      "Resource": "arn:aws:ssm:${REGION}:${ACCOUNT_ID}:parameter/petroglyph/*"
+    },
+    {
+      "Sid": "LambdaRead",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:ListFunctions",
+        "lambda:ListVersionsByFunction"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchLogsRead",
+      "Effect": "Allow",
+      "Action": [
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents",
+        "logs:StartQuery",
+        "logs:GetQueryResults"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+EOF
+)
+
+info "Checking readonly managed policy ($READONLY_POLICY_NAME)..."
+if $AWS iam get-policy --policy-arn "$READONLY_POLICY_ARN" &>/dev/null; then
+  success "Readonly policy already exists"
+else
+  info "Creating readonly managed policy..."
+  $AWS iam create-policy \
+    --policy-name "$READONLY_POLICY_NAME" \
+    --policy-document "$READONLY_POLICY_DOC"
+  success "Readonly policy created"
+fi
+
+info "Checking IAM user ($READONLY_USER)..."
+if $AWS iam get-user --user-name "$READONLY_USER" &>/dev/null; then
+  success "User $READONLY_USER already exists"
+else
+  info "Creating IAM user $READONLY_USER..."
+  $AWS iam create-user --user-name "$READONLY_USER" \
+    --tags Key=purpose,Value=local-readonly
+  success "User $READONLY_USER created"
+fi
+
+info "Checking readonly policy is attached to $READONLY_USER..."
+if $AWS iam list-attached-user-policies --user-name "$READONLY_USER" \
+    --query "AttachedPolicies[?PolicyArn=='${READONLY_POLICY_ARN}']" --output text | grep -q .; then
+  success "Readonly policy already attached to $READONLY_USER"
+else
+  info "Attaching readonly policy to $READONLY_USER..."
+  $AWS iam attach-user-policy \
+    --user-name "$READONLY_USER" \
+    --policy-arn "$READONLY_POLICY_ARN"
+  success "Readonly policy attached to $READONLY_USER"
+fi
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 echo ""
@@ -437,9 +565,32 @@ echo "  LAMBDA_ARTIFACT_BUCKET = $LAMBDA_ARTIFACT_BUCKET"
 echo "  DEPLOY_ROLE_ARN        = arn:aws:iam::${ACCOUNT_ID}:role/${GITHUB_ACTIONS_ROLE}"
 echo ""
 echo "  Set these GitHub Actions secrets:"
-echo "    AWS_ROLE_ARN        = arn:aws:iam::${ACCOUNT_ID}:role/${GITHUB_ACTIONS_ROLE}"
-echo "    TF_STATE_BUCKET     = $TF_STATE_BUCKET"
+echo "    AWS_ROLE_ARN           = arn:aws:iam::${ACCOUNT_ID}:role/${GITHUB_ACTIONS_ROLE}"
+echo "    TF_STATE_BUCKET        = $TF_STATE_BUCKET"
 echo "    LAMBDA_ARTIFACT_BUCKET = $LAMBDA_ARTIFACT_BUCKET"
+echo ""
+echo "  Create access keys for local profiles in IAM console:"
+echo "    petroglyph-admin    → IAM > Users > petroglyph-admin > Security credentials"
+echo "    petroglyph-readonly → IAM > Users > petroglyph-readonly > Security credentials"
+echo ""
+echo "  Add to ~/.aws/credentials:"
+echo "    [petroglyph-admin]"
+echo "    aws_access_key_id     = <key>"
+echo "    aws_secret_access_key = <secret>"
+echo ""
+echo "    [petroglyph-readonly]"
+echo "    aws_access_key_id     = <key>"
+echo "    aws_secret_access_key = <secret>"
+echo ""
+echo "  Add to ~/.aws/config:"
+echo "    [profile petroglyph-admin]"
+echo "    region = $REGION"
+echo ""
+echo "    [profile petroglyph-readonly]"
+echo "    region = $REGION"
+echo ""
+echo "  Use petroglyph-readonly for day-to-day work."
+echo "  Use petroglyph-admin only for terraform apply."
 echo ""
 echo "  Next step: pnpm tf:apply --profile $PROFILE"
 echo "════════════════════════════════════════════════════════════════"
