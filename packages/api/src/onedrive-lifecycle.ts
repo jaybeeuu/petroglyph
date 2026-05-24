@@ -150,14 +150,6 @@ async function processLifecycleNotifications(
   );
 }
 
-function dispatchLifecycleNotifications(notifications: LifecycleNotification[]): void {
-  queueMicrotask(() => {
-    void processLifecycleNotifications(notifications).catch((error: unknown) => {
-      console.error("[onedrive-lifecycle] lifecycle processing failed:", error);
-    });
-  });
-}
-
 export async function handleOnedriveLifecycle(c: Context): Promise<Response> {
   const validationToken = c.req.query("validationToken");
   if (validationToken) {
@@ -168,7 +160,9 @@ export async function handleOnedriveLifecycle(c: Context): Promise<Response> {
   }
 
   const notifications = parseLifecycleNotifications(await c.req.json().catch(() => null));
-  dispatchLifecycleNotifications(notifications);
+  await processLifecycleNotifications(notifications).catch((error: unknown) => {
+    console.error("[onedrive-lifecycle] lifecycle processing failed:", error);
+  });
 
   return c.body(null, 202);
 }
