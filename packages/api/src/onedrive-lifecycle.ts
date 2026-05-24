@@ -80,44 +80,31 @@ async function markReconnectRequired(userId: string): Promise<void> {
   await updateOneDriveStatus(userId, "reconnect_required");
 }
 
-interface GraphSubscriptionResponse {
-  expirationDateTime: string;
-}
-
 interface MicrosoftTokenResponse {
   access_token: string;
   refresh_token: string;
   expires_in: number;
 }
 
-function parseGraphSubscriptionResponse(value: unknown): GraphSubscriptionResponse {
-  if (!isRecord(value) || typeof value["expirationDateTime"] !== "string") {
-    throw new Error("Invalid Graph subscription response shape");
-  }
-
-  return { expirationDateTime: value["expirationDateTime"] };
-}
-
-async function renewGraphSubscription(
+async function reauthorizeGraphSubscription(
   subscriptionId: string,
   accessToken: string,
-): Promise<string> {
-  const expirationDateTime = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
-  const response = await fetch(`https://graph.microsoft.com/v1.0/subscriptions/${subscriptionId}`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
+): Promise<void> {
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/subscriptions/${subscriptionId}/reauthorize`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
     },
-    body: JSON.stringify({ expirationDateTime }),
-  });
+  );
 
   if (!response.ok) {
-    throw new Error(`Graph subscription renewal failed: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `Graph subscription reauthorize failed: ${response.status} ${response.statusText}`,
+    );
   }
-
-  const data = parseGraphSubscriptionResponse(await response.json());
-  return data.expirationDateTime;
 }
 
 function parseMicrosoftTokenResponse(value: unknown): MicrosoftTokenResponse {
@@ -156,7 +143,9 @@ async function refreshUserToken(refreshToken: string): Promise<MicrosoftTokenRes
 
   const response = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
     body: body.toString(),
   });
   if (!response.ok) {
@@ -211,7 +200,7 @@ async function handleReauthorizationRequired(notification: LifecycleNotification
     refreshed.refresh_token,
     refreshed.expires_in,
   );
-  await renewGraphSubscription(notification.subscriptionId, refreshed.access_token);
+  await reauthorizeGraphSubscription(notification.subscriptionId, refreshed.access_token);
   await markConnected(notification.clientState);
 }
 
