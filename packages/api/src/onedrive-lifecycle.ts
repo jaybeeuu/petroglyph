@@ -101,7 +101,9 @@ async function reauthorizeGraphSubscription(
   );
 
   if (!response.ok) {
-    throw new Error(`Graph subscription reauthorize failed: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `Graph subscription reauthorize failed: ${response.status} ${response.statusText}`,
+    );
   }
 }
 

@@ -264,11 +264,11 @@ Microsoft Graph change notification subscriptions expire every 3 days (maximum).
 
 Microsoft sends lifecycle events to a dedicated `lifecycleNotificationUrl`, handled by the **Lifecycle Notification Lambda** (separate from the webhook receiver):
 
-| Lifecycle event           | Action                                                                                                                                                                                                             |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Lifecycle event           | Action                                                                                                                                                                                                                                                |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `reauthorizationRequired` | Lambda reads the user's refresh token from DynamoDB, performs token refresh, stores rotated tokens back to DynamoDB, then calls `POST /subscriptions/{id}/reauthorize`. If reauthorization fails, marks OneDrive as `reconnect_required` in DynamoDB. |
-| `subscriptionRemoved`     | Marks OneDrive as `disconnected` in DynamoDB immediately.                                                                                                                                                          |
-| `missed`                  | Logs to CloudWatch; Processor Lambda will catch up on next manual sync.                                                                                                                                            |
+| `subscriptionRemoved`     | Marks OneDrive as `disconnected` in DynamoDB immediately.                                                                                                                                                                                             |
+| `missed`                  | Logs to CloudWatch; Processor Lambda will catch up on next manual sync.                                                                                                                                                                               |
 
 #### Microsoft Graph source of truth (verify before changing behavior)
 
