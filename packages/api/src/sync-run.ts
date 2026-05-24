@@ -160,7 +160,12 @@ async function storeDeltaToken(deltaToken: string): Promise<void> {
 }
 
 export async function handleSyncRun(c: Context): Promise<Response> {
-  const accessToken = await resolveOneDriveAccessToken();
+  const userIdValue: unknown = c.get("userId");
+  if (typeof userIdValue !== "string" || userIdValue.length === 0) {
+    throw new Error("Missing userId in sync run context");
+  }
+  const userId = userIdValue;
+  const accessToken = await resolveOneDriveAccessToken(userId);
   const startingDeltaToken = await readDeltaToken();
 
   let nextUrl: string | undefined = buildDeltaUrl(oneDriveFolder(), startingDeltaToken);

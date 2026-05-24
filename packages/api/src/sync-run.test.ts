@@ -1,5 +1,5 @@
 import { GetParameterCommand, PutParameterCommand } from "@aws-sdk/client-ssm";
-import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -25,7 +25,6 @@ describe("POST /sync/run", () => {
   let publicKeyPem: string;
   const accessToken = "onedrive-access-token";
   const refreshToken = "onedrive-refresh-token";
-  const futureExpiry = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
   beforeAll(async () => {
     const keyPair = await generateKeyPair("RS256");
@@ -71,35 +70,9 @@ describe("POST /sync/run", () => {
     });
   }
 
-  function mockOneDriveSsm({
-    deltaToken,
-    tokenExpiry = futureExpiry,
-    onedriveRefreshToken = refreshToken,
-  }: {
-    deltaToken?: string;
-    tokenExpiry?: string;
-    onedriveRefreshToken?: string;
-  } = {}): void {
+  function mockDeltaTokenSsm({ deltaToken }: { deltaToken?: string } = {}): void {
     mockSsmSend.mockImplementation((command: unknown) => {
       if (command instanceof GetParameterCommand) {
-        if (command.input.Name === "/petroglyph/onedrive/access-token") {
-          return Promise.resolve({
-            Parameter: { Value: accessToken },
-          });
-        }
-
-        if (command.input.Name === "/petroglyph/onedrive/token-expiry") {
-          return Promise.resolve({
-            Parameter: { Value: tokenExpiry },
-          });
-        }
-
-        if (command.input.Name === "/petroglyph/onedrive/refresh-token") {
-          return Promise.resolve({
-            Parameter: { Value: onedriveRefreshToken },
-          });
-        }
-
         if (command.input.Name === "/petroglyph/onedrive/delta-token" && deltaToken !== undefined) {
           return Promise.resolve({
             Parameter: { Value: deltaToken },
@@ -119,9 +92,36 @@ describe("POST /sync/run", () => {
     });
   }
 
+  function mockOneDriveDb({
+    tokenExpiryOffsetMs = 60 * 60 * 1000,
+    onedriveAccessToken = accessToken,
+    onedriveRefreshToken = refreshToken,
+  }: {
+    tokenExpiryOffsetMs?: number;
+    onedriveAccessToken?: string;
+    onedriveRefreshToken?: string;
+  } = {}): void {
+    const expirySeconds = Math.floor((Date.now() + tokenExpiryOffsetMs) / 1000);
+    mockDbSend.mockImplementation((command: unknown) => {
+      if (command instanceof GetCommand) {
+        return Promise.resolve({
+          Item: {
+            accessToken: onedriveAccessToken,
+            refreshToken: onedriveRefreshToken,
+            expirySeconds,
+          },
+        });
+      }
+      if (command instanceof PutCommand || command instanceof UpdateCommand) {
+        return Promise.resolve({});
+      }
+      return Promise.resolve({});
+    });
+  }
+
   it("queues PDF items on a first run when no delta token exists", async () => {
-    mockOneDriveSsm();
-    mockDbSend.mockResolvedValue({});
+    mockDeltaTokenSsm();
+    mockOneDriveDb();
     mockFetch.mockResolvedValue({
       ok: true,
       json: () =>
@@ -195,8 +195,8 @@ describe("POST /sync/run", () => {
   });
 
   it("continues an incremental sync from the stored delta token across pages", async () => {
-    mockOneDriveSsm({ deltaToken: "delta-token-1" });
-    mockDbSend.mockResolvedValue({});
+    mockDeltaTokenSsm({ deltaToken: "delta-token-1" });
+    mockOneDriveDb();
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
@@ -282,8 +282,8 @@ describe("POST /sync/run", () => {
   });
 
   it("returns queued=0 when the delta query contains no new PDF items", async () => {
-    mockOneDriveSsm({ deltaToken: "delta-token-2" });
-    mockDbSend.mockResolvedValue({});
+    mockDeltaTokenSsm({ deltaToken: "delta-token-2" });
+    mockOneDriveDb();
     mockFetch.mockResolvedValue({
       ok: true,
       json: () =>
@@ -327,11 +327,11 @@ describe("POST /sync/run", () => {
   });
 
   it("refreshes an expiring access token before querying Graph", async () => {
-    mockOneDriveSsm({
-      tokenExpiry: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    mockDeltaTokenSsm();
+    mockOneDriveDb({
+      tokenExpiryOffsetMs: 5 * 60 * 1000,
       onedriveRefreshToken: "onedrive-refresh-token",
     });
-    mockDbSend.mockResolvedValue({});
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
@@ -375,8 +375,8 @@ describe("POST /sync/run", () => {
   });
 
   it("queues PDF files based on .pdf extension even without proper MIME type", async () => {
-    mockOneDriveSsm();
-    mockDbSend.mockResolvedValue({});
+    mockDeltaTokenSsm();
+    mockOneDriveDb();
     mockFetch.mockResolvedValue({
       ok: true,
       json: () =>
@@ -408,8 +408,8 @@ describe("POST /sync/run", () => {
   });
 
   it("returns 500 when Graph delta request fails with non-ok status", async () => {
-    mockOneDriveSsm();
-    mockDbSend.mockResolvedValue({});
+    mockDeltaTokenSsm();
+    mockOneDriveDb();
     mockFetch.mockResolvedValue({
       ok: false,
       status: 401,
@@ -421,8 +421,8 @@ describe("POST /sync/run", () => {
   });
 
   it("returns 500 when Graph response has invalid shape (missing value array)", async () => {
-    mockOneDriveSsm();
-    mockDbSend.mockResolvedValue({});
+    mockDeltaTokenSsm();
+    mockOneDriveDb();
     mockFetch.mockResolvedValue({
       ok: true,
       json: () =>

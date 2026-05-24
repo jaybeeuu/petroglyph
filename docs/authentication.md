@@ -215,7 +215,7 @@ sequenceDiagram
     Note over CloudAPI: validate & delete state token<br/>(retrieve PKCE verifier from DynamoDB)
     CloudAPI->>Microsoft: token exchange (code + verifier)
     Microsoft-->>CloudAPI: access token + refresh token
-    Note over CloudAPI: store 3 tokens in SSM (SecureString)<br/>register Graph subscription (non-blocking)<br/>upsert SyncProfile in DynamoDB
+    Note over CloudAPI: store OneDrive tokens in DynamoDB<br/>register Graph subscription (non-blocking)<br/>upsert SyncProfile in DynamoDB
     CloudAPI-->>Plugin: { status: 'connected' }
 ```
 
@@ -228,26 +228,26 @@ sequenceDiagram
 7. Plugin sends `{ code, state }` to `POST /onedrive/connect` on the cloud API (JWT-protected, so the user must be authenticated).
 8. Cloud API validates the state token against DynamoDB (`type='onedrive_state'`, TTL check) → 401 if invalid or expired. The state record is deleted immediately after lookup (one-time-use), and the PKCE `verifier` is read from it.
 9. Cloud API completes the PKCE token exchange with Microsoft using the code, retrieved verifier, and client secret (loaded from SSM), receiving an **access token** (TTL ~1 hour) and a **refresh token** (TTL up to 90 days with `offline_access`). Returns 502 if the exchange fails.
-10. `access_token`, `refresh_token`, and `token-expiry` (ISO 8601) are each stored as **SSM SecureString** parameters (with `Overwrite=true`).
+10. `access_token`, `refresh_token`, and `expirySeconds` are stored on the user's `refresh_tokens` DynamoDB record (`tokenHash=userId`).
 11. Cloud API attempts to register a **Microsoft Graph change notification subscription** for the user's OneDrive. The requested `expirationDateTime` is capped to Graph's maximum allowed window so registration does not fail due to an out-of-range expiry. Failure is still non-blocking — a warning is logged and the request continues.
 12. Cloud API upserts a **SyncProfile** in DynamoDB (`PK=userId`, `SK='default'`, `oneDriveConnected=true`).
 13. Returns `{ status: 'connected' }` to the plugin.
 
 ### Token Lifecycle
 
-Access tokens expire approximately every hour. The service uses **lazy refresh**: a Hono middleware (`onedriveMiddleware`) mounted on all `/onedrive/*` routes in the API Handler Lambda reads the access token and its expiry from SSM on every request. If the token is within **10 minutes** of expiry (or already expired) it proactively exchanges the refresh token with Microsoft and writes the new access token, refresh token, and expiry back to SSM before the downstream handler runs.
+Access tokens expire approximately every hour. The service uses **lazy refresh**: a Hono middleware (`onedriveMiddleware`) mounted on all `/onedrive/*` routes in the API Handler Lambda reads the access token and its expiry from the user's DynamoDB `refresh_tokens` record on every request. If the token is within **10 minutes** of expiry (or already expired) it proactively exchanges the refresh token with Microsoft and writes the new access token, refresh token, and expiry back to DynamoDB before the downstream handler runs.
 
 The refreshed (or current) access token is injected into the Hono context as `onedriveAccessToken` for downstream `/onedrive/*` handlers to use.
 
 ```mermaid
 flowchart TD
-    A[/onedrive/* request] --> B[Read access-token + refresh-token + token-expiry from SSM]
-    B -- SSM error --> Z[Inject undefined token\ncontinue to handler]
+    A[/onedrive/* request] --> B[Read access-token + refresh-token + token-expiry from DynamoDB]
+    B -- read error --> Z[Inject undefined token\ncontinue to handler]
     B --> C{Expiry within 10 min?}
     C -- No --> G[Inject current access token\ncontinue to handler]
     C -- Yes / already expired --> D[POST to Microsoft token endpoint]
     D --> E{Refresh succeeded?}
-    E -- Yes --> F[Write new tokens to SSM\nInject new access token\ncontinue to handler]
+    E -- Yes --> F[Write new tokens to DynamoDB\nInject new access token\ncontinue to handler]
     E -- No: error --> W[Log error\nInject stale access token\ncontinue to handler]
 ```
 
@@ -264,11 +264,11 @@ Microsoft Graph change notification subscriptions expire every 3 days (maximum).
 
 Microsoft sends lifecycle events to a dedicated `lifecycleNotificationUrl`, handled by the **Lifecycle Notification Lambda** (separate from the webhook receiver):
 
-| Lifecycle event           | Action                                                                                                                                                                                                         |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reauthorizationRequired` | Lambda attempts token refresh + subscription renewal automatically using the current OneDrive token. If renewal succeeds, no user action is needed. If it fails, marks OneDrive as `disconnected` in DynamoDB. |
-| `subscriptionRemoved`     | Marks OneDrive as `disconnected` in DynamoDB immediately.                                                                                                                                                      |
-| `missed`                  | Logs to CloudWatch; Processor Lambda will catch up on next manual sync.                                                                                                                                        |
+| Lifecycle event           | Action                                                                                                                                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `reauthorizationRequired` | Lambda reads the user's refresh token from DynamoDB, performs token refresh, stores rotated tokens back to DynamoDB, then renews the subscription. If renewal fails, marks OneDrive as `disconnected` in DynamoDB. |
+| `subscriptionRemoved`     | Marks OneDrive as `disconnected` in DynamoDB immediately.                                                                                                                                                          |
+| `missed`                  | Logs to CloudWatch; Processor Lambda will catch up on next manual sync.                                                                                                                                            |
 
 In all `disconnected` cases the plugin surfaces a **"Reconnect OneDrive"** prompt on its next `/status` poll, explaining the reason. There is no SNS email alert — the plugin is the primary UI for error surfacing.
 
@@ -374,15 +374,12 @@ All parameters use the prefix `/petroglyph/`.
 | `/petroglyph/jwt/public-key`                | String       | RS256 public key (PEM) for verifying JWTs                                     |
 | `/petroglyph/microsoft/entra/client-id`     | String       | Entra ID app client ID                                                        |
 | `/petroglyph/microsoft/entra/client-secret` | SecureString | Entra ID app client secret                                                    |
-| `/petroglyph/onedrive/access-token`         | SecureString | Current OneDrive access token                                                 |
-| `/petroglyph/onedrive/refresh-token`        | SecureString | Current OneDrive refresh token                                                |
-| `/petroglyph/onedrive/token-expiry`         | SecureString | ISO 8601 expiry of the access token                                           |
 | `/petroglyph/onedrive/subscription-id`      | String       | Microsoft Graph subscription ID                                               |
 | `/petroglyph/config/target-branch`          | String       | Git branch to commit to (e.g. `main`)                                         |
 | `/petroglyph/config/initial-sync`           | String       | `true` \| `false` — return all existing files when plugin has no change token |
 | `/petroglyph/config/retention-days`         | String       | Days to retain S3 objects after staging (default: `90`)                       |
 
-> **Note:** In Phase 3 (multi-user), per-user OneDrive tokens and settings will move to DynamoDB. SSM is appropriate for a single-user personal deployment.
+> **Note:** Per-user OneDrive token state is stored in DynamoDB (`refresh_tokens` table). SSM stores only system-level configuration/secrets.
 
 ---
 
