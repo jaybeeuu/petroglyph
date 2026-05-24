@@ -2,7 +2,7 @@ import { PutParameterCommand } from "@aws-sdk/client-ssm";
 import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { docClient } from "./db.js";
-import { resolveOneDriveAccessToken } from "./onedrive-middleware.js";
+import { readOneDriveParams, refreshOneDriveToken } from "./onedrive-middleware.js";
 import { ssmClient } from "./ssm.js";
 
 function usersTable(): string {
@@ -120,7 +120,8 @@ async function handleReauthorizationRequired(notification: LifecycleNotification
     throw new Error("Lifecycle notification missing subscriptionId");
   }
 
-  const accessToken = await resolveOneDriveAccessToken();
+  const { refreshToken } = await readOneDriveParams();
+  const accessToken = await refreshOneDriveToken(refreshToken);
   const subscriptionExpiry = await renewGraphSubscription(notification.subscriptionId, accessToken);
   await storeSubscriptionExpiry(subscriptionExpiry);
   await markConnected(notification.clientState);
