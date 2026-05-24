@@ -58,9 +58,12 @@ function assertMicrosoftTokenResponse(value: unknown): asserts value is Microsof
 export async function refreshOneDriveToken(currentRefreshToken: string): Promise<string> {
   const clientId = process.env["MICROSOFT_CLIENT_ID"];
   if (!clientId) throw new Error("MICROSOFT_CLIENT_ID env var not set");
+  const clientSecret = process.env["MICROSOFT_CLIENT_SECRET"];
+  if (!clientSecret) throw new Error("MICROSOFT_CLIENT_SECRET env var not set");
 
   const body = new URLSearchParams({
     client_id: clientId,
+    client_secret: clientSecret,
     grant_type: "refresh_token",
     refresh_token: currentRefreshToken,
     scope: "files.read offline_access",

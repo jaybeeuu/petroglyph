@@ -1,5 +1,5 @@
-import { GetParameterCommand, PutParameterCommand } from "@aws-sdk/client-ssm";
-import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { PutParameterCommand } from "@aws-sdk/client-ssm";
+import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockDbSend = vi.hoisted(() => vi.fn());
@@ -25,7 +25,9 @@ describe("POST /onedrive/lifecycle", () => {
     mockSsmSend.mockReset();
     mockFetch.mockReset();
     vi.stubEnv("USERS_TABLE", "petroglyph-users-test");
+    vi.stubEnv("REFRESH_TOKENS_TABLE", "petroglyph-refresh_tokens-test");
     vi.stubEnv("MICROSOFT_CLIENT_ID", "test-ms-client-id");
+    vi.stubEnv("MICROSOFT_CLIENT_SECRET", "test-ms-client-secret");
   });
 
   afterEach(() => {
@@ -33,24 +35,22 @@ describe("POST /onedrive/lifecycle", () => {
     vi.restoreAllMocks();
   });
 
-  function setupSsmMock(tokenExpiry: string): void {
+  interface CommandResponseEntry {
+    command: new (...args: never[]) => object;
+    response: unknown;
+  }
+
+  function setupDbMock(entries: CommandResponseEntry[]): void {
+    mockDbSend.mockImplementation((command: unknown) => {
+      const match = entries.find((entry) => command instanceof entry.command);
+      return Promise.resolve(match?.response ?? {});
+    });
+  }
+
+  function setupSsmMock(entries: CommandResponseEntry[]): void {
     mockSsmSend.mockImplementation((command: unknown) => {
-      if (command instanceof GetParameterCommand) {
-        const name = (command as { input: { Name: string } }).input.Name;
-        if (name === "/petroglyph/onedrive/access-token") {
-          return Promise.resolve({ Parameter: { Value: "existing-access-token" } });
-        }
-        if (name === "/petroglyph/onedrive/token-expiry") {
-          return Promise.resolve({ Parameter: { Value: tokenExpiry } });
-        }
-        if (name === "/petroglyph/onedrive/refresh-token") {
-          return Promise.resolve({ Parameter: { Value: "existing-refresh-token" } });
-        }
-      }
-      if (command instanceof PutParameterCommand) {
-        return Promise.resolve({});
-      }
-      return Promise.resolve({});
+      const match = entries.find((entry) => command instanceof entry.command);
+      return Promise.resolve(match?.response ?? {});
     });
   }
 
@@ -117,7 +117,10 @@ describe("POST /onedrive/lifecycle", () => {
   });
 
   it("refreshes the token and renews the subscription for reauthorizationRequired events", async () => {
-    setupSsmMock(new Date(Date.now() + 60 * 60 * 1000).toISOString()); // 1 hour — well outside the refresh window
+    setupDbMock([
+      { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
+    ]);
+    setupSsmMock([{ command: PutParameterCommand, response: {} }]);
     mockFetch.mockImplementation((url: string) => {
       if (url === "https://login.microsoftonline.com/common/oauth2/v2.0/token") {
         return Promise.resolve({
@@ -215,7 +218,10 @@ describe("POST /onedrive/lifecycle", () => {
   });
 
   it("marks the user as reconnect_required when token refresh fails", async () => {
-    setupSsmMock(new Date(Date.now() + 60 * 60 * 1000).toISOString()); // 1 hour — well outside the refresh window
+    setupDbMock([
+      { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
+    ]);
+    setupSsmMock([{ command: PutParameterCommand, response: {} }]);
     mockFetch.mockResolvedValue({
       ok: false,
       status: 401,
@@ -261,7 +267,10 @@ describe("POST /onedrive/lifecycle", () => {
   });
 
   it("marks the user as reconnect_required when subscription renewal fails", async () => {
-    setupSsmMock(new Date(Date.now() + 30 * 60 * 1000).toISOString());
+    setupDbMock([
+      { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
+    ]);
+    setupSsmMock([{ command: PutParameterCommand, response: {} }]);
     mockFetch.mockResolvedValue({
       ok: false,
       status: 500,
@@ -327,7 +336,10 @@ describe("POST /onedrive/lifecycle", () => {
   });
 
   it("returns 202 after reauthorization work finishes", async () => {
-    setupSsmMock(new Date(Date.now() + 5 * 60 * 1000).toISOString());
+    setupDbMock([
+      { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
+    ]);
+    setupSsmMock([{ command: PutParameterCommand, response: {} }]);
     mockFetch.mockImplementation((url: string) => {
       if (url === "https://login.microsoftonline.com/common/oauth2/v2.0/token") {
         return Promise.resolve({

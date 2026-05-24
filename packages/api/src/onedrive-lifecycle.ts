@@ -1,12 +1,16 @@
 import { PutParameterCommand } from "@aws-sdk/client-ssm";
-import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { docClient } from "./db.js";
-import { readOneDriveParams, refreshOneDriveToken } from "./onedrive-middleware.js";
+import { refreshOneDriveToken } from "./onedrive-middleware.js";
 import { ssmClient } from "./ssm.js";
 
 function usersTable(): string {
   return process.env["USERS_TABLE"] ?? "petroglyph-users-default";
+}
+
+function refreshTokensTable(): string {
+  return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
 }
 
 interface LifecycleNotification {
@@ -19,6 +23,17 @@ type OneDriveStatus = "connected" | "reconnect_required";
 
 function isRecord(value: unknown): value is { [key: string]: unknown } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseRefreshToken(item: unknown, userId: string): string {
+  if (
+    !isRecord(item) ||
+    typeof item["refreshToken"] !== "string" ||
+    item["refreshToken"].length === 0
+  ) {
+    throw new Error(`Refresh token missing for user ${userId}`);
+  }
+  return item["refreshToken"];
 }
 
 function parseLifecycleNotifications(body: unknown): LifecycleNotification[] {
@@ -120,7 +135,17 @@ async function handleReauthorizationRequired(notification: LifecycleNotification
     throw new Error("Lifecycle notification missing subscriptionId");
   }
 
-  const { refreshToken } = await readOneDriveParams();
+  const refreshTokenResult = await docClient.send(
+    new GetCommand({
+      TableName: refreshTokensTable(),
+      Key: { tokenHash: notification.clientState },
+    }),
+  );
+  const refreshToken = parseRefreshToken(
+    refreshTokenResult.Item as unknown,
+    notification.clientState,
+  );
+
   const accessToken = await refreshOneDriveToken(refreshToken);
   const subscriptionExpiry = await renewGraphSubscription(notification.subscriptionId, accessToken);
   await storeSubscriptionExpiry(subscriptionExpiry);

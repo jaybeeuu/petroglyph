@@ -38,6 +38,7 @@ describe("POST /sync/run", () => {
     vi.stubEnv("ONEDRIVE_FOLDER", "OnyxBoox");
     vi.stubEnv("FILE_RECORDS_TABLE", "petroglyph-file-records-test");
     vi.stubEnv("MICROSOFT_CLIENT_ID", "test-client-id");
+    vi.stubEnv("MICROSOFT_CLIENT_SECRET", "test-client-secret");
     mockDbSend.mockReset();
     mockSsmSend.mockReset();
     mockFetch.mockReset();

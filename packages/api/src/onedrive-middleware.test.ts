@@ -87,6 +87,7 @@ describe("onedriveMiddleware", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", mockFetch);
     vi.stubEnv("MICROSOFT_CLIENT_ID", "test-client-id");
+    vi.stubEnv("MICROSOFT_CLIENT_SECRET", "test-client-secret");
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
@@ -145,6 +146,7 @@ describe("onedriveMiddleware", () => {
 
       const params = new URLSearchParams(init.body);
       expect(params.get("client_id")).toBe("test-client-id");
+      expect(params.get("client_secret")).toBe("test-client-secret");
       expect(params.get("grant_type")).toBe("refresh_token");
       expect(params.get("refresh_token")).toBe(REFRESH_TOKEN);
       expect(params.get("scope")).toBe("files.read offline_access");
