@@ -1,14 +1,14 @@
-import { GetParameterCommand, PutParameterCommand } from "@aws-sdk/client-ssm";
+import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppVariables } from "./auth-middleware.js";
 
-const mockSsmSend = vi.hoisted(() => vi.fn());
+const mockDbSend = vi.hoisted(() => vi.fn());
 const mockFetch = vi.hoisted(() => vi.fn());
 
-vi.mock("./ssm.js", () => ({
-  ssmClient: { send: mockSsmSend },
+vi.mock("./db.js", () => ({
+  docClient: { send: mockDbSend },
 }));
 
 import { onedriveMiddleware } from "./onedrive-middleware.js";
@@ -20,31 +20,21 @@ const REFRESH_TOKEN = "existing-refresh-token";
 const NEW_ACCESS_TOKEN = "new-access-token";
 const NEW_REFRESH_TOKEN = "new-refresh-token";
 
-const SSM_ACCESS_TOKEN = "/petroglyph/onedrive/access-token";
-const SSM_TOKEN_EXPIRY = "/petroglyph/onedrive/token-expiry";
-const SSM_REFRESH_TOKEN = "/petroglyph/onedrive/refresh-token";
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function expiryInFuture(offsetMs: number): string {
-  return new Date(Date.now() + offsetMs).toISOString();
-}
-
-function setupSsmMock(tokenExpiry: string): void {
-  mockSsmSend.mockImplementation((cmd: unknown) => {
-    if (cmd instanceof GetParameterCommand) {
-      const name = (cmd as { input: { Name: string } }).input.Name;
-      if (name === SSM_ACCESS_TOKEN) {
-        return Promise.resolve({ Parameter: { Value: ACCESS_TOKEN } });
-      }
-      if (name === SSM_TOKEN_EXPIRY) {
-        return Promise.resolve({ Parameter: { Value: tokenExpiry } });
-      }
-      if (name === SSM_REFRESH_TOKEN) {
-        return Promise.resolve({ Parameter: { Value: REFRESH_TOKEN } });
-      }
+function setupDbMock(tokenExpirySecondsOffset: number): void {
+  const expirySeconds = Math.floor((Date.now() + tokenExpirySecondsOffset) / 1000);
+  mockDbSend.mockImplementation((cmd: unknown) => {
+    if (cmd instanceof GetCommand) {
+      return Promise.resolve({
+        Item: {
+          accessToken: ACCESS_TOKEN,
+          refreshToken: REFRESH_TOKEN,
+          expirySeconds,
+        },
+      });
     }
-    if (cmd instanceof PutParameterCommand) {
+    if (cmd instanceof UpdateCommand) {
       return Promise.resolve({});
     }
     return Promise.resolve({});
@@ -73,10 +63,12 @@ function setupFetchMock(
 
 function makeTestApp(): Hono<{ Variables: AppVariables }> {
   const app = new Hono<{ Variables: AppVariables }>();
-  app.use("*", (c, next) =>
+  app.use("*", async (c, next) => {
+    c.set("userId", "user-42");
+    c.set("username", "octocat");
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-    onedriveMiddleware(c as unknown as Context<{ Variables: AppVariables }>, next),
-  );
+    await onedriveMiddleware(c as unknown as Context<{ Variables: AppVariables }>, next);
+  });
   app.get("/test", (c) => c.json({ token: c.get("onedriveAccessToken") ?? null }));
   return app;
 }
@@ -95,14 +87,13 @@ describe("onedriveMiddleware", () => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    mockSsmSend.mockReset();
+    mockDbSend.mockReset();
     mockFetch.mockReset();
   });
 
   describe("token not near expiry", () => {
     it("passes through without refreshing and sets access token in context", async () => {
-      const expiry = expiryInFuture(30 * 60 * 1000); // 30 min away
-      setupSsmMock(expiry);
+      setupDbMock(30 * 60 * 1000); // 30 min away
 
       const app = makeTestApp();
       const res = await app.request("/test");
@@ -116,8 +107,7 @@ describe("onedriveMiddleware", () => {
 
   describe("token within 10 minutes of expiry", () => {
     it("refreshes the token and sets new access token in context", async () => {
-      const expiry = expiryInFuture(5 * 60 * 1000); // 5 min away
-      setupSsmMock(expiry);
+      setupDbMock(5 * 60 * 1000); // 5 min away
       setupFetchMock();
 
       const app = makeTestApp();
@@ -129,8 +119,7 @@ describe("onedriveMiddleware", () => {
     });
 
     it("POSTs to Microsoft token endpoint with correct params", async () => {
-      const expiry = expiryInFuture(5 * 60 * 1000);
-      setupSsmMock(expiry);
+      setupDbMock(5 * 60 * 1000);
       setupFetchMock();
 
       const app = makeTestApp();
@@ -152,41 +141,33 @@ describe("onedriveMiddleware", () => {
       expect(params.get("scope")).toBe("files.read offline_access");
     });
 
-    it("writes new tokens back to SSM with Overwrite=true", async () => {
-      const expiry = expiryInFuture(5 * 60 * 1000);
-      setupSsmMock(expiry);
+    it("writes new tokens back to DynamoDB", async () => {
+      setupDbMock(5 * 60 * 1000);
       setupFetchMock();
 
       const app = makeTestApp();
       await app.request("/test");
 
-      const putCalls = mockSsmSend.mock.calls.filter(([cmd]) => cmd instanceof PutParameterCommand);
-      expect(putCalls).toHaveLength(3);
-
-      const putInputs = putCalls.map(
-        ([cmd]) => (cmd as { input: { Name: string; Value: string; Overwrite: boolean } }).input,
-      );
-
-      const accessTokenPut = putInputs.find((i) => i.Name === SSM_ACCESS_TOKEN);
-      expect(accessTokenPut?.Value).toBe(NEW_ACCESS_TOKEN);
-      expect(accessTokenPut?.Overwrite).toBe(true);
-
-      const refreshTokenPut = putInputs.find((i) => i.Name === SSM_REFRESH_TOKEN);
-      expect(refreshTokenPut?.Value).toBe(NEW_REFRESH_TOKEN);
-      expect(refreshTokenPut?.Overwrite).toBe(true);
-
-      const expiryPut = putInputs.find((i) => i.Name === SSM_TOKEN_EXPIRY);
-      expect(expiryPut?.Overwrite).toBe(true);
-      expect(typeof expiryPut?.Value).toBe("string");
-      if (expiryPut === undefined) throw new Error("expiryPut should be defined");
-      expect(() => new Date(expiryPut.Value)).not.toThrow();
+      const updateCalls = mockDbSend.mock.calls.filter(([cmd]) => cmd instanceof UpdateCommand);
+      expect(updateCalls).toHaveLength(1);
+      const updateInput = (
+        updateCalls[0] as [
+          {
+            input: {
+              ExpressionAttributeValues: { [key: string]: unknown };
+            };
+          },
+        ]
+      )[0].input;
+      expect(updateInput.ExpressionAttributeValues[":accessToken"]).toBe(NEW_ACCESS_TOKEN);
+      expect(updateInput.ExpressionAttributeValues[":refreshToken"]).toBe(NEW_REFRESH_TOKEN);
+      expect(typeof updateInput.ExpressionAttributeValues[":expirySeconds"]).toBe("number");
     });
   });
 
   describe("token already expired", () => {
     it("refreshes when token is already past its expiry", async () => {
-      const expiry = expiryInFuture(-60 * 1000); // 1 min ago
-      setupSsmMock(expiry);
+      setupDbMock(-60 * 1000); // 1 min ago
       setupFetchMock();
 
       const app = makeTestApp();
@@ -199,9 +180,9 @@ describe("onedriveMiddleware", () => {
     });
   });
 
-  describe("SSM read error", () => {
-    it("passes through with undefined token when SSM read fails", async () => {
-      mockSsmSend.mockRejectedValue(new Error("SSM unavailable"));
+  describe("DynamoDB read error", () => {
+    it("passes through with undefined token when DynamoDB read fails", async () => {
+      mockDbSend.mockRejectedValue(new Error("DynamoDB unavailable"));
 
       const app = makeTestApp();
       const res = await app.request("/test");
@@ -214,8 +195,7 @@ describe("onedriveMiddleware", () => {
 
   describe("Microsoft refresh API error", () => {
     it("passes through with old access token when Microsoft returns non-ok response", async () => {
-      const expiry = expiryInFuture(5 * 60 * 1000);
-      setupSsmMock(expiry);
+      setupDbMock(5 * 60 * 1000);
       setupFetchMock({ ok: false, status: 500 });
 
       const app = makeTestApp();
@@ -227,8 +207,7 @@ describe("onedriveMiddleware", () => {
     });
 
     it("passes through with old access token when fetch throws", async () => {
-      const expiry = expiryInFuture(5 * 60 * 1000);
-      setupSsmMock(expiry);
+      setupDbMock(5 * 60 * 1000);
       mockFetch.mockRejectedValue(new Error("network error"));
 
       const app = makeTestApp();
@@ -242,8 +221,7 @@ describe("onedriveMiddleware", () => {
 
   describe("Microsoft token response validation", () => {
     it("passes through with old token when response is missing access_token", async () => {
-      const expiry = expiryInFuture(5 * 60 * 1000);
-      setupSsmMock(expiry);
+      setupDbMock(5 * 60 * 1000);
       setupFetchMock({
         body: { refresh_token: NEW_REFRESH_TOKEN, expires_in: 3600 },
       });
@@ -257,8 +235,7 @@ describe("onedriveMiddleware", () => {
     });
 
     it("passes through with old token when response is missing refresh_token", async () => {
-      const expiry = expiryInFuture(5 * 60 * 1000);
-      setupSsmMock(expiry);
+      setupDbMock(5 * 60 * 1000);
       setupFetchMock({
         body: { access_token: NEW_ACCESS_TOKEN, expires_in: 3600 },
       });
@@ -272,8 +249,7 @@ describe("onedriveMiddleware", () => {
     });
 
     it("passes through with old token when expires_in is not a number", async () => {
-      const expiry = expiryInFuture(5 * 60 * 1000);
-      setupSsmMock(expiry);
+      setupDbMock(5 * 60 * 1000);
       setupFetchMock({
         body: {
           access_token: NEW_ACCESS_TOKEN,
@@ -291,8 +267,7 @@ describe("onedriveMiddleware", () => {
     });
 
     it("passes through with old token when response is not an object", async () => {
-      const expiry = expiryInFuture(5 * 60 * 1000);
-      setupSsmMock(expiry);
+      setupDbMock(5 * 60 * 1000);
       setupFetchMock({ body: "unexpected string" });
 
       const app = makeTestApp();

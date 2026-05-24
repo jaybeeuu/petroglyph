@@ -1,9 +1,6 @@
-import { PutParameterCommand } from "@aws-sdk/client-ssm";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { docClient } from "./db.js";
-import { refreshOneDriveToken } from "./onedrive-middleware.js";
-import { ssmClient } from "./ssm.js";
 
 function usersTable(): string {
   return process.env["USERS_TABLE"] ?? "petroglyph-users-default";
@@ -87,7 +84,11 @@ interface GraphSubscriptionResponse {
   expirationDateTime: string;
 }
 
-const SSM_SUBSCRIPTION_EXPIRY = "/petroglyph/onedrive/subscription-expiry";
+interface MicrosoftTokenResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+}
 
 function parseGraphSubscriptionResponse(value: unknown): GraphSubscriptionResponse {
   if (!isRecord(value) || typeof value["expirationDateTime"] !== "string") {
@@ -119,13 +120,71 @@ async function renewGraphSubscription(
   return data.expirationDateTime;
 }
 
-async function storeSubscriptionExpiry(expirationDateTime: string): Promise<void> {
-  await ssmClient.send(
-    new PutParameterCommand({
-      Name: SSM_SUBSCRIPTION_EXPIRY,
-      Value: expirationDateTime,
-      Type: "SecureString",
-      Overwrite: true,
+function parseMicrosoftTokenResponse(value: unknown): MicrosoftTokenResponse {
+  if (!isRecord(value)) {
+    throw new Error("Microsoft token response is not an object");
+  }
+  if (typeof value["access_token"] !== "string") {
+    throw new Error("Microsoft token response missing string access_token");
+  }
+  if (typeof value["refresh_token"] !== "string") {
+    throw new Error("Microsoft token response missing string refresh_token");
+  }
+  if (typeof value["expires_in"] !== "number") {
+    throw new Error("Microsoft token response missing number expires_in");
+  }
+  return {
+    access_token: value["access_token"],
+    refresh_token: value["refresh_token"],
+    expires_in: value["expires_in"],
+  };
+}
+
+async function refreshUserToken(refreshToken: string): Promise<MicrosoftTokenResponse> {
+  const clientId = process.env["MICROSOFT_CLIENT_ID"];
+  if (!clientId) throw new Error("MICROSOFT_CLIENT_ID env var not set");
+  const clientSecret = process.env["MICROSOFT_CLIENT_SECRET"];
+  if (!clientSecret) throw new Error("MICROSOFT_CLIENT_SECRET env var not set");
+
+  const body = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    scope: "files.read offline_access",
+  });
+
+  const response = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  if (!response.ok) {
+    throw new Error(`Microsoft token refresh failed with status ${response.status}`);
+  }
+
+  return parseMicrosoftTokenResponse(await response.json());
+}
+
+async function storeUserTokens(
+  userId: string,
+  accessToken: string,
+  refreshToken: string,
+  expiresIn: number,
+): Promise<void> {
+  const expirySeconds = Math.floor(Date.now() / 1000) + expiresIn;
+  await docClient.send(
+    new UpdateCommand({
+      TableName: refreshTokensTable(),
+      Key: { tokenHash: userId },
+      UpdateExpression:
+        "SET accessToken = :accessToken, refreshToken = :refreshToken, expirySeconds = :expirySeconds, updatedAt = :updatedAt",
+      ExpressionAttributeValues: {
+        ":accessToken": accessToken,
+        ":refreshToken": refreshToken,
+        ":expirySeconds": expirySeconds,
+        ":updatedAt": new Date().toISOString(),
+      },
     }),
   );
 }
@@ -145,10 +204,14 @@ async function handleReauthorizationRequired(notification: LifecycleNotification
     refreshTokenResult.Item as unknown,
     notification.clientState,
   );
-
-  const accessToken = await refreshOneDriveToken(refreshToken);
-  const subscriptionExpiry = await renewGraphSubscription(notification.subscriptionId, accessToken);
-  await storeSubscriptionExpiry(subscriptionExpiry);
+  const refreshed = await refreshUserToken(refreshToken);
+  await storeUserTokens(
+    notification.clientState,
+    refreshed.access_token,
+    refreshed.refresh_token,
+    refreshed.expires_in,
+  );
+  await renewGraphSubscription(notification.subscriptionId, refreshed.access_token);
   await markConnected(notification.clientState);
 }
 

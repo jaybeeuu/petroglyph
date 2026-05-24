@@ -1,36 +1,51 @@
-import { GetParameterCommand, PutParameterCommand } from "@aws-sdk/client-ssm";
+import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { MiddlewareHandler } from "hono";
 import type { AppVariables } from "./auth-middleware.js";
-import { ssmClient } from "./ssm.js";
+import { docClient } from "./db.js";
 
 export const TEN_MINUTES_MS = 10 * 60 * 1000;
 
-const SSM_ACCESS_TOKEN = "/petroglyph/onedrive/access-token";
-const SSM_TOKEN_EXPIRY = "/petroglyph/onedrive/token-expiry";
-const SSM_REFRESH_TOKEN = "/petroglyph/onedrive/refresh-token";
-
-async function readSsmString(name: string): Promise<string> {
-  const result = await ssmClient.send(
-    new GetParameterCommand({ Name: name, WithDecryption: true }),
-  );
-  const value = result.Parameter?.Value;
-  if (!value) throw new Error(`SSM parameter not found or empty: ${name}`);
-  return value;
+function refreshTokensTable(): string {
+  return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
 }
 
 export interface OneDriveParams {
   accessToken: string;
-  tokenExpiry: string;
+  tokenExpirySeconds: number;
   refreshToken: string;
 }
 
-export async function readOneDriveParams(): Promise<OneDriveParams> {
-  const [accessToken, tokenExpiry, refreshToken] = await Promise.all([
-    readSsmString(SSM_ACCESS_TOKEN),
-    readSsmString(SSM_TOKEN_EXPIRY),
-    readSsmString(SSM_REFRESH_TOKEN),
-  ]);
-  return { accessToken, tokenExpiry, refreshToken };
+function parseOneDriveParams(value: unknown, userId: string): OneDriveParams {
+  if (typeof value !== "object" || value === null) {
+    throw new Error(`OneDrive token record missing for user ${userId}`);
+  }
+  const item = value as { [key: string]: unknown };
+  if (typeof item["accessToken"] !== "string" || item["accessToken"].length === 0) {
+    throw new Error(`OneDrive accessToken missing for user ${userId}`);
+  }
+  if (typeof item["refreshToken"] !== "string" || item["refreshToken"].length === 0) {
+    throw new Error(`OneDrive refreshToken missing for user ${userId}`);
+  }
+  if (typeof item["expirySeconds"] !== "number") {
+    throw new Error(`OneDrive expirySeconds missing for user ${userId}`);
+  }
+
+  return {
+    accessToken: item["accessToken"],
+    refreshToken: item["refreshToken"],
+    tokenExpirySeconds: item["expirySeconds"],
+  };
+}
+
+export async function readOneDriveParams(userId: string): Promise<OneDriveParams> {
+  const result = await docClient.send(
+    new GetCommand({
+      TableName: refreshTokensTable(),
+      Key: { tokenHash: userId },
+    }),
+  );
+
+  return parseOneDriveParams(result.Item, userId);
 }
 
 interface MicrosoftTokenResponse {
@@ -55,7 +70,9 @@ function assertMicrosoftTokenResponse(value: unknown): asserts value is Microsof
   }
 }
 
-export async function refreshOneDriveToken(currentRefreshToken: string): Promise<string> {
+export async function refreshOneDriveToken(
+  currentRefreshToken: string,
+): Promise<MicrosoftTokenResponse> {
   const clientId = process.env["MICROSOFT_CLIENT_ID"];
   if (!clientId) throw new Error("MICROSOFT_CLIENT_ID env var not set");
   const clientSecret = process.env["MICROSOFT_CLIENT_SECRET"];
@@ -82,43 +99,46 @@ export async function refreshOneDriveToken(currentRefreshToken: string): Promise
   const data: unknown = await response.json();
   assertMicrosoftTokenResponse(data);
 
-  const { access_token, refresh_token, expires_in } = data;
-  const newExpiry = new Date(Date.now() + expires_in * 1000).toISOString();
-
-  await Promise.all([
-    ssmClient.send(
-      new PutParameterCommand({
-        Name: SSM_ACCESS_TOKEN,
-        Value: access_token,
-        Overwrite: true,
-      }),
-    ),
-    ssmClient.send(
-      new PutParameterCommand({
-        Name: SSM_TOKEN_EXPIRY,
-        Value: newExpiry,
-        Overwrite: true,
-      }),
-    ),
-    ssmClient.send(
-      new PutParameterCommand({
-        Name: SSM_REFRESH_TOKEN,
-        Value: refresh_token,
-        Overwrite: true,
-      }),
-    ),
-  ]);
-
-  return access_token;
+  return data;
 }
 
-export async function resolveOneDriveAccessToken(): Promise<string> {
-  const params = await readOneDriveParams();
-  const msUntilExpiry = new Date(params.tokenExpiry).getTime() - Date.now();
+async function storeOneDriveParams(
+  userId: string,
+  accessToken: string,
+  refreshToken: string,
+  expiresIn: number,
+): Promise<void> {
+  const expirySeconds = Math.floor(Date.now() / 1000) + expiresIn;
+  await docClient.send(
+    new UpdateCommand({
+      TableName: refreshTokensTable(),
+      Key: { tokenHash: userId },
+      UpdateExpression:
+        "SET accessToken = :accessToken, refreshToken = :refreshToken, expirySeconds = :expirySeconds, updatedAt = :updatedAt",
+      ExpressionAttributeValues: {
+        ":accessToken": accessToken,
+        ":refreshToken": refreshToken,
+        ":expirySeconds": expirySeconds,
+        ":updatedAt": new Date().toISOString(),
+      },
+    }),
+  );
+}
+
+export async function resolveOneDriveAccessToken(userId: string): Promise<string> {
+  const params = await readOneDriveParams(userId);
+  const msUntilExpiry = params.tokenExpirySeconds * 1000 - Date.now();
 
   if (msUntilExpiry <= TEN_MINUTES_MS) {
     try {
-      return await refreshOneDriveToken(params.refreshToken);
+      const refreshed = await refreshOneDriveToken(params.refreshToken);
+      await storeOneDriveParams(
+        userId,
+        refreshed.access_token,
+        refreshed.refresh_token,
+        refreshed.expires_in,
+      );
+      return refreshed.access_token;
     } catch (err) {
       console.error("[onedrive-middleware] token refresh failed:", err);
     }
@@ -131,11 +151,16 @@ export const onedriveMiddleware: MiddlewareHandler<{
   Variables: AppVariables;
 }> = async (c, next) => {
   let accessToken: string | undefined;
+  const userId = c.get("userId");
 
-  try {
-    accessToken = await resolveOneDriveAccessToken();
-  } catch (err) {
-    console.error("[onedrive-middleware] SSM read failed:", err);
+  if (!userId) {
+    console.error("[onedrive-middleware] missing userId in request context");
+  } else {
+    try {
+      accessToken = await resolveOneDriveAccessToken(userId);
+    } catch (err) {
+      console.error("[onedrive-middleware] DynamoDB read failed:", err);
+    }
   }
 
   c.set("onedriveAccessToken", accessToken);
