@@ -116,8 +116,8 @@ describe("POST /onedrive/lifecycle", () => {
     expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("reconnect_required");
   });
 
-  it("refreshes and renews subscriptions for reauthorizationRequired events", async () => {
-    setupSsmMock(new Date(Date.now() + 5 * 60 * 1000).toISOString());
+  it("refreshes the token and renews the subscription for reauthorizationRequired events", async () => {
+    setupSsmMock(new Date(Date.now() + 60 * 60 * 1000).toISOString()); // 1 hour — well outside the refresh window
     mockFetch.mockImplementation((url: string) => {
       if (url === "https://login.microsoftonline.com/common/oauth2/v2.0/token") {
         return Promise.resolve({
@@ -215,7 +215,7 @@ describe("POST /onedrive/lifecycle", () => {
   });
 
   it("marks the user as reconnect_required when token refresh fails", async () => {
-    setupSsmMock(new Date(Date.now() + 5 * 60 * 1000).toISOString());
+    setupSsmMock(new Date(Date.now() + 60 * 60 * 1000).toISOString()); // 1 hour — well outside the refresh window
     mockFetch.mockResolvedValue({
       ok: false,
       status: 401,
