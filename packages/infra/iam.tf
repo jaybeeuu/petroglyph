@@ -22,6 +22,89 @@ locals {
 }
 
 # ---------------------------------------------------------------------------
+# Local read-only user (for developer machines and AI agents)
+# ---------------------------------------------------------------------------
+#
+# Use this profile locally instead of an admin profile. It can read logs,
+# DynamoDB, SSM, and Lambda config but cannot mutate any resources.
+#
+# After applying, create an access key in the AWS console under
+# IAM > Users > petroglyph-local and add it to ~/.aws/credentials:
+#
+#   [petroglyph-local]
+#   aws_access_key_id     = <key id>
+#   aws_secret_access_key = <secret>
+#
+#   [profile petroglyph-local]
+#   region = eu-west-2
+
+resource "aws_iam_user" "petroglyph_local" {
+  name = "petroglyph-local"
+
+  tags = {
+    purpose = "local-development-readonly"
+  }
+}
+
+resource "aws_iam_user_policy" "petroglyph_local_policy" {
+  name = "petroglyph-local-readonly"
+  user = aws_iam_user.petroglyph_local.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "DynamoDBRead"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:Query",
+          "dynamodb:Scan",
+          "dynamodb:DescribeTable",
+          "dynamodb:ListTables",
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "SSMRead"
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParameters",
+          "ssm:GetParametersByPath",
+          "ssm:DescribeParameters",
+        ]
+        Resource = "${local.ssm_arn_prefix}/petroglyph/*"
+      },
+      {
+        Sid    = "LambdaRead"
+        Effect = "Allow"
+        Action = [
+          "lambda:GetFunction",
+          "lambda:GetFunctionConfiguration",
+          "lambda:ListFunctions",
+          "lambda:ListVersionsByFunction",
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "CloudWatchLogsRead"
+        Effect = "Allow"
+        Action = [
+          "logs:DescribeLogGroups",
+          "logs:DescribeLogStreams",
+          "logs:FilterLogEvents",
+          "logs:GetLogEvents",
+          "logs:StartQuery",
+          "logs:GetQueryResults",
+        ]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+# ---------------------------------------------------------------------------
 # API role
 # ---------------------------------------------------------------------------
 
