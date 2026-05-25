@@ -138,7 +138,7 @@ async function refreshUserToken(refreshToken: string): Promise<MicrosoftTokenRes
     client_secret: clientSecret,
     grant_type: "refresh_token",
     refresh_token: refreshToken,
-    scope: "files.read offline_access",
+    scope: "files.readwrite offline_access",
   });
 
   const response = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {

@@ -172,7 +172,7 @@ async function refreshOneDriveAccessToken(refreshToken: string): Promise<string>
       client_id: clientId,
       grant_type: "refresh_token",
       refresh_token: refreshToken,
-      scope: "files.read offline_access",
+      scope: "files.readwrite offline_access",
     }).toString(),
   });
 

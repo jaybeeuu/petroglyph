@@ -260,7 +260,7 @@ describe("POST /onedrive/connect", () => {
     expect(sentParams.get("code")).toBe(VALID_CODE);
     expect(sentParams.get("redirect_uri")).toBe("obsidian://petroglyph/onedrive/callback");
     expect(sentParams.get("code_verifier")).toBe(VALID_VERIFIER);
-    expect(sentParams.get("scope")).toBe("files.read offline_access");
+    expect(sentParams.get("scope")).toBe("files.readwrite offline_access");
   });
 
   it("returns 500 when MICROSOFT_CLIENT_SECRET is not configured", async () => {
