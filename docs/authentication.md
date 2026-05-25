@@ -187,7 +187,7 @@ Connecting OneDrive is a separate, explicit step after logging in. It uses Micro
 | Type                    | Multi-tenant, public client                          |
 | Supported account types | Personal Microsoft accounts AND work/school accounts |
 | Redirect URI            | `obsidian://petroglyph/oauth/callback`               |
-| Scopes                  | `Files.Read offline_access`                          |
+| Scopes                  | `Files.ReadWrite offline_access`                     |
 
 > Supports both personal accounts (outlook.com, hotmail.com, live.com) and work/school accounts (Microsoft 365 / Entra ID). Multi-tenant registration is required for personal account support.
 

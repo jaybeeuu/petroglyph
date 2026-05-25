@@ -138,7 +138,7 @@ describe("onedriveMiddleware", () => {
       expect(params.get("client_secret")).toBe("test-client-secret");
       expect(params.get("grant_type")).toBe("refresh_token");
       expect(params.get("refresh_token")).toBe(REFRESH_TOKEN);
-      expect(params.get("scope")).toBe("files.read offline_access");
+      expect(params.get("scope")).toBe("files.readwrite offline_access");
     });
 
     it("writes new tokens back to DynamoDB", async () => {

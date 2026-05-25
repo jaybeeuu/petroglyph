@@ -165,7 +165,7 @@ Used for OneDrive connection (`GET /onedrive/auth-url` → `GET /onedrive/connec
 
 3. Click **Register**. Copy the **Application (client) ID** from the overview page.
 4. Go to **API permissions → Add a permission → Microsoft Graph → Delegated permissions**. Add:
-   - `Files.Read`
+   - `Files.ReadWrite`
    - `offline_access`
 5. Go to **Certificates & secrets → New client secret**. Copy the **Value** immediately (it is only shown once).
 6. Store in SSM (overwrite the placeholder):

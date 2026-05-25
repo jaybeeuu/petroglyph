@@ -294,7 +294,7 @@ describe("processor handler", () => {
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
         },
-        body: "client_id=test-microsoft-client-id&grant_type=refresh_token&refresh_token=stale-refresh-token&scope=files.read+offline_access",
+        body: "client_id=test-microsoft-client-id&grant_type=refresh_token&refresh_token=stale-refresh-token&scope=files.readwrite+offline_access",
       },
     ]);
 

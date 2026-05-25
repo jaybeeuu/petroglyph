@@ -41,7 +41,7 @@ export async function handleOnedriveAuthUrl(
   url.searchParams.set("client_id", clientId);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("redirect_uri", redirectUri);
-  url.searchParams.set("scope", "files.read offline_access");
+  url.searchParams.set("scope", "files.readwrite offline_access");
   url.searchParams.set("state", state);
   url.searchParams.set("code_challenge", challenge);
   url.searchParams.set("code_challenge_method", "S256");

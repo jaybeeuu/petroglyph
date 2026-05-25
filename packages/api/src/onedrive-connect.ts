@@ -112,7 +112,7 @@ async function exchangeCodeForTokens(
     code,
     redirect_uri: redirectUri,
     code_verifier: verifier,
-    scope: "files.read offline_access",
+    scope: "files.readwrite offline_access",
   });
 
   const response = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {

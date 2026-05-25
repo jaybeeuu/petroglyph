@@ -67,7 +67,7 @@ describe("GET /onedrive/auth-url", () => {
     expect(url.searchParams.get("client_id")).toBe("test-ms-client-id");
     expect(url.searchParams.get("response_type")).toBe("code");
     expect(url.searchParams.get("redirect_uri")).toBe("obsidian://petroglyph/onedrive/callback");
-    expect(url.searchParams.get("scope")).toBe("files.read offline_access");
+    expect(url.searchParams.get("scope")).toBe("files.readwrite offline_access");
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("state")).toBeTruthy();
     expect(url.searchParams.get("code_challenge")).toBeTruthy();
