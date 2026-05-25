@@ -488,6 +488,22 @@ describe("GET /onedrive/connect", () => {
     );
   });
 
+  it("redirects OAuth errors to obsidian:// callback with error and state", async () => {
+    const res = await app.request(
+      `/onedrive/connect?error=server_error&state=${VALID_STATE}&error_description=Something+went+wrong`,
+      {
+        method: "GET",
+      },
+    );
+
+    expect(res.status).toBe(302);
+    const location = res.headers.get("Location");
+    expect(location).toContain("obsidian://petroglyph/oauth/callback?");
+    expect(location).toContain("error=server_error");
+    expect(location).toContain(`state=${VALID_STATE}`);
+    expect(location).toContain("error_description=Something+went+wrong");
+  });
+
   // ── Missing query params ──────────────────────────────────────────────────
 
   it("returns 400 when code query param is missing", async () => {

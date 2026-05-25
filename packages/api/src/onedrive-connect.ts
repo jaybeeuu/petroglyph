@@ -247,6 +247,22 @@ async function upsertSyncProfile(userId: string): Promise<void> {
 }
 
 export function handleOnedriveCallbackBridge(c: Context<{ Variables: AppVariables }>): Response {
+  const oauthError = c.req.query("error");
+  const oauthErrorDescription = c.req.query("error_description");
+  const stateFromError = c.req.query("state");
+
+  if (oauthError && oauthError.length > 0) {
+    const redirectUrl = new URL("obsidian://petroglyph/oauth/callback");
+    redirectUrl.searchParams.set("error", oauthError);
+    if (stateFromError && stateFromError.length > 0) {
+      redirectUrl.searchParams.set("state", stateFromError);
+    }
+    if (oauthErrorDescription && oauthErrorDescription.length > 0) {
+      redirectUrl.searchParams.set("error_description", oauthErrorDescription);
+    }
+    return c.redirect(redirectUrl.toString(), 302);
+  }
+
   const code = c.req.query("code");
   const state = c.req.query("state");
 
