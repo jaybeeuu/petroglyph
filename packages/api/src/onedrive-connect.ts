@@ -92,6 +92,16 @@ async function deleteStateItem(state: string): Promise<void> {
   );
 }
 
+function decodeState(state: string): { stateHash: string; callbackUri: string | undefined } {
+  const pipeIdx = state.indexOf("|");
+  if (pipeIdx === -1) {
+    return { stateHash: state, callbackUri: undefined };
+  }
+  const stateHash = state.slice(0, pipeIdx);
+  const callbackUri = Buffer.from(state.slice(pipeIdx + 1), "base64url").toString("utf8");
+  return { stateHash, callbackUri };
+}
+
 async function exchangeCodeForTokens(
   code: string,
   verifier: string,
@@ -252,7 +262,10 @@ export function handleOnedriveCallbackBridge(c: Context<{ Variables: AppVariable
   const stateFromError = c.req.query("state");
 
   if (oauthError && oauthError.length > 0) {
-    const redirectUrl = new URL("obsidian://petroglyph/oauth/callback");
+    const { callbackUri } = stateFromError
+      ? decodeState(stateFromError)
+      : { callbackUri: undefined };
+    const redirectUrl = new URL(callbackUri ?? "obsidian://petroglyph/oauth/callback");
     redirectUrl.searchParams.set("error", oauthError);
     if (stateFromError && stateFromError.length > 0) {
       redirectUrl.searchParams.set("state", stateFromError);
@@ -274,7 +287,8 @@ export function handleOnedriveCallbackBridge(c: Context<{ Variables: AppVariable
     return c.json({ error: "Missing required query param: state" }, 400);
   }
 
-  const redirectUrl = new URL("obsidian://petroglyph/oauth/callback");
+  const { callbackUri } = decodeState(state);
+  const redirectUrl = new URL(callbackUri ?? "obsidian://petroglyph/oauth/callback");
   redirectUrl.searchParams.set("code", code);
   redirectUrl.searchParams.set("state", state);
 
@@ -293,10 +307,11 @@ export async function handleOnedriveConnect(
   }
 
   const { code, state } = body;
+  const { stateHash } = decodeState(state);
   const userId = c.get("userId");
   console.info("[onedrive-connect] Starting connect flow", { userId });
 
-  const stateItem = await lookupStateItem(state);
+  const stateItem = await lookupStateItem(stateHash);
   const now = Math.floor(Date.now() / 1000);
 
   if (!stateItem || stateItem.type !== "onedrive_state" || stateItem.ttl < now) {
@@ -309,7 +324,7 @@ export async function handleOnedriveConnect(
     return c.json({ error: "Invalid or expired state" }, 401);
   }
 
-  await deleteStateItem(state);
+  await deleteStateItem(stateHash);
 
   let tokens: MicrosoftTokenResponse;
   try {

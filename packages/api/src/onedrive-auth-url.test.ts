@@ -142,4 +142,53 @@ describe("GET /onedrive/auth-url", () => {
     const res = await app.request("/onedrive/auth-url");
     expect(res.status).toBe(401);
   });
+
+  describe("harnessCallbackUri", () => {
+    async function getAuthUrlWithHarness(callbackUri: string): Promise<Response> {
+      const token = await makeToken();
+      return app.request(
+        `/onedrive/auth-url?harnessCallbackUri=${encodeURIComponent(callbackUri)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+    }
+
+    it("encodes callbackUri into the state param as {uuid}|{base64url(uri)}", async () => {
+      const callbackUri = "http://127.0.0.1:8787/onedrive-callback";
+      const res = await getAuthUrlWithHarness(callbackUri);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { url: string };
+      const rawState = new URL(body.url).searchParams.get("state");
+      expect(rawState).toBeTruthy();
+      const parts = (rawState ?? "").split("|");
+      expect(parts[1]).toBeTruthy();
+      expect(Buffer.from(parts[1] ?? "", "base64url").toString("utf8")).toBe(callbackUri);
+    });
+
+    it("stores DynamoDB item with tokenHash equal to the UUID portion only (not full state)", async () => {
+      const callbackUri = "http://127.0.0.1:8787/onedrive-callback";
+      const res = await getAuthUrlWithHarness(callbackUri);
+      const body = (await res.json()) as { url: string };
+      const rawState = new URL(body.url).searchParams.get("state") ?? "";
+      const [uuid] = rawState.split("|");
+
+      const [command] = mockSend.mock.calls[0] as [{ input: { Item: { tokenHash: string } } }];
+      expect(command.input.Item.tokenHash).toBe(uuid);
+      expect(command.input.Item.tokenHash).not.toBe(rawState);
+    });
+
+    it("returns 400 when harnessCallbackUri is not a localhost URL", async () => {
+      const res = await getAuthUrlWithHarness("https://evil.example.com/callback");
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 400 when harnessCallbackUri is not a valid URL", async () => {
+      const token = await makeToken();
+      const res = await app.request("/onedrive/auth-url?harnessCallbackUri=not-a-url", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res.status).toBe(400);
+    });
+  });
 });

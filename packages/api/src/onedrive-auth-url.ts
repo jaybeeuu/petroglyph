@@ -1,7 +1,6 @@
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
-import { createHash, randomBytes } from "node:crypto";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { AppVariables } from "./auth-middleware.js";
 import { docClient } from "./db.js";
 
@@ -25,15 +24,31 @@ export async function handleOnedriveAuthUrl(
     return c.json({ error: "Missing OAuth configuration" }, 500);
   }
 
+  const harnessCallbackUri = c.req.query("harnessCallbackUri");
+  if (harnessCallbackUri !== undefined) {
+    let parsedUri: URL;
+    try {
+      parsedUri = new URL(harnessCallbackUri);
+    } catch {
+      return c.json({ error: "harnessCallbackUri is not a valid URL" }, 400);
+    }
+    if (parsedUri.hostname !== "127.0.0.1" && parsedUri.hostname !== "localhost") {
+      return c.json({ error: "harnessCallbackUri must be a localhost URL" }, 400);
+    }
+  }
+
   const verifier = generateCodeVerifier();
   const challenge = generateCodeChallenge(verifier);
-  const state = randomUUID();
+  const uuid = randomUUID();
+  const state = harnessCallbackUri
+    ? `${uuid}|${Buffer.from(harnessCallbackUri).toString("base64url")}`
+    : uuid;
   const ttl = Math.floor(Date.now() / 1000) + 600;
 
   await docClient.send(
     new PutCommand({
       TableName: TABLE_NAME,
-      Item: { tokenHash: state, type: "onedrive_state", verifier, ttl },
+      Item: { tokenHash: uuid, type: "onedrive_state", verifier, ttl },
     }),
   );
 
