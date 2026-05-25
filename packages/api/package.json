@@ -17,6 +17,7 @@
     "generate-types": "openapi-typescript openapi.yaml -o src/openapi-types.ts",
     "lint": "eslint .",
     "prebuild": "pnpm generate-types",
+    "local-onedrive-flow": "tsx scripts/local-onedrive-flow.ts",
     "smoke-test": "tsx scripts/smoke-test.ts",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"

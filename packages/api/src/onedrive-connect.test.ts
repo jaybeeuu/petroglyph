@@ -596,4 +596,87 @@ describe("GET /onedrive/connect", () => {
     const body = (await res.json()) as { status: string };
     expect(body.status).toBe("connected");
   });
+
+  // ── Harness callback URI ──────────────────────────────────────────────────
+
+  describe("when state encodes a harnessCallbackUri", () => {
+    const HARNESS_URI = "http://127.0.0.1:8787/onedrive-callback";
+    const HARNESS_STATE = `${VALID_STATE}|${Buffer.from(HARNESS_URI).toString("base64url")}`;
+
+    it("redirects to harnessCallbackUri instead of obsidian://", async () => {
+      const res = await app.request(
+        `/onedrive/connect?code=${VALID_CODE}&state=${encodeURIComponent(HARNESS_STATE)}`,
+        { method: "GET" },
+      );
+
+      expect(res.status).toBe(302);
+      const location = res.headers.get("Location");
+      expect(location).toContain(HARNESS_URI);
+      expect(location).toContain(`code=${VALID_CODE}`);
+      expect(location).not.toContain("obsidian://");
+    });
+
+    it("redirects OAuth errors to harnessCallbackUri instead of obsidian://", async () => {
+      const res = await app.request(
+        `/onedrive/connect?error=access_denied&state=${encodeURIComponent(HARNESS_STATE)}`,
+        { method: "GET" },
+      );
+
+      expect(res.status).toBe(302);
+      const location = res.headers.get("Location");
+      expect(location).toContain(HARNESS_URI);
+      expect(location).toContain("error=access_denied");
+      expect(location).not.toContain("obsidian://");
+    });
+  });
+});
+
+describe("POST /onedrive/connect with harness state", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
+    vi.stubEnv("MICROSOFT_CLIENT_ID", "test-ms-client-id");
+    vi.stubEnv("MICROSOFT_CLIENT_SECRET", "test-ms-client-secret");
+    vi.stubEnv("MICROSOFT_REDIRECT_URI", "obsidian://petroglyph/onedrive/callback");
+    vi.stubEnv("GRAPH_NOTIFICATION_URL", "https://api.example.com/graph/notify");
+    vi.stubEnv("SYNC_PROFILES_TABLE", "petroglyph-sync-profiles-test");
+    vi.stubEnv("REFRESH_TOKENS_TABLE", "petroglyph-refresh_tokens-test");
+    mockDbSend.mockClear();
+    mockFetch.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    resetKeyCache();
+  });
+
+  it("strips the harness suffix from state before DynamoDB lookup and returns connected", async () => {
+    const HARNESS_URI = "http://127.0.0.1:8787/onedrive-callback";
+    const fullState = `${VALID_STATE}|${Buffer.from(HARNESS_URI).toString("base64url")}`;
+
+    setupDynamoMock(makeStateItem());
+    setupFetchMock();
+
+    const token = await makeToken();
+    const res = await app.request("/onedrive/connect", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ code: VALID_CODE, state: fullState }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status: string };
+    expect(body.status).toBe("connected");
+
+    const getCall = mockDbSend.mock.calls.find(([cmd]) => cmd instanceof GetCommand) as
+      | [{ input: { Key: { tokenHash: string } } }]
+      | undefined;
+    expect(getCall).toBeDefined();
+    expect(getCall?.[0].input.Key.tokenHash).toBe(VALID_STATE);
+  });
 });

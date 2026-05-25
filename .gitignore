@@ -40,3 +40,4 @@ test-output.txt
 .terraform.tfstate.lock.info
 .ralph-state.json
 .ralph-*.log
+.worktrees/

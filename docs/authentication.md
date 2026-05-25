@@ -278,6 +278,24 @@ Lifecycle handling in this integration must be updated only against verified Mic
 - `POST /subscriptions/{id}/reauthorize` reference: https://learn.microsoft.com/en-us/graph/api/subscription-reauthorize?view=graph-rest-1.0
 - Subscription update (`PATCH /subscriptions/{id}`) reference: https://learn.microsoft.com/en-us/graph/api/subscription-update?view=graph-rest-1.0
 
+### Local OneDrive flow harness
+
+For debugging the end-to-end auth sequence without the Obsidian plugin UI, Petroglyph includes a local harness:
+
+```sh
+pnpm --filter @petroglyph/api local-onedrive-flow
+```
+
+The harness follows the same request flow as the app:
+
+1. `GET /auth/url` and `GET /auth/callback` to mint local GitHub credentials.
+2. `GET /onedrive/auth-url` to start OneDrive auth.
+3. `GET /onedrive/connect?code=...&state=...` to inspect the callback bridge response.
+4. `POST /onedrive/connect` to complete the OneDrive connection.
+5. `POST /auth/refresh` to mint a fresh JWT and confirm the refresh path still works.
+
+It stores its local state in `.working-docs/local-onedrive-flow.json` by default. The API must be started with `MICROSOFT_REDIRECT_URI` pointing at the harness callback server (default port `8787`), so Microsoft can return the OneDrive auth code locally.
+
 In all `disconnected` and `reconnect_required` cases the plugin surfaces a **"Reconnect OneDrive"** prompt on its next `/status` poll, explaining the reason. There is no SNS email alert — the plugin is the primary UI for error surfacing.
 
 ---
