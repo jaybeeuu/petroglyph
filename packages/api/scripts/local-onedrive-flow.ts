@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { Socket } from "node:net";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -186,6 +187,7 @@ export async function startFlowCallbacks(callbackPort: number): Promise<FlowCall
   const pendingOneDrive: Array<(payload: OneDriveCallbackPayload) => void> = [];
   let githubResolved: GitHubCallbackPayload | undefined;
   let oneDriveResolved: OneDriveCallbackPayload | undefined;
+  const openSockets = new Set<Socket>();
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const requestUrl = new URL(req.url ?? "/", `http://127.0.0.1:${callbackPort}`);
@@ -227,6 +229,28 @@ export async function startFlowCallbacks(callbackPort: number): Promise<FlowCall
     server.listen(callbackPort, "127.0.0.1", resolve);
   });
 
+  server.on("connection", (socket) => {
+    openSockets.add(socket);
+    socket.on("close", () => {
+      openSockets.delete(socket);
+    });
+  });
+
+  const close = (): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      for (const socket of openSockets) {
+        socket.destroy();
+      }
+      openSockets.clear();
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+
   return {
     githubCallbackUrl: `http://127.0.0.1:${callbackPort}/github-callback`,
     oneDriveCallbackUrl: `http://127.0.0.1:${callbackPort}/onedrive-callback`,
@@ -246,16 +270,7 @@ export async function startFlowCallbacks(callbackPort: number): Promise<FlowCall
         }
         pendingOneDrive.push(resolve);
       }),
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      }),
+    close,
   };
 }
 
@@ -435,6 +450,19 @@ export async function runLocalFlow(options: LocalFlowOptions): Promise<LocalFlow
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const callbacks = await startFlowCallbacks(args.callbackPort);
+
+  const shutdown = (code: number): void => {
+    void callbacks.close().finally(() => {
+      process.exit(code);
+    });
+  };
+
+  process.on("SIGINT", () => {
+    shutdown(130);
+  });
+  process.on("SIGTERM", () => {
+    shutdown(143);
+  });
 
   try {
     const flowOptions: LocalFlowOptions = {
