@@ -1,9 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
+import { createWriteStream } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
+import type { WriteStream } from "node:fs";
 
 interface GitHubCallbackPayload {
   jwt: string;
@@ -42,6 +44,7 @@ interface LocalFlowOptions {
   openBrowser?: (url: string) => Promise<void>;
   fetchFn?: typeof fetch;
   callbacks: FlowCallbacks;
+  log: Logger;
 }
 
 interface AuthUrlResponse {
@@ -73,6 +76,7 @@ interface ParsedArgs {
   statePath: string;
   callbackPort: number;
   noOpen: boolean;
+  logPath: string;
 }
 
 const DEFAULT_API_BASE_URL = process.env["PETROGLYPH_API_BASE_URL"] ?? "http://localhost:3000";
@@ -80,6 +84,33 @@ const DEFAULT_CALLBACK_PORT = Number(process.env["PETROGLYPH_LOCAL_FLOW_PORT"] ?
 const DEFAULT_STATE_PATH =
   process.env["PETROGLYPH_LOCAL_FLOW_STATE_PATH"] ??
   join(process.cwd(), ".working-docs", "local-onedrive-flow.json");
+const DEFAULT_LOG_PATH =
+  process.env["PETROGLYPH_LOCAL_FLOW_LOG_PATH"] ??
+  join(process.cwd(), ".working-docs", "local-onedrive-flow.log");
+
+function makeLogger(logStream: WriteStream) {
+  return function log(level: "INFO" | "ERROR" | "DEBUG", message: string, data?: unknown): void {
+    const ts = new Date().toISOString();
+    const dataStr = data !== undefined ? `\n  ${JSON.stringify(data, null, 2).replace(/\n/g, "\n  ")}` : "";
+    const line = `[${ts}] ${level} ${message}${dataStr}\n`;
+    process.stdout.write(line);
+    logStream.write(line);
+  };
+}
+
+type Logger = ReturnType<typeof makeLogger>;
+
+function previewBody(bodyText: string): unknown {
+  if (bodyText.length === 0) {
+    return "";
+  }
+
+  try {
+    return JSON.parse(bodyText) as unknown;
+  } catch {
+    return bodyText;
+  }
+}
 
 function isRecord(value: unknown): value is { [key: string]: unknown } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -114,9 +145,12 @@ function parseCallbackPayload(url: URL): GitHubCallbackPayload | OneDriveCallbac
   };
 }
 
-async function requestJson<T>(fetchFn: typeof fetch, url: string, init?: RequestInit): Promise<T> {
+async function requestJson<T>(fetchFn: typeof fetch, url: string, init?: RequestInit, log?: Logger): Promise<T> {
+  const method = init?.method ?? "GET";
+  log?.("DEBUG", `→ ${method} ${url}`);
   const response = await fetchFn(url, init);
   const bodyText = await response.text();
+  log?.("DEBUG", `← ${response.status} ${response.statusText} ${url}`, previewBody(bodyText));
 
   if (!response.ok) {
     throw new Error(`${url} returned ${response.status} ${response.statusText}: ${bodyText}`);
@@ -182,7 +216,7 @@ function startBrowser(url: string): Promise<void> {
   });
 }
 
-export async function startFlowCallbacks(callbackPort: number): Promise<FlowCallbacks> {
+export async function startFlowCallbacks(callbackPort: number, log?: Logger): Promise<FlowCallbacks> {
   const pendingGithub: Array<(payload: GitHubCallbackPayload) => void> = [];
   const pendingOneDrive: Array<(payload: OneDriveCallbackPayload) => void> = [];
   let githubResolved: GitHubCallbackPayload | undefined;
@@ -193,6 +227,11 @@ export async function startFlowCallbacks(callbackPort: number): Promise<FlowCall
     const requestUrl = new URL(req.url ?? "/", `http://127.0.0.1:${callbackPort}`);
     const pathname = requestUrl.pathname;
 
+    log?.("DEBUG", "Callback server received request", {
+      pathname,
+      search: requestUrl.search,
+    });
+
     if (pathname !== "/github-callback" && pathname !== "/onedrive-callback") {
       res.statusCode = 404;
       res.end("Not found");
@@ -200,6 +239,10 @@ export async function startFlowCallbacks(callbackPort: number): Promise<FlowCall
     }
 
     const payload = parseCallbackPayload(requestUrl);
+    log?.("INFO", "Callback payload parsed", {
+      pathname,
+      kind: "jwt" in payload ? "github" : "onedrive",
+    });
 
     if ("jwt" in payload) {
       githubResolved = payload;
@@ -294,10 +337,14 @@ async function runGitHubLogin(options: LocalFlowOptions): Promise<GitHubCallback
   const authUrl = new URL("/auth/url", options.apiBaseUrl);
   authUrl.searchParams.set("returnUri", options.callbacks.githubCallbackUrl);
 
-  const authUrlResponse = await requestJson<AuthUrlResponse>(fetchFn, authUrl.toString());
+  options.log("INFO", "Step 1: fetching GitHub auth URL", { url: authUrl.toString() });
+  const authUrlResponse = await requestJson<AuthUrlResponse>(fetchFn, authUrl.toString(), undefined, options.log);
+  options.log("INFO", "Opening browser for GitHub login", { githubUrl: authUrlResponse.url });
   await openBrowserOrPrint(authUrlResponse.url, options.openBrowser);
 
+  options.log("INFO", "Waiting for GitHub callback...");
   const callback = await options.callbacks.waitForGithubCallback();
+  options.log("INFO", "GitHub callback received", { username: callback.username });
   return callback;
 }
 
@@ -308,15 +355,24 @@ async function runOneDriveConnect(
   const fetchFn = options.fetchFn ?? fetch;
   const authUrl = new URL("/onedrive/auth-url", options.apiBaseUrl);
   authUrl.searchParams.set("harnessCallbackUri", options.callbacks.oneDriveCallbackUrl);
-  const authUrlResponse = await requestJson<AuthUrlResponse>(fetchFn, authUrl.toString(), {
-    headers: {
-      Authorization: `Bearer ${jwt}`,
-    },
-  });
 
+  options.log("INFO", "Step 2: fetching OneDrive auth URL", { url: authUrl.toString() });
+  const authUrlResponse = await requestJson<AuthUrlResponse>(fetchFn, authUrl.toString(), {
+    headers: { Authorization: `Bearer ${jwt}` },
+  }, options.log);
+
+  options.log("INFO", "Opening browser for OneDrive login", { microsoftUrl: authUrlResponse.url });
   await openBrowserOrPrint(authUrlResponse.url, options.openBrowser);
 
+  options.log("INFO", "Waiting for OneDrive callback...");
   const callback = await options.callbacks.waitForOneDriveCallback();
+  options.log("INFO", "OneDrive callback received", {
+    code: callback.code ? `${callback.code.slice(0, 8)}…` : undefined,
+    state: callback.state ? `${callback.state.slice(0, 16)}…` : undefined,
+    error: callback.error,
+    errorDescription: callback.errorDescription,
+  });
+
   if (callback.error !== undefined) {
     throw new Error(
       callback.errorDescription !== undefined
@@ -325,6 +381,7 @@ async function runOneDriveConnect(
     );
   }
 
+  options.log("INFO", "Step 3: POST /onedrive/connect");
   const connectResponse = await requestJson<OnedriveConnectResponse>(
     fetchFn,
     new URL("/onedrive/connect", options.apiBaseUrl).toString(),
@@ -336,8 +393,10 @@ async function runOneDriveConnect(
       },
       body: JSON.stringify({ code: callback.code, state: callback.state }),
     },
+    options.log,
   );
 
+  options.log("INFO", "OneDrive connect response", connectResponse);
   return connectResponse;
 }
 
@@ -346,26 +405,25 @@ async function refreshJwt(
   refreshToken: string,
 ): Promise<AuthRefreshResponse> {
   const fetchFn = options.fetchFn ?? fetch;
+  options.log("INFO", "Step 5: POST /auth/refresh");
   return requestJson<AuthRefreshResponse>(
     fetchFn,
     new URL("/auth/refresh", options.apiBaseUrl).toString(),
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken }),
     },
+    options.log,
   );
 }
 
 async function fetchStatus(options: LocalFlowOptions, jwt: string): Promise<StatusResponse> {
   const fetchFn = options.fetchFn ?? fetch;
+  options.log("INFO", "Step 4: GET /status");
   return requestJson<StatusResponse>(fetchFn, new URL("/status", options.apiBaseUrl).toString(), {
-    headers: {
-      Authorization: `Bearer ${jwt}`,
-    },
-  });
+    headers: { Authorization: `Bearer ${jwt}` },
+  }, options.log);
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -374,6 +432,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     statePath: DEFAULT_STATE_PATH,
     callbackPort: DEFAULT_CALLBACK_PORT,
     noOpen: false,
+    logPath: DEFAULT_LOG_PATH,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -407,6 +466,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
       parsed.noOpen = true;
       continue;
     }
+    if (arg === "--log-path") {
+      const value = argv[i + 1];
+      if (!value) throw new Error("--log-path requires a value");
+      parsed.logPath = value;
+      i += 1;
+      continue;
+    }
     throw new Error(`Unknown argument: ${arg}`);
   }
 
@@ -416,11 +482,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
 export async function runLocalFlow(options: LocalFlowOptions): Promise<LocalFlowState> {
   const currentState = await readLocalState(options.statePath);
   const nextState: LocalFlowState = { ...currentState };
+  options.log("INFO", "Starting local OneDrive flow", { apiBaseUrl: options.apiBaseUrl });
 
   const github = await runGitHubLogin(options);
   nextState.github = github;
   nextState.updatedAt = new Date().toISOString();
   await writeLocalState(options.statePath, nextState);
+  options.log("INFO", "GitHub state persisted", { username: github.username });
 
   const connectResponse = await runOneDriveConnect(options, github.jwt);
   nextState.oneDrive = {
@@ -431,6 +499,7 @@ export async function runLocalFlow(options: LocalFlowOptions): Promise<LocalFlow
   await writeLocalState(options.statePath, nextState);
 
   const status = await fetchStatus(options, github.jwt);
+  options.log("INFO", "Status response", status);
   if (!status.oneDrive.connected) {
     throw new Error(`Expected OneDrive to be connected, got ${status.oneDriveStatus}`);
   }
@@ -443,17 +512,26 @@ export async function runLocalFlow(options: LocalFlowOptions): Promise<LocalFlow
   };
   nextState.updatedAt = new Date().toISOString();
   await writeLocalState(options.statePath, nextState);
+  options.log("INFO", "Flow complete ✓", { oneDriveStatus: status.oneDriveStatus });
 
   return nextState;
 }
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const callbacks = await startFlowCallbacks(args.callbackPort);
+  await mkdir(join(args.logPath, ".."), { recursive: true });
+  const logStream = createWriteStream(args.logPath, { flags: "a" });
+  const log = makeLogger(logStream);
+
+  log("INFO", "=== local-onedrive-flow started ===", { args: { ...args, logPath: args.logPath } });
+
+  const callbacks = await startFlowCallbacks(args.callbackPort, log);
+  log("INFO", `Callback server listening on port ${args.callbackPort}`);
 
   const shutdown = (code: number): void => {
+    log("INFO", `Shutting down (code ${code})`);
     void callbacks.close().finally(() => {
-      process.exit(code);
+      logStream.end(() => process.exit(code));
     });
   };
 
@@ -471,20 +549,25 @@ async function main(): Promise<void> {
       callbackPort: args.callbackPort,
       callbacks,
       fetchFn: fetch,
+      log,
     };
 
     if (args.noOpen) {
       flowOptions.openBrowser = (url: string) => {
-        console.log(`Open this URL manually:\n${url}`);
+        log("INFO", `Open this URL manually:\n${url}`);
         return Promise.resolve();
       };
     }
 
     const state = await runLocalFlow(flowOptions);
 
-    console.log(JSON.stringify(state, null, 2));
+    log("INFO", "Final state", state);
+  } catch (error) {
+    log("ERROR", "Flow failed", error instanceof Error ? { message: error.message, stack: error.stack } : error);
+    throw error;
   } finally {
     await callbacks.close();
+    await new Promise<void>((resolve) => logStream.end(resolve));
   }
 }
 

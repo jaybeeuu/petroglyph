@@ -21,6 +21,7 @@ describe("local-onedrive-flow helpers", () => {
       statePath: "/tmp/petroglyph-flow.json",
       callbackPort: 9001,
       noOpen: true,
+      logPath: expect.stringContaining("local-onedrive-flow.log") as string,
     });
   });
 
@@ -141,6 +142,7 @@ describe("local-onedrive-flow helpers", () => {
         callbackPort: 8787,
         openBrowser,
         fetchFn,
+        log: () => undefined,
         callbacks: {
           githubCallbackUrl: "http://127.0.0.1:8787/github-callback",
           oneDriveCallbackUrl: "http://127.0.0.1:8787/onedrive-callback",
