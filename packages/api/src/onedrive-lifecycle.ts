@@ -10,6 +10,10 @@ function refreshTokensTable(): string {
   return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
 }
 
+function syncProfilesTable(): string {
+  return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
+}
+
 interface LifecycleNotification {
   lifecycleEvent: string;
   clientState: string;
@@ -72,12 +76,33 @@ async function updateOneDriveStatus(userId: string, status: OneDriveStatus): Pro
   );
 }
 
+async function updateSyncProfileConnection(userId: string, connected: boolean): Promise<void> {
+  await docClient.send(
+    new UpdateCommand({
+      TableName: syncProfilesTable(),
+      Key: { userId, profileId: "default" },
+      UpdateExpression:
+        "SET createdAt = if_not_exists(createdAt, :updatedAt), updatedAt = :updatedAt, oneDriveConnected = :connected",
+      ExpressionAttributeValues: {
+        ":connected": connected,
+        ":updatedAt": new Date().toISOString(),
+      },
+    }),
+  );
+}
+
 async function markConnected(userId: string): Promise<void> {
-  await updateOneDriveStatus(userId, "connected");
+  await Promise.all([
+    updateOneDriveStatus(userId, "connected"),
+    updateSyncProfileConnection(userId, true),
+  ]);
 }
 
 async function markReconnectRequired(userId: string): Promise<void> {
-  await updateOneDriveStatus(userId, "reconnect_required");
+  await Promise.all([
+    updateOneDriveStatus(userId, "reconnect_required"),
+    updateSyncProfileConnection(userId, false),
+  ]);
 }
 
 interface MicrosoftTokenResponse {

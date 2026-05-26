@@ -163,6 +163,19 @@ describe("PetroglyphSettingTab OneDrive reconnect banner", () => {
     expect(plugin.openOneDriveAuthUrl).toHaveBeenCalled();
   });
 
+  it("keeps reconnect banner as the primary OneDrive UI even when local state is connected", async () => {
+    const plugin = await makePlugin({
+      oneDriveStatus: "reconnect_required",
+      oneDriveConnected: true,
+    });
+    const { PetroglyphSettingTab } = await import("./settings.js");
+    const tab = new PetroglyphSettingTab({} as App, plugin);
+    tab.display();
+    expect(buttonHandlers.has("Reconnect OneDrive")).toBe(true);
+    expect(buttonHandlers.has("Disconnect")).toBe(false);
+    expect(buttonHandlers.has("Connect OneDrive")).toBe(false);
+  });
+
   it("does not show reconnect banner when oneDriveStatus is connected", async () => {
     const plugin = await makePlugin({ oneDriveStatus: "connected" });
     const { PetroglyphSettingTab } = await import("./settings.js");

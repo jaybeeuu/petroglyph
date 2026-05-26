@@ -151,7 +151,7 @@ describe("GET /status", () => {
       expect(body.oneDriveStatus).toBe("reconnect_required");
     });
 
-    it("returns connected when reconnect_required is stale after a successful reconnect", async () => {
+    it("treats reconnect_required on the user record as authoritative when SyncProfile is connected", async () => {
       mockStatusReads({
         syncProfileItem: {
           userId: "user-42",
@@ -171,8 +171,8 @@ describe("GET /status", () => {
         oneDrive: { connected: boolean };
         oneDriveStatus: string;
       };
-      expect(body.oneDrive.connected).toBe(true);
-      expect(body.oneDriveStatus).toBe("connected");
+      expect(body.oneDrive.connected).toBe(false);
+      expect(body.oneDriveStatus).toBe("reconnect_required");
     });
 
     it("normalizes disconnected from the user record to reconnect_required", async () => {

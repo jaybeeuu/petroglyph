@@ -632,7 +632,8 @@ describe("pollStatus", () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ oneDrive: { status: "reconnect_required" } }),
+      json: () =>
+        Promise.resolve({ oneDrive: { connected: false }, oneDriveStatus: "reconnect_required" }),
     });
 
     await plugin.pollStatus();
@@ -873,6 +874,35 @@ describe("oauth/callback URI handler registration", () => {
       "petroglyph/oauth/callback",
       expect.any(Function),
     );
+  });
+
+  it("shows Microsoft OAuth error description from callback params", async () => {
+    const { PetroglyphPlugin } = await import("./main.js");
+    const plugin = new PetroglyphPlugin({} as App, {} as PluginManifest);
+    plugin.loadData = vi.fn(() => Promise.resolve(null));
+    plugin.saveData = vi.fn();
+    plugin.registerObsidianProtocolHandler = vi.fn();
+    plugin.addSettingTab = vi.fn();
+    // @ts-expect-error — minimal stub
+    plugin.app = {};
+
+    await plugin.onload();
+
+    const registerProtocolHandler = plugin.registerObsidianProtocolHandler; // eslint-disable-line @typescript-eslint/unbound-method
+    const handler = vi
+      .mocked(registerProtocolHandler)
+      .mock.calls.find((call) => call[0] === "petroglyph/oauth/callback")?.[1];
+
+    expect(handler).toBeTypeOf("function");
+
+    await handler?.({
+      action: "callback",
+      error: "access_denied",
+      error_description: "The user denied the request.",
+      state: "state-token",
+    });
+
+    expect(Notice).toHaveBeenCalledWith("OneDrive connection failed: The user denied the request.");
   });
 });
 

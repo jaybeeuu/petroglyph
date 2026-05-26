@@ -196,7 +196,9 @@ export class PetroglyphSettingTab extends PluginSettingTab {
     }
 
     const { oneDriveConnected } = this.plugin.data;
-    if (oneDriveConnected) {
+    if (oneDriveStatus === "reconnect_required") {
+      // Reconnect banner is the primary OneDrive UI in this state.
+    } else if (oneDriveConnected) {
       new Setting(containerEl)
         .setName("OneDrive")
         .setDesc("OneDrive connected ✓")
@@ -205,7 +207,7 @@ export class PetroglyphSettingTab extends PluginSettingTab {
             // Placeholder — disconnect not yet implemented
           }),
         );
-    } else if (oneDriveStatus !== "reconnect_required") {
+    } else {
       new Setting(containerEl)
         .setName("OneDrive")
         .setDesc("Connect your OneDrive account")
