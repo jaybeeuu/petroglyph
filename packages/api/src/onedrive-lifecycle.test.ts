@@ -19,6 +19,7 @@ describe("POST /onedrive/lifecycle", () => {
     mockFetch.mockReset();
     vi.stubEnv("USERS_TABLE", "petroglyph-users-test");
     vi.stubEnv("REFRESH_TOKENS_TABLE", "petroglyph-refresh_tokens-test");
+    vi.stubEnv("SYNC_PROFILES_TABLE", "petroglyph-sync-profiles-test");
     vi.stubEnv("MICROSOFT_CLIENT_ID", "test-ms-client-id");
     vi.stubEnv("MICROSOFT_CLIENT_SECRET", "test-ms-client-secret");
   });
@@ -74,26 +75,32 @@ describe("POST /onedrive/lifecycle", () => {
     expect(response.status).toBe(202);
 
     await vi.waitFor(() => {
-      expect(updateCalls()).toHaveLength(1);
+      expect(updateCalls()).toHaveLength(2);
     });
 
-    const updateCall = updateCalls()[0];
-    if (!updateCall) {
-      throw new Error("Expected one UpdateCommand call");
-    }
+    const updates = updateCalls().map(([command]) => command as { input: unknown });
+    const userUpdate = updates.find(
+      (command) => (command.input as { TableName?: string }).TableName === "petroglyph-users-test",
+    );
+    expect(userUpdate).toBeDefined();
+    expect((userUpdate?.input as { Key: { userId: string } }).Key).toEqual({ userId: "user-123" });
+    expect(
+      (userUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
+        .ExpressionAttributeValues[":status"],
+    ).toBe("reconnect_required");
 
-    const [updateCommand] = updateCall as [
-      {
-        input: {
-          TableName: string;
-          Key: { userId: string };
-          ExpressionAttributeValues: { [key: string]: unknown };
-        };
-      },
-    ];
-    expect(updateCommand.input.TableName).toBe("petroglyph-users-test");
-    expect(updateCommand.input.Key).toEqual({ userId: "user-123" });
-    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("reconnect_required");
+    const syncProfileUpdate = updates.find(
+      (command) =>
+        (command.input as { TableName?: string }).TableName === "petroglyph-sync-profiles-test",
+    );
+    expect(syncProfileUpdate).toBeDefined();
+    expect(
+      (syncProfileUpdate?.input as { Key: { userId: string; profileId: string } }).Key,
+    ).toEqual({ userId: "user-123", profileId: "default" });
+    expect(
+      (syncProfileUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
+        .ExpressionAttributeValues[":connected"],
+    ).toBe(false);
   });
 
   it("refreshes the token and reauthorizes the subscription for reauthorizationRequired events", async () => {
@@ -159,7 +166,7 @@ describe("POST /onedrive/lifecycle", () => {
     );
 
     await vi.waitFor(() => {
-      expect(updateCalls()).toHaveLength(2);
+      expect(updateCalls()).toHaveLength(3);
     });
 
     const updateCommands = updateCalls().map(([command]) => command as { input: unknown });
@@ -191,6 +198,19 @@ describe("POST /onedrive/lifecycle", () => {
       (statusUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
         .ExpressionAttributeValues[":status"],
     ).toBe("connected");
+
+    const syncProfileUpdate = updateCommands.find(
+      (command) =>
+        (command.input as { TableName?: string }).TableName === "petroglyph-sync-profiles-test",
+    );
+    expect(syncProfileUpdate).toBeDefined();
+    expect(
+      (syncProfileUpdate?.input as { Key: { userId: string; profileId: string } }).Key,
+    ).toEqual({ userId: "user-123", profileId: "default" });
+    expect(
+      (syncProfileUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
+        .ExpressionAttributeValues[":connected"],
+    ).toBe(true);
   });
 
   it("marks the user as reconnect_required when token refresh fails", async () => {
@@ -221,24 +241,29 @@ describe("POST /onedrive/lifecycle", () => {
     expect(response.status).toBe(202);
 
     await vi.waitFor(() => {
-      expect(updateCalls()).toHaveLength(1);
+      expect(updateCalls()).toHaveLength(2);
     });
 
-    const updateCall = updateCalls()[0];
-    if (!updateCall) {
-      throw new Error("Expected one UpdateCommand call");
-    }
+    const updates = updateCalls().map(([command]) => command as { input: unknown });
+    const userUpdate = updates.find(
+      (command) => (command.input as { TableName?: string }).TableName === "petroglyph-users-test",
+    );
+    expect(userUpdate).toBeDefined();
+    expect((userUpdate?.input as { Key: { userId: string } }).Key).toEqual({ userId: "user-123" });
+    expect(
+      (userUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
+        .ExpressionAttributeValues[":status"],
+    ).toBe("reconnect_required");
 
-    const [updateCommand] = updateCall as [
-      {
-        input: {
-          Key: { userId: string };
-          ExpressionAttributeValues: { [key: string]: unknown };
-        };
-      },
-    ];
-    expect(updateCommand.input.Key).toEqual({ userId: "user-123" });
-    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("reconnect_required");
+    const syncProfileUpdate = updates.find(
+      (command) =>
+        (command.input as { TableName?: string }).TableName === "petroglyph-sync-profiles-test",
+    );
+    expect(syncProfileUpdate).toBeDefined();
+    expect(
+      (syncProfileUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
+        .ExpressionAttributeValues[":connected"],
+    ).toBe(false);
   });
 
   it("marks the user as reconnect_required when subscription reauthorization fails", async () => {
@@ -285,7 +310,7 @@ describe("POST /onedrive/lifecycle", () => {
     expect(response.status).toBe(202);
 
     await vi.waitFor(() => {
-      expect(updateCalls()).toHaveLength(2);
+      expect(updateCalls()).toHaveLength(3);
     });
 
     const statusUpdate = updateCalls()
@@ -302,6 +327,18 @@ describe("POST /onedrive/lifecycle", () => {
       (statusUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
         .ExpressionAttributeValues[":status"],
     ).toBe("reconnect_required");
+
+    const syncProfileUpdate = updateCalls()
+      .map(([command]) => command as { input: unknown })
+      .find(
+        (command) =>
+          (command.input as { TableName?: string }).TableName === "petroglyph-sync-profiles-test",
+      );
+    expect(syncProfileUpdate).toBeDefined();
+    expect(
+      (syncProfileUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
+        .ExpressionAttributeValues[":connected"],
+    ).toBe(false);
   });
 
   it("returns 202 after subscriptionRemoved work finishes", async () => {
@@ -321,7 +358,7 @@ describe("POST /onedrive/lifecycle", () => {
     });
 
     expect(response.status).toBe(202);
-    expect(updateCalls()).toHaveLength(1);
+    expect(updateCalls()).toHaveLength(2);
   });
 
   it("returns 202 after reauthorization work finishes", async () => {
@@ -363,7 +400,7 @@ describe("POST /onedrive/lifecycle", () => {
     });
 
     expect(response.status).toBe(202);
-    expect(updateCalls()).toHaveLength(2);
+    expect(updateCalls()).toHaveLength(3);
   });
 
   it("returns 202 after lifecycle processing succeeds", async () => {
@@ -383,7 +420,7 @@ describe("POST /onedrive/lifecycle", () => {
     expect(response.status).toBe(202);
 
     await vi.waitFor(() => {
-      expect(updateCalls()).toHaveLength(1);
+      expect(updateCalls()).toHaveLength(2);
     });
   });
 });

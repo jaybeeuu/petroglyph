@@ -98,11 +98,13 @@ export async function handleStatus(c: Context<{ Variables: AppVariables }>): Pro
     fetchSyncProfileStatus(userId),
     fetchStoredReconnectRequired(userId),
   ]);
-  const oneDriveStatus = syncProfileStatus.oneDriveConnected
-    ? "connected"
-    : storedReconnectRequired || syncProfileStatus.exists
-      ? "reconnect_required"
-      : "never_connected";
+  const oneDriveStatus = storedReconnectRequired
+    ? "reconnect_required"
+    : syncProfileStatus.oneDriveConnected
+      ? "connected"
+      : syncProfileStatus.exists
+        ? "reconnect_required"
+        : "never_connected";
 
   const body: StatusResponse = {
     github: { connected: true, username },

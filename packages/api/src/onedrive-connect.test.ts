@@ -151,6 +151,7 @@ describe("POST /onedrive/connect", () => {
     vi.stubEnv("GRAPH_LIFECYCLE_URL", "https://api.example.com/graph/lifecycle");
     vi.stubEnv("SYNC_PROFILES_TABLE", "petroglyph-sync-profiles-test");
     vi.stubEnv("REFRESH_TOKENS_TABLE", "petroglyph-refresh_tokens-test");
+    vi.stubEnv("USERS_TABLE", "petroglyph-users-test");
     mockDbSend.mockClear();
     mockFetch.mockClear();
   });
@@ -404,7 +405,7 @@ describe("POST /onedrive/connect", () => {
     await postConnect({ code: VALID_CODE, state: VALID_STATE });
 
     const updateCalls = mockDbSend.mock.calls.filter(([cmd]) => cmd instanceof UpdateCommand);
-    expect(updateCalls).toHaveLength(2); // tokens update + sync profile update
+    expect(updateCalls).toHaveLength(3); // tokens update + sync profile update + user status update
 
     const [syncProfileCmd] = updateCalls[1] as [
       {
@@ -420,6 +421,19 @@ describe("POST /onedrive/connect", () => {
     expect(syncProfileCmd.input.Key.profileId).toBe("default");
     expect(syncProfileCmd.input.ExpressionAttributeValues[":true"]).toBe(true);
     expect(typeof syncProfileCmd.input.ExpressionAttributeValues[":now"]).toBe("string");
+
+    const [userStatusCmd] = updateCalls[2] as [
+      {
+        input: {
+          TableName: string;
+          Key: { userId: string };
+          ExpressionAttributeValues: { [key: string]: unknown };
+        };
+      },
+    ];
+    expect(userStatusCmd.input.TableName).toBe("petroglyph-users-test");
+    expect(userStatusCmd.input.Key).toEqual({ userId: USER_ID });
+    expect(userStatusCmd.input.ExpressionAttributeValues[":connected"]).toBe("connected");
   });
 
   // ── Behaviour 9: returns 200 { status: 'connected' } ────────────────────

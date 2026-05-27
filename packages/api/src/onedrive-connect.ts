@@ -12,6 +12,10 @@ function syncProfilesTable(): string {
   return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
 }
 
+function usersTable(): string {
+  return process.env["USERS_TABLE"] ?? "petroglyph-users-default";
+}
+
 interface ConnectRequestBody {
   code: string;
   state: string;
@@ -256,6 +260,20 @@ async function upsertSyncProfile(userId: string): Promise<void> {
   );
 }
 
+async function markUserConnected(userId: string): Promise<void> {
+  await docClient.send(
+    new UpdateCommand({
+      TableName: usersTable(),
+      Key: { userId },
+      UpdateExpression: "SET oneDriveStatus = :connected, updatedAt = :now",
+      ExpressionAttributeValues: {
+        ":connected": "connected",
+        ":now": new Date().toISOString(),
+      },
+    }),
+  );
+}
+
 export function handleOnedriveCallbackBridge(c: Context<{ Variables: AppVariables }>): Response {
   const oauthError = c.req.query("error");
   const oauthErrorDescription = c.req.query("error_description");
@@ -345,6 +363,7 @@ export async function handleOnedriveConnect(
   console.info("[onedrive-connect] Stored Microsoft tokens in DynamoDB", { userId });
   await registerGraphSubscription(tokens.access_token, userId);
   await upsertSyncProfile(userId);
+  await markUserConnected(userId);
   console.info("[onedrive-connect] OneDrive profile updated", { userId });
 
   return c.json({ status: "connected" });

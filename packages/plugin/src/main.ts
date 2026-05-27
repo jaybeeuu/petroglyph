@@ -428,6 +428,22 @@ export class PetroglyphPlugin extends Plugin {
     });
 
     this.registerObsidianProtocolHandler("petroglyph/oauth/callback", async (params) => {
+      const oauthErrorDescription = params["error_description"];
+      const oauthError = params["error"];
+      if (
+        (typeof oauthError === "string" && oauthError.length > 0) ||
+        (typeof oauthErrorDescription === "string" && oauthErrorDescription.length > 0)
+      ) {
+        const message =
+          typeof oauthErrorDescription === "string" && oauthErrorDescription.length > 0
+            ? oauthErrorDescription
+            : typeof oauthError === "string" && oauthError.length > 0
+              ? oauthError
+              : "unknown error";
+        new Notice(`OneDrive connection failed: ${message}`);
+        return;
+      }
+
       const code = params["code"];
       const state = params["state"];
       if (typeof code !== "string" || typeof state !== "string") {
@@ -715,6 +731,12 @@ export class PetroglyphPlugin extends Plugin {
       const body: unknown = await response.json();
       if (!isRecord(body)) return;
       const oneDrive = body["oneDrive"];
+      const oneDriveStatus =
+        typeof body["oneDriveStatus"] === "string"
+          ? body["oneDriveStatus"]
+          : isRecord(oneDrive) && typeof oneDrive["status"] === "string"
+            ? oneDrive["status"]
+            : undefined;
       if (isRecord(oneDrive)) {
         let stateChanged = false;
         if (typeof oneDrive["connected"] === "boolean") {
@@ -723,11 +745,9 @@ export class PetroglyphPlugin extends Plugin {
             stateChanged = true;
           }
         }
-        if (typeof oneDrive["status"] === "string") {
-          if (this._data.oneDriveStatus !== oneDrive["status"]) {
-            this._data = { ...this._data, oneDriveStatus: oneDrive["status"] };
-            stateChanged = true;
-          }
+        if (oneDriveStatus !== undefined && this._data.oneDriveStatus !== oneDriveStatus) {
+          this._data = { ...this._data, oneDriveStatus };
+          stateChanged = true;
         }
         if (!stateChanged) {
           return;
