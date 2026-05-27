@@ -134,23 +134,27 @@ The plugin periodically calls `GET /status` to determine the current connection 
 ```json
 {
   "github": { "connected": true, "username": "<githubLogin>" },
-  "oneDrive": { "connected": false }
+  "oneDrive": { "connected": false },
+  "oneDriveStatus": "reconnect_required"
 }
 ```
 
-| Field                | Type    | Description                                                                                                                                                                                       |
-| -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                                      |
-| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                                         |
-| `oneDrive.connected` | boolean | `true` if the user has an active OneDrive connection (`active === true` on the `sync_profiles` DynamoDB record); `false` if the record is absent, the field is false, or a DynamoDB error occurs. |
+| Field                | Type    | Description                                                                                                                                                                                                                                                                                                   |
+| -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                                                                                                                                                  |
+| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                                                                                                                                                     |
+| `oneDriveStatus`     | string  | `connected` \| `reconnect_required` \| `never_connected`. Derived by checking the user record first: if `oneDriveStatus === "reconnect_required"` or `"disconnected"` in DynamoDB, that value is authoritative. Only falls back to `sync_profiles.oneDriveConnected` when no explicit reconnect flag is set. |
+| `oneDrive.connected` | boolean | `true` only when `oneDriveStatus === "connected"` and `sync_profiles.oneDriveConnected === true`. Legacy field kept for backwards compatibility.                                                                                                                                                               |
+
+The user record takes precedence over `sync_profiles` to prevent a stale `oneDriveConnected=true` on the SyncProfile from masking a `reconnect_required` condition set on the user — for example, after a `reauthorizationRequired` lifecycle event.
 
 Unauthenticated requests (missing or invalid JWT) return `401 { "error": "UNAUTHORIZED" }` from the auth middleware before the handler is reached.
 
-The plugin uses this response to decide which UI prompts to surface — for example, a **"Reconnect OneDrive"** banner when `oneDrive.connected` is `false`.
+The plugin uses this response to decide which UI prompts to surface — for example, a **"Reconnect OneDrive"** banner when `oneDriveStatus === "reconnect_required"`.
 
 **Plugin-side polling**
 
-The plugin polls `GET /status` on a **60-second interval** (`window.setInterval`). The call is guarded — polling only runs when a JWT is present. On a successful response the plugin reads `oneDrive.connected` and persists the value as `oneDriveConnected` via Obsidian's `saveData` API.
+The plugin polls `GET /status` on a **60-second interval** (`window.setInterval`). The call is guarded — polling only runs when a JWT is present. On a successful response the plugin reads `oneDriveStatus` (falling back to `oneDrive.status` from older API responses) and persists it as `oneDriveStatus` via Obsidian's `saveData` API.
 
 Polling starts:
 
@@ -352,7 +356,7 @@ On deletion, `activeProfileId` is cleared locally _before_ `loadProfiles()` is c
 | -------------------------- | ----------- | -------------------------------------------------- |
 | `userId`                   | String (PK) | GitHub user ID                                     |
 | `githubUsername`           | String      | GitHub login name                                  |
-| `oneDriveStatus`           | String      | `connected` \| `disconnected` \| `never_connected` |
+| `oneDriveStatus`           | String      | `connected` \| `reconnect_required` \| `disconnected` \| `never_connected` |
 | `oneDriveDisconnectReason` | String?     | `expired` \| `revoked` \| `error`                  |
 | `createdAt`                | String      | ISO 8601                                           |
 
