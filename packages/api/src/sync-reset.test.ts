@@ -1,17 +1,11 @@
-import { DeleteParameterCommand } from "@aws-sdk/client-ssm";
-import { BatchWriteCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { BatchWriteCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockDbSend = vi.hoisted(() => vi.fn());
-const mockSsmSend = vi.hoisted(() => vi.fn());
 
 vi.mock("./db.js", () => ({
   docClient: { send: mockDbSend },
-}));
-
-vi.mock("./ssm.js", () => ({
-  ssmClient: { send: mockSsmSend },
 }));
 
 import { app } from "./app.js";
@@ -29,9 +23,9 @@ describe("POST /sync/reset", () => {
 
   beforeEach(() => {
     vi.stubEnv("FILE_RECORDS_TABLE", "petroglyph-file-records-test");
+    vi.stubEnv("DELTA_TOKENS_TABLE", "petroglyph-delta-tokens-test");
     vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
     mockDbSend.mockReset();
-    mockSsmSend.mockReset();
     resetKeyCache();
   });
 
@@ -103,22 +97,28 @@ describe("POST /sync/reset", () => {
         return Promise.resolve(batchWriteResponses.shift() ?? {});
       }
 
+      if (command instanceof DeleteCommand) {
+        return Promise.resolve({});
+      }
+
       return Promise.resolve({});
     });
-    mockSsmSend.mockResolvedValue({});
 
     const response = await postReset("server");
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ resetToken: false });
 
-    const deleteParameterCalls = mockSsmSend.mock.calls.filter(
-      ([command]) => command instanceof DeleteParameterCommand,
+    const deleteCommandCalls = mockDbSend.mock.calls.filter(
+      ([command]) => command instanceof DeleteCommand,
     );
-    expect(deleteParameterCalls).toHaveLength(1);
+    expect(deleteCommandCalls).toHaveLength(1);
 
-    const [deleteParameterCommand] = deleteParameterCalls[0] as [{ input: { Name: string } }];
-    expect(deleteParameterCommand.input.Name).toBe("/petroglyph/onedrive/delta-token");
+    const [deleteCommand] = deleteCommandCalls[0] as [
+      { input: { TableName: string; Key: { profileId: string } } },
+    ];
+    expect(deleteCommand.input.TableName).toBe("petroglyph-delta-tokens-test");
+    expect(deleteCommand.input.Key.profileId).toBe("default");
 
     const queryCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof QueryCommand);
     expect(queryCalls).toHaveLength(1);
@@ -178,9 +178,12 @@ describe("POST /sync/reset", () => {
         return Promise.resolve({});
       }
 
+      if (command instanceof DeleteCommand) {
+        return Promise.resolve({});
+      }
+
       return Promise.resolve({});
     });
-    mockSsmSend.mockResolvedValue({});
 
     const response = await postReset("full");
 
@@ -188,7 +191,7 @@ describe("POST /sync/reset", () => {
     expect(await response.json()).toEqual({ resetToken: true });
 
     expect(
-      mockSsmSend.mock.calls.some(([command]) => command instanceof DeleteParameterCommand),
+      mockDbSend.mock.calls.some(([command]) => command instanceof DeleteCommand),
     ).toBe(true);
     expect(mockDbSend.mock.calls.some(([command]) => command instanceof QueryCommand)).toBe(true);
     expect(mockDbSend.mock.calls.some(([command]) => command instanceof BatchWriteCommand)).toBe(

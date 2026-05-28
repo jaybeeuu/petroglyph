@@ -1,12 +1,9 @@
-import { DeleteParameterCommand } from "@aws-sdk/client-ssm";
-import { BatchWriteCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { BatchWriteCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { z } from "zod";
 import { docClient } from "./db.js";
-import { ssmClient } from "./ssm.js";
 
 const DEFAULT_PROFILE_ID = "default";
-const DELTA_TOKEN_PARAMETER = "/petroglyph/onedrive/delta-token";
 const BATCH_DELETE_LIMIT = 25;
 const MAX_BATCH_DELETE_ATTEMPTS = 5;
 
@@ -25,6 +22,10 @@ interface DynamoKey {
 
 function fileRecordsTableName(): string {
   return process.env["FILE_RECORDS_TABLE"] ?? "petroglyph-file-records-default";
+}
+
+function deltaTokensTableName(): string {
+  return process.env["DELTA_TOKENS_TABLE"] ?? "petroglyph-delta-tokens-default";
 }
 
 function parseFileRecordKeys(items: unknown[] | undefined): FileRecordKey[] {
@@ -49,9 +50,6 @@ function parseFileRecordKeys(items: unknown[] | undefined): FileRecordKey[] {
   });
 }
 
-function isParameterNotFoundError(error: unknown): boolean {
-  return error instanceof Error && error.name === "ParameterNotFound";
-}
 
 function parseUnprocessedFileRecordKeys(
   unprocessedItems: unknown,
@@ -98,15 +96,16 @@ function parseUnprocessedFileRecordKeys(
   });
 }
 
-async function deleteDeltaToken(): Promise<void> {
+async function deleteDeltaToken(profileId: string): Promise<void> {
   try {
-    await ssmClient.send(
-      new DeleteParameterCommand({
-        Name: DELTA_TOKEN_PARAMETER,
+    await docClient.send(
+      new DeleteCommand({
+        TableName: deltaTokensTableName(),
+        Key: { profileId },
       }),
     );
   } catch (error) {
-    if (isParameterNotFoundError(error)) {
+    if (error instanceof Error && error.name === "ResourceNotFoundException") {
       return;
     }
 
@@ -176,7 +175,7 @@ export async function handleSyncReset(c: Context): Promise<Response> {
     return c.json({ error: "Invalid reset scope" }, 400);
   }
 
-  await deleteDeltaToken();
+  await deleteDeltaToken(DEFAULT_PROFILE_ID);
   await deleteFileRecords(DEFAULT_PROFILE_ID);
 
   return parsedBody.data.scope === "full"

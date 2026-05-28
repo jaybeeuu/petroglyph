@@ -1,11 +1,8 @@
-import { GetParameterCommand, PutParameterCommand } from "@aws-sdk/client-ssm";
-import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import { PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { docClient } from "./db.js";
 import { resolveOneDriveAccessToken } from "./onedrive-middleware.js";
-import { ssmClient } from "./ssm.js";
 
-const DELTA_TOKEN_PARAMETER = "/petroglyph/onedrive/delta-token";
 const DEFAULT_PROFILE_ID = "default";
 
 interface GraphDeltaPage {
@@ -27,6 +24,10 @@ function fileRecordsTableName(): string {
   return process.env["FILE_RECORDS_TABLE"] ?? "petroglyph-file-records-default";
 }
 
+function deltaTokensTableName(): string {
+  return process.env["DELTA_TOKENS_TABLE"] ?? "petroglyph-delta-tokens-default";
+}
+
 function oneDriveFolder(): string {
   return process.env["ONEDRIVE_FOLDER"] ?? "OnyxBoox";
 }
@@ -35,21 +36,18 @@ function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isParameterNotFoundError(error: unknown): boolean {
-  return error instanceof Error && error.name === "ParameterNotFound";
-}
-
-async function readDeltaToken(): Promise<string | undefined> {
+async function readDeltaToken(profileId: string): Promise<string | undefined> {
   try {
-    const result = await ssmClient.send(
-      new GetParameterCommand({
-        Name: DELTA_TOKEN_PARAMETER,
-        WithDecryption: true,
+    const result = await docClient.send(
+      new GetCommand({
+        TableName: deltaTokensTableName(),
+        Key: { profileId },
       }),
     );
-    return result.Parameter?.Value;
+    const deltaToken = result.Item?.deltaToken;
+    return typeof deltaToken === "string" ? deltaToken : undefined;
   } catch (error) {
-    if (isParameterNotFoundError(error)) {
+    if (error instanceof Error && error.name === "ResourceNotFoundException") {
       return undefined;
     }
     throw error;
@@ -148,13 +146,15 @@ async function writeFileRecord(file: GraphDriveFileItem, createdAt: string): Pro
   );
 }
 
-async function storeDeltaToken(deltaToken: string): Promise<void> {
-  await ssmClient.send(
-    new PutParameterCommand({
-      Name: DELTA_TOKEN_PARAMETER,
-      Value: deltaToken,
-      Type: "SecureString",
-      Overwrite: true,
+async function storeDeltaToken(profileId: string, deltaToken: string): Promise<void> {
+  await docClient.send(
+    new PutCommand({
+      TableName: deltaTokensTableName(),
+      Item: {
+        profileId,
+        deltaToken,
+        updatedAt: new Date().toISOString(),
+      },
     }),
   );
 }
@@ -166,7 +166,7 @@ export async function handleSyncRun(c: Context): Promise<Response> {
   }
   const userId = userIdValue;
   const accessToken = await resolveOneDriveAccessToken(userId);
-  const startingDeltaToken = await readDeltaToken();
+  const startingDeltaToken = await readDeltaToken(DEFAULT_PROFILE_ID);
 
   let nextUrl: string | undefined = buildDeltaUrl(oneDriveFolder(), startingDeltaToken);
   let latestDeltaToken: string | undefined;
@@ -193,7 +193,7 @@ export async function handleSyncRun(c: Context): Promise<Response> {
   }
 
   if (latestDeltaToken) {
-    await storeDeltaToken(latestDeltaToken);
+    await storeDeltaToken(DEFAULT_PROFILE_ID, latestDeltaToken);
   }
 
   return c.json({ queued });
