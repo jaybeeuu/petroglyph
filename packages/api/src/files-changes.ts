@@ -1,14 +1,12 @@
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { GetParameterCommand } from "@aws-sdk/client-ssm";
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { z } from "zod";
+import { getProfile, listProfiles } from "@petroglyph/core";
 import { docClient } from "./db.js";
-import { ssmClient } from "./ssm.js";
 
 const DEFAULT_PROFILE_ID = "default";
-const INITIAL_SYNC_PARAMETER = "/petroglyph/config/initial-sync";
 const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 25;
 const PRESIGNED_URL_EXPIRES_IN_SECONDS = 15 * 60;
@@ -40,6 +38,10 @@ const queryResultSchema = z.object({
 });
 
 const initialSyncValueSchema = z.enum(["true", "false"]).transform((value) => value === "true");
+
+function syncProfilesTableName(): string {
+  return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
+}
 
 interface FileChange {
   fileId: string;
@@ -92,15 +94,10 @@ function encodeCursorToken(cursor: CursorToken): string {
   return Buffer.from(JSON.stringify(cursor)).toString("base64url");
 }
 
-async function readInitialSyncEnabled(): Promise<boolean> {
-  const result = await ssmClient.send(
-    new GetParameterCommand({
-      Name: INITIAL_SYNC_PARAMETER,
-      WithDecryption: true,
-    }),
-  );
-
-  return initialSyncValueSchema.parse(result.Parameter?.Value);
+async function readInitialSyncEnabled(userId: string): Promise<boolean> {
+  const profiles = await listProfiles(docClient, syncProfilesTableName(), userId);
+  const activeProfile = profiles.find((p) => p.active);
+  return activeProfile?.initialSyncEnabled ?? true;
 }
 
 async function readFileRecordPage(
@@ -165,6 +162,7 @@ async function presignFileRecord(fileRecord: FileRecord): Promise<FileChange> {
 }
 
 export async function handleFilesChanges(c: Context): Promise<Response> {
+  const userId = c.get("userId") as string;
   const query = fileChangesQuerySchema.safeParse({
     after: c.req.query("after"),
     limit: c.req.query("limit"),
@@ -175,7 +173,7 @@ export async function handleFilesChanges(c: Context): Promise<Response> {
   }
 
   if (query.data.after === undefined) {
-    const initialSyncEnabled = await readInitialSyncEnabled();
+    const initialSyncEnabled = await readInitialSyncEnabled(userId);
     if (!initialSyncEnabled) {
       return c.json({ files: [], nextToken: null });
     }

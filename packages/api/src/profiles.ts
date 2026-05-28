@@ -14,6 +14,7 @@ const createProfileBodySchema = z.object({
   destinationVaultPath: z.string().min(1),
   pollingIntervalMinutes: z.number().int().positive().optional(),
   enabled: z.boolean().optional(),
+  initialSyncEnabled: z.boolean().optional(),
 });
 
 export async function handleListProfiles(c: Context): Promise<Response> {
@@ -49,6 +50,7 @@ export async function handleCreateProfile(c: Context): Promise<Response> {
     destinationVaultPath: parsed.data.destinationVaultPath,
     pollingIntervalMinutes: parsed.data.pollingIntervalMinutes ?? 5,
     enabled: parsed.data.enabled ?? true,
+    initialSyncEnabled: parsed.data.initialSyncEnabled ?? true,
     active: isFirst,
     createdAt: now,
     updatedAt: now,
