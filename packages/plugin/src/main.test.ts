@@ -519,7 +519,7 @@ describe("handleOneDriveCallback", () => {
     vi.unstubAllGlobals();
   });
 
-  it("sets oneDriveConnected=true and saves data on success", async () => {
+  it("sets oneDriveConnected=true and oneDriveStatus=connected on success", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", refreshToken: "r", username: "alice" });
     const refreshSettingsUiSpy = vi.spyOn(plugin, "refreshSettingsUi").mockImplementation(() => {});
 
@@ -528,9 +528,10 @@ describe("handleOneDriveCallback", () => {
     await plugin.handleOneDriveCallback({ code: "abc", state: "xyz" });
 
     expect(plugin.data.oneDriveConnected).toBe(true);
+    expect(plugin.data.oneDriveStatus).toBe("connected");
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.saveData).toHaveBeenCalledWith(
-      expect.objectContaining({ oneDriveConnected: true }),
+      expect.objectContaining({ oneDriveConnected: true, oneDriveStatus: "connected" }),
     );
     expect(refreshSettingsUiSpy).toHaveBeenCalledOnce();
   });
@@ -649,6 +650,25 @@ describe("pollStatus", () => {
     await plugin.pollStatus();
 
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("reads oneDriveStatus from top-level response field", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      refreshToken: "r",
+      username: "alice",
+    });
+    const refreshSettingsUiSpy = vi.spyOn(plugin, "refreshSettingsUi").mockImplementation(() => {});
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ oneDriveStatus: "connected" }),
+    });
+
+    await plugin.pollStatus();
+
+    expect(plugin.data.oneDriveStatus).toBe("connected");
+    expect(refreshSettingsUiSpy).toHaveBeenCalledOnce();
   });
 
   it("silently ignores network errors", async () => {

@@ -696,6 +696,7 @@ export class PetroglyphPlugin extends Plugin {
         return;
       }
       this.setOneDriveConnected(true);
+      this._data = { ...this._data, oneDriveStatus: "connected" };
       await this.savePluginData();
       this.refreshSettingsUi();
       this.startSyncPolling();
@@ -714,9 +715,9 @@ export class PetroglyphPlugin extends Plugin {
       if (!response.ok) return;
       const body: unknown = await response.json();
       if (!isRecord(body)) return;
+      let stateChanged = false;
       const oneDrive = body["oneDrive"];
       if (isRecord(oneDrive)) {
-        let stateChanged = false;
         if (typeof oneDrive["connected"] === "boolean") {
           if (this._data.oneDriveConnected !== oneDrive["connected"]) {
             this.setOneDriveConnected(oneDrive["connected"]);
@@ -729,12 +730,18 @@ export class PetroglyphPlugin extends Plugin {
             stateChanged = true;
           }
         }
-        if (!stateChanged) {
-          return;
-        }
-        await this.savePluginData();
-        this.refreshSettingsUi();
       }
+      if (typeof body["oneDriveStatus"] === "string") {
+        if (this._data.oneDriveStatus !== body["oneDriveStatus"]) {
+          this._data = { ...this._data, oneDriveStatus: body["oneDriveStatus"] };
+          stateChanged = true;
+        }
+      }
+      if (!stateChanged) {
+        return;
+      }
+      await this.savePluginData();
+      this.refreshSettingsUi();
     } catch {
       // Network errors are silently ignored; the next poll will retry.
     }
