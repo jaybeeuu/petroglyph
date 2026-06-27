@@ -72,7 +72,7 @@ async function updateOneDriveStatus(userId: string, status: OneDriveStatus): Pro
   );
 }
 
-async function markConnected(userId: string): Promise<void> {
+export async function markConnected(userId: string): Promise<void> {
   await updateOneDriveStatus(userId, "connected");
 }
 
