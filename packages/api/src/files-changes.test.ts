@@ -1,5 +1,4 @@
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { GetParameterCommand } from "@aws-sdk/client-ssm";
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -71,9 +70,8 @@ describe("GET /files/changes", () => {
   it("returns an empty page when initial sync is disabled and no cursor is provided", async () => {
     mockDbSend.mockImplementation((command: unknown) => {
       if (command instanceof QueryCommand) {
-        const queryCommand = command as QueryCommand;
         // Profile query (listProfiles queries by userId)
-        if (queryCommand.input.KeyConditionExpression?.includes("userId")) {
+        if (command.input.KeyConditionExpression?.includes("userId")) {
           return Promise.resolve({
             Items: [
               {
@@ -94,7 +92,7 @@ describe("GET /files/changes", () => {
           });
         }
         // File records query (should not be called)
-        if (queryCommand.input.KeyConditionExpression?.includes("profileId")) {
+        if (command.input.KeyConditionExpression?.includes("profileId")) {
           return Promise.reject(
             new Error("Should not call readFileRecordPage when initialSyncEnabled is false"),
           );
@@ -117,9 +115,8 @@ describe("GET /files/changes", () => {
   it("returns the first page from the beginning when initial sync is enabled", async () => {
     mockDbSend.mockImplementation((command: unknown) => {
       if (command instanceof QueryCommand) {
-        const queryCommand = command as QueryCommand;
         // Profile query (listProfiles queries by userId)
-        if (queryCommand.input.KeyConditionExpression?.includes("userId")) {
+        if (command.input.KeyConditionExpression?.includes("userId")) {
           return Promise.resolve({
             Items: [
               {
@@ -139,7 +136,7 @@ describe("GET /files/changes", () => {
           });
         }
         // File records query
-        if (queryCommand.input.KeyConditionExpression?.includes("profileId")) {
+        if (command.input.KeyConditionExpression?.includes("profileId")) {
           return Promise.resolve({
             Items: [
               {
@@ -237,10 +234,10 @@ describe("GET /files/changes", () => {
     const queryCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof QueryCommand);
     expect(queryCalls).toHaveLength(1);
 
-    const [queryCommand] = queryCalls[0] as [
+    const [command] = queryCalls[0] as [
       { input: { ExclusiveStartKey: { profileId: string; fileId: string } } },
     ];
-    expect(queryCommand.input.ExclusiveStartKey).toEqual({
+    expect(command.input.ExclusiveStartKey).toEqual({
       profileId: "default",
       fileId: "file-2",
     });

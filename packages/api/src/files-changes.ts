@@ -3,7 +3,7 @@ import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { z } from "zod";
-import { getProfile, listProfiles } from "@petroglyph/core";
+import { listProfiles } from "@petroglyph/core";
 import { docClient } from "./db.js";
 
 const DEFAULT_PROFILE_ID = "default";
@@ -36,8 +36,6 @@ const queryResultSchema = z.object({
   Items: z.array(fileRecordSchema).optional(),
   LastEvaluatedKey: cursorSchema.optional(),
 });
-
-const initialSyncValueSchema = z.enum(["true", "false"]).transform((value) => value === "true");
 
 function syncProfilesTableName(): string {
   return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";

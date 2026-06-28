@@ -31,10 +31,6 @@ function deltaTokensTableName(): string {
   return process.env["DELTA_TOKENS_TABLE"] ?? "petroglyph-delta-tokens-default";
 }
 
-function oneDriveFolder(): string {
-  return process.env["ONEDRIVE_FOLDER"] ?? "OnyxBoox";
-}
-
 async function findActiveProfile(
   userId: string,
 ): Promise<{ sourceFolderPath: string; profileId: string } | null> {
@@ -62,7 +58,7 @@ async function readDeltaToken(profileId: string): Promise<string | undefined> {
         Key: { profileId },
       }),
     );
-    const deltaToken = result.Item?.deltaToken;
+    const deltaToken: unknown = result.Item?.["deltaToken"];
     return typeof deltaToken === "string" ? deltaToken : undefined;
   } catch (error) {
     if (error instanceof Error && error.name === "ResourceNotFoundException") {
