@@ -50,6 +50,7 @@ export async function handleCreateProfile(c: Context): Promise<Response> {
     pollingIntervalMinutes: parsed.data.pollingIntervalMinutes ?? 5,
     enabled: parsed.data.enabled ?? true,
     active: isFirst,
+    initialSyncEnabled: true,
     createdAt: now,
     updatedAt: now,
   };

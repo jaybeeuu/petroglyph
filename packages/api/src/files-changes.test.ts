@@ -1,19 +1,13 @@
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { GetParameterCommand } from "@aws-sdk/client-ssm";
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockDbSend = vi.hoisted(() => vi.fn());
-const mockSsmSend = vi.hoisted(() => vi.fn());
 const mockGetSignedUrl = vi.hoisted(() => vi.fn());
 
 vi.mock("./db.js", () => ({
   docClient: { send: mockDbSend },
-}));
-
-vi.mock("./ssm.js", () => ({
-  ssmClient: { send: mockSsmSend },
 }));
 
 vi.mock("@aws-sdk/s3-request-presigner", () => ({
@@ -37,8 +31,8 @@ describe("GET /files/changes", () => {
     vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
     vi.stubEnv("FILE_RECORDS_TABLE", "petroglyph-file-records-test");
     vi.stubEnv("STAGED_PDFS_BUCKET", "petroglyph-staged-pdfs-test");
+    vi.stubEnv("SYNC_PROFILES_TABLE", "petroglyph-sync-profiles-test");
     mockDbSend.mockReset();
-    mockSsmSend.mockReset();
     mockGetSignedUrl.mockReset();
     resetKeyCache();
   });
@@ -74,16 +68,39 @@ describe("GET /files/changes", () => {
   }
 
   it("returns an empty page when initial sync is disabled and no cursor is provided", async () => {
-    mockSsmSend.mockImplementation((command: unknown) => {
-      if (command instanceof GetParameterCommand) {
-        return Promise.resolve({
-          Parameter: { Value: "false" },
-        });
+    mockDbSend.mockImplementation((command: unknown) => {
+      if (command instanceof QueryCommand) {
+        // Profile query (listProfiles queries by userId)
+        if (command.input.KeyConditionExpression?.includes("userId")) {
+          return Promise.resolve({
+            Items: [
+              {
+                profileId: "default",
+                userId: "user-42",
+                name: "Test Profile",
+                sourceFolderPath: "/test",
+                destinationVaultPath: "vault",
+                pollingIntervalMinutes: 5,
+                enabled: true,
+                active: true,
+                initialSyncEnabled: false,
+                createdAt: "2024-01-01T00:00:00Z",
+                updatedAt: "2024-01-01T00:00:00Z",
+              },
+            ],
+            LastEvaluatedKey: undefined,
+          });
+        }
+        // File records query (should not be called)
+        if (command.input.KeyConditionExpression?.includes("profileId")) {
+          return Promise.reject(
+            new Error("Should not call readFileRecordPage when initialSyncEnabled is false"),
+          );
+        }
       }
 
-      return Promise.reject(new Error("Unexpected SSM call"));
+      return Promise.reject(new Error("Unexpected DB call"));
     });
-    mockDbSend.mockImplementation(() => Promise.reject(new Error("Unexpected DB call")));
 
     const response = await getChanges();
 
@@ -92,41 +109,54 @@ describe("GET /files/changes", () => {
       files: [],
       nextToken: null,
     });
-    expect(mockDbSend).not.toHaveBeenCalled();
     expect(mockGetSignedUrl).not.toHaveBeenCalled();
   });
 
   it("returns the first page from the beginning when initial sync is enabled", async () => {
-    mockSsmSend.mockImplementation((command: unknown) => {
-      if (command instanceof GetParameterCommand) {
-        return Promise.resolve({
-          Parameter: { Value: "true" },
-        });
-      }
-
-      return Promise.reject(new Error("Unexpected SSM call"));
-    });
     mockDbSend.mockImplementation((command: unknown) => {
       if (command instanceof QueryCommand) {
-        return Promise.resolve({
-          Items: [
-            {
-              profileId: "default",
-              fileId: "file-2",
-              filename: "later.pdf",
-              createdAt: "2024-01-02T12:00:00.000Z",
-              s3Key: "staged/later.pdf",
-              pageCount: 3,
-            },
-            {
-              profileId: "default",
-              fileId: "file-1",
-              filename: "earlier.pdf",
-              createdAt: "2024-01-01T12:00:00.000Z",
-              s3Key: "staged/earlier.pdf",
-            },
-          ],
-        });
+        // Profile query (listProfiles queries by userId)
+        if (command.input.KeyConditionExpression?.includes("userId")) {
+          return Promise.resolve({
+            Items: [
+              {
+                profileId: "default",
+                userId: "user-42",
+                name: "Test Profile",
+                sourceFolderPath: "/test",
+                destinationVaultPath: "vault",
+                pollingIntervalMinutes: 5,
+                enabled: true,
+                active: true,
+                initialSyncEnabled: true,
+                createdAt: "2024-01-01T00:00:00Z",
+                updatedAt: "2024-01-01T00:00:00Z",
+              },
+            ],
+          });
+        }
+        // File records query
+        if (command.input.KeyConditionExpression?.includes("profileId")) {
+          return Promise.resolve({
+            Items: [
+              {
+                profileId: "default",
+                fileId: "file-2",
+                filename: "later.pdf",
+                createdAt: "2024-01-02T12:00:00.000Z",
+                s3Key: "staged/later.pdf",
+                pageCount: 3,
+              },
+              {
+                profileId: "default",
+                fileId: "file-1",
+                filename: "earlier.pdf",
+                createdAt: "2024-01-01T12:00:00.000Z",
+                s3Key: "staged/earlier.pdf",
+              },
+            ],
+          });
+        }
       }
 
       return Promise.reject(new Error("Unexpected DB call"));
@@ -200,15 +230,14 @@ describe("GET /files/changes", () => {
     const response = await getChanges(`?after=${after}&limit=1`);
 
     expect(response.status).toBe(200);
-    expect(mockSsmSend).not.toHaveBeenCalled();
 
     const queryCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof QueryCommand);
     expect(queryCalls).toHaveLength(1);
 
-    const [queryCommand] = queryCalls[0] as [
+    const [command] = queryCalls[0] as [
       { input: { ExclusiveStartKey: { profileId: string; fileId: string } } },
     ];
-    expect(queryCommand.input.ExclusiveStartKey).toEqual({
+    expect(command.input.ExclusiveStartKey).toEqual({
       profileId: "default",
       fileId: "file-2",
     });

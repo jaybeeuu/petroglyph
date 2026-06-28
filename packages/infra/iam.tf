@@ -15,6 +15,8 @@ locals {
   aws_region              = "eu-west-2"
   file_records_table_name = "petroglyph-file-records-${terraform.workspace}"
   file_records_table_arn  = "arn:aws:dynamodb:${local.aws_region}:*:table/${local.file_records_table_name}"
+  delta_tokens_table_name = "petroglyph-delta-tokens-${terraform.workspace}"
+  delta_tokens_table_arn  = "arn:aws:dynamodb:${local.aws_region}:*:table/${local.delta_tokens_table_name}"
 
   ssm_arn_prefix = "arn:aws:ssm:${local.aws_region}:*:parameter"
 
@@ -55,6 +57,8 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
           aws_dynamodb_table.users.arn,
           aws_dynamodb_table.refresh_tokens.arn,
           aws_dynamodb_table.sync_profiles.arn,
+          aws_dynamodb_table.file_records.arn,
+          aws_dynamodb_table.delta_tokens.arn,
         ]
       },
       {

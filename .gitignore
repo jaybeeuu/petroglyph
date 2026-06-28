@@ -41,3 +41,7 @@ test-output.txt
 .ralph-state.json
 .ralph-*.log
 .worktrees/
+
+.agent-cortex/
+
+.agent-cortex/worktrees/
