@@ -70,7 +70,6 @@ function makeTokenRecord(overrides: Partial<MockTokenRecord> = {}): MockTokenRec
 }
 
 function mockOneDriveParams(userId: string, record: MockTokenRecord): void {
-  const originalMock = mockDocSend.getMockImplementation?.();
   mockDocSend.mockImplementation((command: unknown) => {
     if (command instanceof GetCommand) {
       const key = command.input.Key as { tokenHash: string };
