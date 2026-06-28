@@ -64,7 +64,7 @@ describe("POST /sync/run", () => {
     });
   }
 
-function mockOneDriveDb({
+  function mockOneDriveDb({
     tokenExpiryOffsetMs = 60 * 60 * 1000,
     onedriveAccessToken = accessToken,
     onedriveRefreshToken = refreshToken,
@@ -166,7 +166,8 @@ function mockOneDriveDb({
 
     // Check file record
     const fileRecordPut = putItemCalls.find(
-      ([cmd]) => (cmd as { input: { TableName: string; Item: { fileId?: string } } }).input.Item.fileId,
+      ([cmd]) =>
+        (cmd as { input: { TableName: string; Item: { fileId?: string } } }).input.Item.fileId,
     );
     const [fileRecordCommand] = fileRecordPut as [
       {
@@ -193,10 +194,17 @@ function mockOneDriveDb({
 
     // Check delta token
     const deltaTokenPut = putItemCalls.find(
-      ([cmd]) => (cmd as { input: { TableName: string; Item: { deltaToken?: string } } }).input.Item.deltaToken,
+      ([cmd]) =>
+        (cmd as { input: { TableName: string; Item: { deltaToken?: string } } }).input.Item
+          .deltaToken,
     );
     const [deltaTokenCommand] = deltaTokenPut as [
-      { input: { TableName: string; Item: { profileId: string; deltaToken: string; updatedAt: string } } },
+      {
+        input: {
+          TableName: string;
+          Item: { profileId: string; deltaToken: string; updatedAt: string };
+        };
+      },
     ];
     expect(deltaTokenCommand.input.TableName).toBe("petroglyph-delta-tokens-test");
     expect(deltaTokenCommand.input.Item.profileId).toBe("default");

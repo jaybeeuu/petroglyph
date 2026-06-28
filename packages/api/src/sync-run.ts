@@ -35,7 +35,9 @@ function oneDriveFolder(): string {
   return process.env["ONEDRIVE_FOLDER"] ?? "OnyxBoox";
 }
 
-async function findActiveProfile(userId: string): Promise<{ sourceFolderPath: string; profileId: string } | null> {
+async function findActiveProfile(
+  userId: string,
+): Promise<{ sourceFolderPath: string; profileId: string } | null> {
   try {
     const profiles = await listProfiles(docClient, syncProfilesTableName(), userId);
     const active = profiles.find((p) => p.active);
@@ -146,7 +148,11 @@ async function fetchDeltaPage(url: string, accessToken: string): Promise<GraphDe
   return parseGraphDeltaPage(await response.json());
 }
 
-async function writeFileRecord(file: GraphDriveFileItem, createdAt: string, profileId: string): Promise<void> {
+async function writeFileRecord(
+  file: GraphDriveFileItem,
+  createdAt: string,
+  profileId: string,
+): Promise<void> {
   await docClient.send(
     new PutCommand({
       TableName: fileRecordsTableName(),
@@ -190,7 +196,10 @@ export async function handleSyncRun(c: Context): Promise<Response> {
   const accessToken = await resolveOneDriveAccessToken(userId);
   const startingDeltaToken = await readDeltaToken(activeProfile.profileId);
 
-  let nextUrl: string | undefined = buildDeltaUrl(activeProfile.sourceFolderPath, startingDeltaToken);
+  let nextUrl: string | undefined = buildDeltaUrl(
+    activeProfile.sourceFolderPath,
+    startingDeltaToken,
+  );
   let latestDeltaToken: string | undefined;
   let queued = 0;
 

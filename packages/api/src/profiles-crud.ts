@@ -67,7 +67,9 @@ function mergeProfile(
       pollingIntervalMinutes: updates.pollingIntervalMinutes,
     }),
     ...(updates.enabled !== undefined && { enabled: updates.enabled }),
-    ...(updates.initialSyncEnabled !== undefined && { initialSyncEnabled: updates.initialSyncEnabled }),
+    ...(updates.initialSyncEnabled !== undefined && {
+      initialSyncEnabled: updates.initialSyncEnabled,
+    }),
     updatedAt: new Date().toISOString(),
   };
 }

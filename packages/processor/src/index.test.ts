@@ -359,9 +359,7 @@ describe("processor handler", () => {
     expect(result).toEqual({ batchItemFailures: [] });
     expect(mockFetch).toHaveBeenCalledOnce();
     expect(mockS3Send).not.toHaveBeenCalled();
-    const putCommands = mockDocSend.mock.calls.filter(
-      ([command]) => command instanceof PutCommand,
-    );
+    const putCommands = mockDocSend.mock.calls.filter(([command]) => command instanceof PutCommand);
     expect(putCommands).toHaveLength(0);
   });
 
@@ -414,9 +412,7 @@ describe("processor handler", () => {
       batchItemFailures: [{ itemIdentifier: "message-123" }],
     });
     expect(mockS3Send).not.toHaveBeenCalled();
-    const putCommands = mockDocSend.mock.calls.filter(
-      ([command]) => command instanceof PutCommand,
-    );
+    const putCommands = mockDocSend.mock.calls.filter(([command]) => command instanceof PutCommand);
     expect(putCommands).toHaveLength(0);
   });
 });

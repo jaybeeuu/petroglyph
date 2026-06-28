@@ -190,9 +190,7 @@ describe("POST /sync/reset", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ resetToken: true });
 
-    expect(
-      mockDbSend.mock.calls.some(([command]) => command instanceof DeleteCommand),
-    ).toBe(true);
+    expect(mockDbSend.mock.calls.some(([command]) => command instanceof DeleteCommand)).toBe(true);
     expect(mockDbSend.mock.calls.some(([command]) => command instanceof QueryCommand)).toBe(true);
     expect(mockDbSend.mock.calls.some(([command]) => command instanceof BatchWriteCommand)).toBe(
       true,

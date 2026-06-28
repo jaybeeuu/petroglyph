@@ -50,7 +50,6 @@ function parseFileRecordKeys(items: unknown[] | undefined): FileRecordKey[] {
   });
 }
 
-
 function parseUnprocessedFileRecordKeys(
   unprocessedItems: unknown,
   tableName: string,

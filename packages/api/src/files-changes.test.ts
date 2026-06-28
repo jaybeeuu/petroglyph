@@ -95,7 +95,9 @@ describe("GET /files/changes", () => {
         }
         // File records query (should not be called)
         if (queryCommand.input.KeyConditionExpression?.includes("profileId")) {
-          return Promise.reject(new Error("Should not call readFileRecordPage when initialSyncEnabled is false"));
+          return Promise.reject(
+            new Error("Should not call readFileRecordPage when initialSyncEnabled is false"),
+          );
         }
       }
 

@@ -91,7 +91,8 @@ const DEFAULT_LOG_PATH =
 function makeLogger(logStream: WriteStream) {
   return function log(level: "INFO" | "ERROR" | "DEBUG", message: string, data?: unknown): void {
     const ts = new Date().toISOString();
-    const dataStr = data !== undefined ? `\n  ${JSON.stringify(data, null, 2).replace(/\n/g, "\n  ")}` : "";
+    const dataStr =
+      data !== undefined ? `\n  ${JSON.stringify(data, null, 2).replace(/\n/g, "\n  ")}` : "";
     const line = `[${ts}] ${level} ${message}${dataStr}\n`;
     process.stdout.write(line);
     logStream.write(line);
@@ -145,7 +146,12 @@ function parseCallbackPayload(url: URL): GitHubCallbackPayload | OneDriveCallbac
   };
 }
 
-async function requestJson<T>(fetchFn: typeof fetch, url: string, init?: RequestInit, log?: Logger): Promise<T> {
+async function requestJson<T>(
+  fetchFn: typeof fetch,
+  url: string,
+  init?: RequestInit,
+  log?: Logger,
+): Promise<T> {
   const method = init?.method ?? "GET";
   log?.("DEBUG", `→ ${method} ${url}`);
   const response = await fetchFn(url, init);
@@ -216,7 +222,10 @@ function startBrowser(url: string): Promise<void> {
   });
 }
 
-export async function startFlowCallbacks(callbackPort: number, log?: Logger): Promise<FlowCallbacks> {
+export async function startFlowCallbacks(
+  callbackPort: number,
+  log?: Logger,
+): Promise<FlowCallbacks> {
   const pendingGithub: Array<(payload: GitHubCallbackPayload) => void> = [];
   const pendingOneDrive: Array<(payload: OneDriveCallbackPayload) => void> = [];
   let githubResolved: GitHubCallbackPayload | undefined;
@@ -338,7 +347,12 @@ async function runGitHubLogin(options: LocalFlowOptions): Promise<GitHubCallback
   authUrl.searchParams.set("returnUri", options.callbacks.githubCallbackUrl);
 
   options.log("INFO", "Step 1: fetching GitHub auth URL", { url: authUrl.toString() });
-  const authUrlResponse = await requestJson<AuthUrlResponse>(fetchFn, authUrl.toString(), undefined, options.log);
+  const authUrlResponse = await requestJson<AuthUrlResponse>(
+    fetchFn,
+    authUrl.toString(),
+    undefined,
+    options.log,
+  );
   options.log("INFO", "Opening browser for GitHub login", { githubUrl: authUrlResponse.url });
   await openBrowserOrPrint(authUrlResponse.url, options.openBrowser);
 
@@ -357,9 +371,14 @@ async function runOneDriveConnect(
   authUrl.searchParams.set("harnessCallbackUri", options.callbacks.oneDriveCallbackUrl);
 
   options.log("INFO", "Step 2: fetching OneDrive auth URL", { url: authUrl.toString() });
-  const authUrlResponse = await requestJson<AuthUrlResponse>(fetchFn, authUrl.toString(), {
-    headers: { Authorization: `Bearer ${jwt}` },
-  }, options.log);
+  const authUrlResponse = await requestJson<AuthUrlResponse>(
+    fetchFn,
+    authUrl.toString(),
+    {
+      headers: { Authorization: `Bearer ${jwt}` },
+    },
+    options.log,
+  );
 
   options.log("INFO", "Opening browser for OneDrive login", { microsoftUrl: authUrlResponse.url });
   await openBrowserOrPrint(authUrlResponse.url, options.openBrowser);
@@ -421,9 +440,14 @@ async function refreshJwt(
 async function fetchStatus(options: LocalFlowOptions, jwt: string): Promise<StatusResponse> {
   const fetchFn = options.fetchFn ?? fetch;
   options.log("INFO", "Step 4: GET /status");
-  return requestJson<StatusResponse>(fetchFn, new URL("/status", options.apiBaseUrl).toString(), {
-    headers: { Authorization: `Bearer ${jwt}` },
-  }, options.log);
+  return requestJson<StatusResponse>(
+    fetchFn,
+    new URL("/status", options.apiBaseUrl).toString(),
+    {
+      headers: { Authorization: `Bearer ${jwt}` },
+    },
+    options.log,
+  );
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -563,7 +587,11 @@ async function main(): Promise<void> {
 
     log("INFO", "Final state", state);
   } catch (error) {
-    log("ERROR", "Flow failed", error instanceof Error ? { message: error.message, stack: error.stack } : error);
+    log(
+      "ERROR",
+      "Flow failed",
+      error instanceof Error ? { message: error.message, stack: error.stack } : error,
+    );
     throw error;
   } finally {
     await callbacks.close();
