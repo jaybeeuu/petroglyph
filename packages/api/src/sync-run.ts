@@ -1,9 +1,12 @@
 import { PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
+import { listProfiles } from "@petroglyph/core";
 import { docClient } from "./db.js";
 import { resolveOneDriveAccessToken } from "./onedrive-middleware.js";
 
-const DEFAULT_PROFILE_ID = "default";
+function syncProfilesTableName(): string {
+  return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
+}
 
 interface GraphDeltaPage {
   value: unknown[];
@@ -30,6 +33,19 @@ function deltaTokensTableName(): string {
 
 function oneDriveFolder(): string {
   return process.env["ONEDRIVE_FOLDER"] ?? "OnyxBoox";
+}
+
+async function findActiveProfile(userId: string): Promise<{ sourceFolderPath: string; profileId: string } | null> {
+  try {
+    const profiles = await listProfiles(docClient, syncProfilesTableName(), userId);
+    const active = profiles.find((p) => p.active);
+    if (active) {
+      return { sourceFolderPath: active.sourceFolderPath, profileId: active.profileId };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -130,12 +146,12 @@ async function fetchDeltaPage(url: string, accessToken: string): Promise<GraphDe
   return parseGraphDeltaPage(await response.json());
 }
 
-async function writeFileRecord(file: GraphDriveFileItem, createdAt: string): Promise<void> {
+async function writeFileRecord(file: GraphDriveFileItem, createdAt: string, profileId: string): Promise<void> {
   await docClient.send(
     new PutCommand({
       TableName: fileRecordsTableName(),
       Item: {
-        profileId: DEFAULT_PROFILE_ID,
+        profileId,
         fileId: file.id,
         s3Key: "",
         filename: file.name,
@@ -165,10 +181,16 @@ export async function handleSyncRun(c: Context): Promise<Response> {
     throw new Error("Missing userId in sync run context");
   }
   const userId = userIdValue;
-  const accessToken = await resolveOneDriveAccessToken(userId);
-  const startingDeltaToken = await readDeltaToken(DEFAULT_PROFILE_ID);
 
-  let nextUrl: string | undefined = buildDeltaUrl(oneDriveFolder(), startingDeltaToken);
+  const activeProfile = await findActiveProfile(userId);
+  if (!activeProfile) {
+    return c.json({ error: "No active profile configured" }, 400);
+  }
+
+  const accessToken = await resolveOneDriveAccessToken(userId);
+  const startingDeltaToken = await readDeltaToken(activeProfile.profileId);
+
+  let nextUrl: string | undefined = buildDeltaUrl(activeProfile.sourceFolderPath, startingDeltaToken);
   let latestDeltaToken: string | undefined;
   let queued = 0;
 
@@ -182,7 +204,7 @@ export async function handleSyncRun(c: Context): Promise<Response> {
         continue;
       }
 
-      await writeFileRecord(file, createdAt);
+      await writeFileRecord(file, createdAt, activeProfile.profileId);
       queued += 1;
     }
 
@@ -193,7 +215,7 @@ export async function handleSyncRun(c: Context): Promise<Response> {
   }
 
   if (latestDeltaToken) {
-    await storeDeltaToken(DEFAULT_PROFILE_ID, latestDeltaToken);
+    await storeDeltaToken(activeProfile.profileId, latestDeltaToken);
   }
 
   return c.json({ queued });

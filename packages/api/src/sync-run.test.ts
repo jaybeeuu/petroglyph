@@ -1,4 +1,4 @@
-import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -98,6 +98,29 @@ function mockOneDriveDb({
       }
       if (command instanceof PutCommand || command instanceof UpdateCommand) {
         return Promise.resolve({});
+      }
+      if (command instanceof QueryCommand) {
+        const tableName = command.input.TableName;
+        if (tableName?.includes("sync-profile")) {
+          return Promise.resolve({
+            Items: [
+              {
+                profileId: "default",
+                userId: "user-42",
+                name: "default",
+                sourceFolderPath: "OnyxBoox",
+                destinationVaultPath: "handwritten",
+                pollingIntervalMinutes: 5,
+                enabled: true,
+                active: true,
+                initialSyncEnabled: true,
+                createdAt: "2026-01-01T00:00:00Z",
+                updatedAt: "2026-01-01T00:00:00Z",
+              },
+            ],
+          });
+        }
+        return Promise.resolve({ Items: [] });
       }
       return Promise.resolve({});
     });

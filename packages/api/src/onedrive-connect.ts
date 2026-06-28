@@ -243,15 +243,34 @@ async function registerGraphSubscription(accessToken: string, userId: string): P
 }
 
 async function upsertSyncProfile(userId: string): Promise<void> {
+  const now = new Date().toISOString();
   await docClient.send(
     new UpdateCommand({
       TableName: syncProfilesTable(),
       Key: { userId, profileId: "default" },
       UpdateExpression:
-        "SET createdAt = if_not_exists(createdAt, :now), updatedAt = :now, oneDriveConnected = :true",
+        "SET createdAt = if_not_exists(createdAt, :now), " +
+        "updatedAt = :now, " +
+        "oneDriveConnected = :true, " +
+        "#name = :name, " +
+        "sourceFolderPath = :rootPath, " +
+        "destinationVaultPath = :defaultDest, " +
+        "#active = :true, " +
+        "initialSyncEnabled = :true, " +
+        "#enabled = :true, " +
+        "pollingIntervalMinutes = :interval",
+      ExpressionAttributeNames: {
+        "#name": "name",
+        "#active": "active",
+        "#enabled": "enabled",
+      },
       ExpressionAttributeValues: {
-        ":now": new Date().toISOString(),
+        ":now": now,
         ":true": true,
+        ":name": "default",
+        ":rootPath": "/",
+        ":defaultDest": "handwritten",
+        ":interval": 5,
       },
     }),
   );
