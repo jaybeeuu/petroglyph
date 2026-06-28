@@ -1,3 +1,4 @@
+import { markConnected } from "./onedrive-lifecycle.js";
 import { is, isObject } from "@jaybeeuu/is";
 import { DeleteCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
@@ -346,6 +347,8 @@ export async function handleOnedriveConnect(
   await registerGraphSubscription(tokens.access_token, userId);
   await upsertSyncProfile(userId);
   console.info("[onedrive-connect] OneDrive profile updated", { userId });
+  await markConnected(userId);
+  console.info("[onedrive-connect] User record updated", { userId });
 
   return c.json({ status: "connected" });
 }
