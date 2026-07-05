@@ -1,18 +1,18 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { GetParameterCommand, PutParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  GetCommand,
+  PutCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import type { SQSBatchResponse, SQSEvent, SQSRecord } from "aws-lambda";
 import { z } from "zod";
 
 const TEN_MINUTES_MS = 10 * 60 * 1000;
-const SSM_ACCESS_TOKEN = "/petroglyph/onedrive/access-token";
-const SSM_TOKEN_EXPIRY = "/petroglyph/onedrive/token-expiry";
-const SSM_REFRESH_TOKEN = "/petroglyph/onedrive/refresh-token";
 
 const s3Client = new S3Client({});
 const docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
-const ssmClient = new SSMClient({});
 
 const parentReferenceSchema = z.object({
   driveId: z.string().min(1),
@@ -60,8 +60,12 @@ type IngestQueueMessage = z.infer<typeof ingestQueueMessageSchema>;
 
 interface OneDriveParams {
   accessToken: string;
-  tokenExpiry: string;
+  expirySeconds: number;
   refreshToken: string;
+}
+
+function refreshTokensTable(): string {
+  return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
 }
 
 function stagedBucketName(): string {
@@ -99,65 +103,63 @@ function buildS3Key(filename: string, parentPath: string): string {
   return [stagedPdfPrefix(), ...extractOneDriveParentPath(parentPath), filename].join("/");
 }
 
-async function readSsmString(name: string): Promise<string> {
-  const result = await ssmClient.send(
-    new GetParameterCommand({ Name: name, WithDecryption: true }),
-  );
-  const value = result.Parameter?.Value;
-
-  if (!value) {
-    throw new Error(`SSM parameter not found or empty: ${name}`);
+function parseOneDriveParams(value: unknown, userId: string): OneDriveParams {
+  if (typeof value !== "object" || value === null) {
+    throw new Error(`OneDrive token record missing for user ${userId}`);
+  }
+  const item = value as { [key: string]: unknown };
+  if (typeof item["accessToken"] !== "string" || item["accessToken"].length === 0) {
+    throw new Error(`OneDrive accessToken missing for user ${userId}`);
+  }
+  if (typeof item["refreshToken"] !== "string" || item["refreshToken"].length === 0) {
+    throw new Error(`OneDrive refreshToken missing for user ${userId}`);
+  }
+  if (typeof item["expirySeconds"] !== "number") {
+    throw new Error(`OneDrive expirySeconds missing for user ${userId}`);
   }
 
-  return value;
+  return {
+    accessToken: item["accessToken"],
+    refreshToken: item["refreshToken"],
+    expirySeconds: item["expirySeconds"],
+  };
 }
 
-async function readOneDriveParams(): Promise<OneDriveParams> {
-  const [accessToken, tokenExpiry, refreshToken] = await Promise.all([
-    readSsmString(SSM_ACCESS_TOKEN),
-    readSsmString(SSM_TOKEN_EXPIRY),
-    readSsmString(SSM_REFRESH_TOKEN),
-  ]);
+async function readOneDriveParams(userId: string): Promise<OneDriveParams> {
+  const result = await docClient.send(
+    new GetCommand({
+      TableName: refreshTokensTable(),
+      Key: { tokenHash: userId },
+    }),
+  );
 
-  return { accessToken, tokenExpiry, refreshToken };
+  return parseOneDriveParams(result.Item, userId);
 }
 
 async function persistRefreshedTokens(
+  userId: string,
   accessToken: string,
   refreshToken: string,
   expiresIn: number,
 ): Promise<void> {
-  const tokenExpiry = new Date(Date.now() + expiresIn * 1000).toISOString();
-
-  await Promise.all([
-    ssmClient.send(
-      new PutParameterCommand({
-        Name: SSM_ACCESS_TOKEN,
-        Value: accessToken,
-        Type: "SecureString",
-        Overwrite: true,
-      }),
-    ),
-    ssmClient.send(
-      new PutParameterCommand({
-        Name: SSM_TOKEN_EXPIRY,
-        Value: tokenExpiry,
-        Type: "SecureString",
-        Overwrite: true,
-      }),
-    ),
-    ssmClient.send(
-      new PutParameterCommand({
-        Name: SSM_REFRESH_TOKEN,
-        Value: refreshToken,
-        Type: "SecureString",
-        Overwrite: true,
-      }),
-    ),
-  ]);
+  const expirySeconds = Math.floor(Date.now() / 1000) + expiresIn;
+  await docClient.send(
+    new UpdateCommand({
+      TableName: refreshTokensTable(),
+      Key: { tokenHash: userId },
+      UpdateExpression:
+        "SET accessToken = :accessToken, refreshToken = :refreshToken, expirySeconds = :expirySeconds, updatedAt = :updatedAt",
+      ExpressionAttributeValues: {
+        ":accessToken": accessToken,
+        ":refreshToken": refreshToken,
+        ":expirySeconds": expirySeconds,
+        ":updatedAt": new Date().toISOString(),
+      },
+    }),
+  );
 }
 
-async function refreshOneDriveAccessToken(refreshToken: string): Promise<string> {
+async function refreshOneDriveAccessToken(userId: string, refreshToken: string): Promise<string> {
   const clientId = process.env["MICROSOFT_CLIENT_ID"];
   if (!clientId) {
     throw new Error("MICROSOFT_CLIENT_ID env var not set");
@@ -183,6 +185,7 @@ async function refreshOneDriveAccessToken(refreshToken: string): Promise<string>
   const parsedResponse = tokenResponseSchema.parse(await response.json());
 
   await persistRefreshedTokens(
+    userId,
     parsedResponse.access_token,
     parsedResponse.refresh_token,
     parsedResponse.expires_in,
@@ -191,15 +194,15 @@ async function refreshOneDriveAccessToken(refreshToken: string): Promise<string>
   return parsedResponse.access_token;
 }
 
-async function resolveOneDriveAccessToken(): Promise<string> {
-  const params = await readOneDriveParams();
-  const millisecondsUntilExpiry = new Date(params.tokenExpiry).getTime() - Date.now();
+async function resolveOneDriveAccessToken(userId: string): Promise<string> {
+  const params = await readOneDriveParams(userId);
+  const millisecondsUntilExpiry = params.expirySeconds * 1000 - Date.now();
 
   if (millisecondsUntilExpiry > TEN_MINUTES_MS) {
     return params.accessToken;
   }
 
-  return refreshOneDriveAccessToken(params.refreshToken);
+  return refreshOneDriveAccessToken(userId, params.refreshToken);
 }
 
 async function fetchDriveItem(resource: string, accessToken: string): Promise<GraphDriveItem> {
@@ -269,7 +272,7 @@ async function writeFileRecord(
 
 async function processRecord(record: SQSRecord): Promise<void> {
   const message = ingestQueueMessageSchema.parse(JSON.parse(record.body) as unknown);
-  const accessToken = await resolveOneDriveAccessToken();
+  const accessToken = await resolveOneDriveAccessToken(message.profileId);
   const driveItem = await resolveDriveItem(message, accessToken);
 
   if (!isPdfDriveItem(driveItem)) {

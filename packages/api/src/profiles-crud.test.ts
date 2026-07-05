@@ -33,6 +33,7 @@ function makeProfile(overrides: Partial<SyncProfile> = {}): SyncProfile {
     pollingIntervalMinutes: 5,
     enabled: true,
     active: false,
+    initialSyncEnabled: true,
     createdAt: "2024-01-01T00:00:00.000Z",
     updatedAt: "2024-01-01T00:00:00.000Z",
     ...overrides,

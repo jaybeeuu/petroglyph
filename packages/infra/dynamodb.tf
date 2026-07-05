@@ -74,3 +74,18 @@ resource "aws_dynamodb_table" "file_records" {
     environment = terraform.workspace
   }
 }
+
+resource "aws_dynamodb_table" "delta_tokens" {
+  name         = "petroglyph-delta-tokens-${terraform.workspace}"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "profileId"
+
+  attribute {
+    name = "profileId"
+    type = "S"
+  }
+
+  tags = {
+    environment = terraform.workspace
+  }
+}

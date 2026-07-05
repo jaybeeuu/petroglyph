@@ -20,6 +20,7 @@ const putProfileBodySchema = z.object({
   destinationVaultPath: z.string().min(1).optional(),
   pollingIntervalMinutes: z.number().int().positive().optional(),
   enabled: z.boolean().optional(),
+  initialSyncEnabled: z.boolean().optional(),
 });
 
 async function deleteFileRecordsForProfile(profileId: string): Promise<void> {
@@ -66,6 +67,9 @@ function mergeProfile(
       pollingIntervalMinutes: updates.pollingIntervalMinutes,
     }),
     ...(updates.enabled !== undefined && { enabled: updates.enabled }),
+    ...(updates.initialSyncEnabled !== undefined && {
+      initialSyncEnabled: updates.initialSyncEnabled,
+    }),
     updatedAt: new Date().toISOString(),
   };
 }

@@ -1,18 +1,12 @@
-import { GetParameterCommand, PutParameterCommand } from "@aws-sdk/client-ssm";
-import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockDbSend = vi.hoisted(() => vi.fn());
-const mockSsmSend = vi.hoisted(() => vi.fn());
 const mockFetch = vi.hoisted(() => vi.fn());
 
 vi.mock("./db.js", () => ({
   docClient: { send: mockDbSend },
-}));
-
-vi.mock("./ssm.js", () => ({
-  ssmClient: { send: mockSsmSend },
 }));
 
 vi.stubGlobal("fetch", mockFetch);
@@ -36,10 +30,10 @@ describe("POST /sync/run", () => {
     vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
     vi.stubEnv("ONEDRIVE_FOLDER", "OnyxBoox");
     vi.stubEnv("FILE_RECORDS_TABLE", "petroglyph-file-records-test");
+    vi.stubEnv("DELTA_TOKENS_TABLE", "petroglyph-delta-tokens-test");
     vi.stubEnv("MICROSOFT_CLIENT_ID", "test-client-id");
     vi.stubEnv("MICROSOFT_CLIENT_SECRET", "test-client-secret");
     mockDbSend.mockReset();
-    mockSsmSend.mockReset();
     mockFetch.mockReset();
     resetKeyCache();
   });
@@ -70,40 +64,30 @@ describe("POST /sync/run", () => {
     });
   }
 
-  function mockDeltaTokenSsm({ deltaToken }: { deltaToken?: string } = {}): void {
-    mockSsmSend.mockImplementation((command: unknown) => {
-      if (command instanceof GetParameterCommand) {
-        if (command.input.Name === "/petroglyph/onedrive/delta-token" && deltaToken !== undefined) {
-          return Promise.resolve({
-            Parameter: { Value: deltaToken },
-          });
-        }
-
-        const error = new Error("Parameter not found");
-        error.name = "ParameterNotFound";
-        return Promise.reject(error);
-      }
-
-      if (command instanceof PutParameterCommand) {
-        return Promise.resolve({});
-      }
-
-      return Promise.resolve({});
-    });
-  }
-
   function mockOneDriveDb({
     tokenExpiryOffsetMs = 60 * 60 * 1000,
     onedriveAccessToken = accessToken,
     onedriveRefreshToken = refreshToken,
+    deltaToken,
   }: {
     tokenExpiryOffsetMs?: number;
     onedriveAccessToken?: string;
     onedriveRefreshToken?: string;
+    deltaToken?: string;
   } = {}): void {
     const expirySeconds = Math.floor((Date.now() + tokenExpiryOffsetMs) / 1000);
     mockDbSend.mockImplementation((command: unknown) => {
       if (command instanceof GetCommand) {
+        const tableName = command.input.TableName;
+        if (tableName === "petroglyph-delta-tokens-test") {
+          if (deltaToken !== undefined) {
+            return Promise.resolve({
+              Item: { profileId: "default", deltaToken },
+            });
+          }
+          return Promise.resolve({ Item: undefined });
+        }
+        // For OneDrive tokens or any other GetCommand
         return Promise.resolve({
           Item: {
             accessToken: onedriveAccessToken,
@@ -115,12 +99,34 @@ describe("POST /sync/run", () => {
       if (command instanceof PutCommand || command instanceof UpdateCommand) {
         return Promise.resolve({});
       }
+      if (command instanceof QueryCommand) {
+        const tableName = command.input.TableName;
+        if (tableName?.includes("sync-profile")) {
+          return Promise.resolve({
+            Items: [
+              {
+                profileId: "default",
+                userId: "user-42",
+                name: "default",
+                sourceFolderPath: "OnyxBoox",
+                destinationVaultPath: "handwritten",
+                pollingIntervalMinutes: 5,
+                enabled: true,
+                active: true,
+                initialSyncEnabled: true,
+                createdAt: "2026-01-01T00:00:00Z",
+                updatedAt: "2026-01-01T00:00:00Z",
+              },
+            ],
+          });
+        }
+        return Promise.resolve({ Items: [] });
+      }
       return Promise.resolve({});
     });
   }
 
   it("queues PDF items on a first run when no delta token exists", async () => {
-    mockDeltaTokenSsm();
     mockOneDriveDb();
     mockFetch.mockResolvedValue({
       ok: true,
@@ -156,9 +162,14 @@ describe("POST /sync/run", () => {
     );
 
     const putItemCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof PutCommand);
-    expect(putItemCalls).toHaveLength(1);
+    expect(putItemCalls).toHaveLength(2); // 1 file record + 1 delta token
 
-    const [putCommand] = putItemCalls[0] as [
+    // Check file record
+    const fileRecordPut = putItemCalls.find(
+      ([cmd]) =>
+        (cmd as { input: { TableName: string; Item: { fileId?: string } } }).input.Item.fileId,
+    );
+    const [fileRecordCommand] = fileRecordPut as [
       {
         input: {
           TableName: string;
@@ -173,30 +184,35 @@ describe("POST /sync/run", () => {
         };
       },
     ];
-    expect(putCommand.input.TableName).toBe("petroglyph-file-records-test");
-    expect(putCommand.input.Item.profileId).toBe("default");
-    expect(putCommand.input.Item.fileId).toBe("pdf-1");
-    expect(putCommand.input.Item.s3Key).toBe("");
-    expect(putCommand.input.Item.filename).toBe("notes.pdf");
-    expect(putCommand.input.Item.status).toBe("pending");
-    expect(typeof putCommand.input.Item.createdAt).toBe("string");
+    expect(fileRecordCommand.input.TableName).toBe("petroglyph-file-records-test");
+    expect(fileRecordCommand.input.Item.profileId).toBe("default");
+    expect(fileRecordCommand.input.Item.fileId).toBe("pdf-1");
+    expect(fileRecordCommand.input.Item.s3Key).toBe("");
+    expect(fileRecordCommand.input.Item.filename).toBe("notes.pdf");
+    expect(fileRecordCommand.input.Item.status).toBe("pending");
+    expect(typeof fileRecordCommand.input.Item.createdAt).toBe("string");
 
-    const putParameterCalls = mockSsmSend.mock.calls.filter(
-      ([command]) => command instanceof PutParameterCommand,
+    // Check delta token
+    const deltaTokenPut = putItemCalls.find(
+      ([cmd]) =>
+        (cmd as { input: { TableName: string; Item: { deltaToken?: string } } }).input.Item
+          .deltaToken,
     );
-    expect(putParameterCalls).toHaveLength(1);
-    const [putParameterCommand] = putParameterCalls[0] as [
-      { input: { Name: string; Type: string; Value: string; Overwrite: boolean } },
+    const [deltaTokenCommand] = deltaTokenPut as [
+      {
+        input: {
+          TableName: string;
+          Item: { profileId: string; deltaToken: string; updatedAt: string };
+        };
+      },
     ];
-    expect(putParameterCommand.input.Name).toBe("/petroglyph/onedrive/delta-token");
-    expect(putParameterCommand.input.Type).toBe("SecureString");
-    expect(putParameterCommand.input.Value).toBe("delta-token-1");
-    expect(putParameterCommand.input.Overwrite).toBe(true);
+    expect(deltaTokenCommand.input.TableName).toBe("petroglyph-delta-tokens-test");
+    expect(deltaTokenCommand.input.Item.profileId).toBe("default");
+    expect(deltaTokenCommand.input.Item.deltaToken).toBe("delta-token-1");
   });
 
   it("continues an incremental sync from the stored delta token across pages", async () => {
-    mockDeltaTokenSsm({ deltaToken: "delta-token-1" });
-    mockOneDriveDb();
+    mockOneDriveDb({ deltaToken: "delta-token-1" });
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
@@ -261,29 +277,36 @@ describe("POST /sync/run", () => {
     expect(nextPageFetchOptions.method).toBe("GET");
 
     const putItemCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof PutCommand);
-    expect(putItemCalls).toHaveLength(2);
+    expect(putItemCalls).toHaveLength(3); // 2 file records + 1 delta token
 
-    const queuedFileIds = putItemCalls.map(
-      ([command]) =>
-        (
-          command as {
-            input: { Item: { fileId: string } };
-          }
-        ).input.Item.fileId,
-    );
+    const queuedFileIds = putItemCalls
+      .filter(
+        ([command]) =>
+          (command as { input: { Item: { fileId?: string } } }).input.Item.fileId !== undefined,
+      )
+      .map(
+        ([command]) =>
+          (
+            command as {
+              input: { Item: { fileId: string } };
+            }
+          ).input.Item.fileId,
+      );
     expect(queuedFileIds).toEqual(["pdf-2", "pdf-3"]);
 
-    const putParameterCalls = mockSsmSend.mock.calls.filter(
-      ([command]) => command instanceof PutParameterCommand,
+    // Check delta token was updated
+    const deltaTokenPut = putItemCalls.find(
+      ([cmd]) => (cmd as { input: { Item: { deltaToken?: string } } }).input.Item.deltaToken,
     );
-    expect(putParameterCalls).toHaveLength(1);
-    const [putParameterCommand] = putParameterCalls[0] as [{ input: { Value: string } }];
-    expect(putParameterCommand.input.Value).toBe("delta-token-2");
+    const [deltaTokenCommand] = deltaTokenPut as [
+      { input: { TableName: string; Item: { profileId: string; deltaToken: string } } },
+    ];
+    expect(deltaTokenCommand.input.TableName).toBe("petroglyph-delta-tokens-test");
+    expect(deltaTokenCommand.input.Item.deltaToken).toBe("delta-token-2");
   });
 
   it("returns queued=0 when the delta query contains no new PDF items", async () => {
-    mockDeltaTokenSsm({ deltaToken: "delta-token-2" });
-    mockOneDriveDb();
+    mockOneDriveDb({ deltaToken: "delta-token-2" });
     mockFetch.mockResolvedValue({
       ok: true,
       json: () =>
@@ -312,22 +335,21 @@ describe("POST /sync/run", () => {
     expect(await response.json()).toEqual({ queued: 0 });
 
     const putItemCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof PutCommand);
-    expect(putItemCalls).toHaveLength(0);
+    expect(putItemCalls).toHaveLength(1); // 1 delta token (no file records)
 
-    const putParameterCalls = mockSsmSend.mock.calls.filter(
-      ([command]) => command instanceof PutParameterCommand,
+    // Check delta token was updated
+    const deltaTokenPut = putItemCalls.find(
+      ([cmd]) => (cmd as { input: { Item: { deltaToken?: string } } }).input.Item.deltaToken,
     );
-    expect(putParameterCalls).toHaveLength(1);
-    const [putParameterCommand] = putParameterCalls[0] as [
-      { input: { Name: string; Type: string; Value: string } },
+    const [deltaTokenCommand] = deltaTokenPut as [
+      { input: { TableName: string; Item: { profileId: string; deltaToken: string } } },
     ];
-    expect(putParameterCommand.input.Name).toBe("/petroglyph/onedrive/delta-token");
-    expect(putParameterCommand.input.Type).toBe("SecureString");
-    expect(putParameterCommand.input.Value).toBe("delta-token-3");
+    expect(deltaTokenCommand.input.TableName).toBe("petroglyph-delta-tokens-test");
+    expect(deltaTokenCommand.input.Item.profileId).toBe("default");
+    expect(deltaTokenCommand.input.Item.deltaToken).toBe("delta-token-3");
   });
 
   it("refreshes an expiring access token before querying Graph", async () => {
-    mockDeltaTokenSsm();
     mockOneDriveDb({
       tokenExpiryOffsetMs: 5 * 60 * 1000,
       onedriveRefreshToken: "onedrive-refresh-token",
@@ -375,7 +397,6 @@ describe("POST /sync/run", () => {
   });
 
   it("queues PDF files based on .pdf extension even without proper MIME type", async () => {
-    mockDeltaTokenSsm();
     mockOneDriveDb();
     mockFetch.mockResolvedValue({
       ok: true,
@@ -399,8 +420,11 @@ describe("POST /sync/run", () => {
     expect(await response.json()).toEqual({ queued: 1 });
 
     const putItemCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof PutCommand);
-    expect(putItemCalls).toHaveLength(1);
-    const [putCommand] = putItemCalls[0] as [
+    expect(putItemCalls).toHaveLength(2); // 1 file record + 1 delta token
+    const fileRecordPut = putItemCalls.find(
+      ([cmd]) => (cmd as { input: { Item: { fileId?: string } } }).input.Item.fileId,
+    );
+    const [putCommand] = fileRecordPut as [
       { input: { Item: { fileId: string; filename: string } } },
     ];
     expect(putCommand.input.Item.fileId).toBe("pdf-weird");
@@ -408,7 +432,6 @@ describe("POST /sync/run", () => {
   });
 
   it("returns 500 when Graph delta request fails with non-ok status", async () => {
-    mockDeltaTokenSsm();
     mockOneDriveDb();
     mockFetch.mockResolvedValue({
       ok: false,
@@ -421,7 +444,6 @@ describe("POST /sync/run", () => {
   });
 
   it("returns 500 when Graph response has invalid shape (missing value array)", async () => {
-    mockDeltaTokenSsm();
     mockOneDriveDb();
     mockFetch.mockResolvedValue({
       ok: true,

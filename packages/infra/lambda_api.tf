@@ -35,6 +35,7 @@ resource "aws_lambda_function" "petroglyph_api" {
       USERS_TABLE                    = aws_dynamodb_table.users.name
       SYNC_PROFILES_TABLE            = aws_dynamodb_table.sync_profiles.name
       FILE_RECORDS_TABLE             = aws_dynamodb_table.file_records.name
+      DELTA_TOKENS_TABLE             = aws_dynamodb_table.delta_tokens.name
       STAGED_PDFS_BUCKET             = aws_s3_bucket.staged_pdfs.id
     }
   }

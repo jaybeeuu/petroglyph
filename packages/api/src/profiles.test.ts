@@ -63,6 +63,7 @@ describe("/profiles", () => {
     pollingIntervalMinutes: 5,
     enabled: true,
     active: true,
+    initialSyncEnabled: true,
     createdAt: "2024-01-01T00:00:00.000Z",
     updatedAt: "2024-01-01T00:00:00.000Z",
   };

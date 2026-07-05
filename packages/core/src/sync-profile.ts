@@ -9,6 +9,7 @@ export const syncProfileSchema = z.object({
   pollingIntervalMinutes: z.number().int().positive().default(5),
   enabled: z.boolean().default(true),
   active: z.boolean(),
+  initialSyncEnabled: z.boolean().default(true),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 });
