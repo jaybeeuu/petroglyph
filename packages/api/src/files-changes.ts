@@ -119,6 +119,8 @@ async function readFileRecordPage(
 
   const parsed = queryResultSchema.safeParse(result);
   if (!parsed.success) {
+    console.error("Invalid file records response — Zod errors:", JSON.stringify(parsed.error.issues));
+    console.error("Raw result:", JSON.stringify(result));
     throw new Error("Invalid file records response");
   }
 
