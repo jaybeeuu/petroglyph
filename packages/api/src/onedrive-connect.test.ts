@@ -429,6 +429,19 @@ describe("POST /onedrive/connect", () => {
     expect(syncProfileCmd.input.ExpressionAttributeValues[":true"]).toBe(true);
     expect(typeof syncProfileCmd.input.ExpressionAttributeValues[":now"]).toBe("string");
 
+    // all required sync-profile fields set with sensible defaults
+    expect(syncProfileCmd.input.ExpressionAttributeValues[":name"]).toBe("default");
+    expect(syncProfileCmd.input.ExpressionAttributeValues[":rootPath"]).toBe("/");
+    expect(syncProfileCmd.input.ExpressionAttributeValues[":defaultDest"]).toBe("handwritten");
+    expect(syncProfileCmd.input.ExpressionAttributeValues[":interval"]).toBe(5);
+    expect(syncProfileCmd.input.UpdateExpression).toContain("#name");
+    expect(syncProfileCmd.input.UpdateExpression).toContain("sourceFolderPath");
+    expect(syncProfileCmd.input.UpdateExpression).toContain("destinationVaultPath");
+    expect(syncProfileCmd.input.UpdateExpression).toContain("#active");
+    expect(syncProfileCmd.input.UpdateExpression).toContain("initialSyncEnabled");
+    expect(syncProfileCmd.input.UpdateExpression).toContain("#enabled");
+    expect(syncProfileCmd.input.UpdateExpression).toContain("pollingIntervalMinutes");
+
     // markConnected
     const [userCmd] = updateCalls[2] as [
       {
