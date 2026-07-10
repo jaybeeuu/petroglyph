@@ -28,7 +28,7 @@ const fileRecordSchema = z.object({
   fileId: z.string().min(1),
   filename: z.string().min(1),
   createdAt: z.string().min(1),
-  s3Key: z.string().min(1),
+  s3Key: z.string(),
   pageCount: z.number().int().positive().optional(),
 });
 
