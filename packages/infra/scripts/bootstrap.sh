@@ -255,25 +255,31 @@ POLICY_DOC=$(cat << EOF
       "Sid": "DynamoDbProjectTables",
       "Effect": "Allow",
       "Action": [
-        "dynamodb:GetItem",
-        "dynamodb:PutItem",
-        "dynamodb:UpdateItem",
+        "dynamodb:CreateTable",
         "dynamodb:DeleteItem",
+        "dynamodb:DeleteTable",
+        "dynamodb:DescribeContinuousBackups",
+        "dynamodb:DescribeContributorInsights",
+        "dynamodb:DescribeKinesisStreamingDestination",
+        "dynamodb:DescribeTable",
+        "dynamodb:DescribeTimeToLive",
+        "dynamodb:GetItem",
+        "dynamodb:ListTagsOfResource",
+        "dynamodb:PutItem",
         "dynamodb:Query",
         "dynamodb:Scan",
-        "dynamodb:DescribeTable",
-        "dynamodb:CreateTable",
-        "dynamodb:UpdateTable",
-        "dynamodb:DeleteTable",
         "dynamodb:TagResource",
-        "dynamodb:UntagResource"
+        "dynamodb:UntagResource",
+        "dynamodb:UpdateItem",
+        "dynamodb:UpdateTable"
       ],
       "Resource": [
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-terraform-locks",
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-users-production",
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-refresh-tokens-production",
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-profiles-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-file-records-production"
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-file-records-production",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-tokens-production"
       ]
     },
     {
