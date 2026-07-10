@@ -119,7 +119,10 @@ async function readFileRecordPage(
 
   const parsed = queryResultSchema.safeParse(result);
   if (!parsed.success) {
-    console.error("Invalid file records response — Zod errors:", JSON.stringify(parsed.error.issues));
+    console.error(
+      "Invalid file records response — Zod errors:",
+      JSON.stringify(parsed.error.issues),
+    );
     console.error("Raw result:", JSON.stringify(result));
     throw new Error("Invalid file records response");
   }
@@ -190,8 +193,10 @@ export async function handleFilesChanges(c: Context): Promise<Response> {
 
   const { fileRecords, nextToken } = await readFileRecordPage(query.data.limit, exclusiveStartKey);
 
+  const stagedRecords = fileRecords.filter((r) => r.s3Key.length > 0);
+
   const files = await Promise.all(
-    fileRecords.map(async (fileRecord) => presignFileRecord(fileRecord)),
+    stagedRecords.map(async (fileRecord) => presignFileRecord(fileRecord)),
   );
 
   return c.json({ files, nextToken });
