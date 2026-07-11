@@ -3,7 +3,8 @@ import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { z } from "zod";
-import { listProfiles } from "@petroglyph/core";
+import { listProfiles, fileRecordSchema } from "@petroglyph/core";
+import type { FileRecord, StagedFileRecord } from "@petroglyph/core";
 import { docClient } from "./db.js";
 
 const DEFAULT_PROFILE_ID = "default";
@@ -23,14 +24,7 @@ const cursorSchema = z.object({
   fileId: z.string().min(1),
 });
 
-const fileRecordSchema = z.object({
-  profileId: z.string().min(1),
-  fileId: z.string().min(1),
-  filename: z.string().min(1),
-  createdAt: z.string().min(1),
-  s3Key: z.string(),
-  pageCount: z.number().int().positive().optional(),
-});
+
 
 const queryResultSchema = z.object({
   Items: z.array(fileRecordSchema).optional(),
@@ -47,15 +41,6 @@ interface FileChange {
   filename: string;
   createdAt: string;
   pageCount?: number;
-}
-
-interface FileRecord {
-  profileId: string;
-  fileId: string;
-  filename: string;
-  createdAt: string;
-  s3Key: string;
-  pageCount?: number | undefined;
 }
 
 interface CursorToken {
@@ -145,7 +130,7 @@ async function readFileRecordPage(
   };
 }
 
-async function presignFileRecord(fileRecord: FileRecord): Promise<FileChange> {
+async function presignFileRecord(fileRecord: StagedFileRecord): Promise<FileChange> {
   const s3PresignedUrl = await getSignedUrl(
     s3Client,
     new GetObjectCommand({
@@ -193,7 +178,7 @@ export async function handleFilesChanges(c: Context): Promise<Response> {
 
   const { fileRecords, nextToken } = await readFileRecordPage(query.data.limit, exclusiveStartKey);
 
-  const stagedRecords = fileRecords.filter((r) => r.s3Key.length > 0);
+  const stagedRecords = fileRecords.filter((r): r is StagedFileRecord => r.status === "staged" && r.s3Key.length > 0);
 
   const files = await Promise.all(
     stagedRecords.map(async (fileRecord) => presignFileRecord(fileRecord)),

@@ -9,12 +9,16 @@ const mockPutProfile = vi.hoisted(() => vi.fn());
 const mockDeleteProfile = vi.hoisted(() => vi.fn());
 const mockDbSend = vi.hoisted(() => vi.fn());
 
-vi.mock("@petroglyph/core", () => ({
-  getProfile: mockGetProfile,
-  listProfiles: mockListProfiles,
-  putProfile: mockPutProfile,
-  deleteProfile: mockDeleteProfile,
-}));
+vi.mock("@petroglyph/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@petroglyph/core")>();
+  return {
+    ...actual,
+    getProfile: mockGetProfile,
+    listProfiles: mockListProfiles,
+    putProfile: mockPutProfile,
+    deleteProfile: mockDeleteProfile,
+  };
+});
 
 vi.mock("./db.js", () => ({
   docClient: { send: mockDbSend },

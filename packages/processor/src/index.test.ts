@@ -102,7 +102,7 @@ describe("processor handler", () => {
     vi.unstubAllEnvs();
   });
 
-  it("downloads the PDF, uploads it to S3, and writes a pending file record", async () => {
+  it("downloads the PDF, uploads it to S3, and writes a staged file record", async () => {
     mockOneDriveParams("default", makeTokenRecord());
 
     mockFetch
@@ -195,7 +195,7 @@ describe("processor handler", () => {
       fileId: "file-123",
       filename: "notes.pdf",
       s3Key: "handwritten/OnyxBoox/Meeting Notes/notes.pdf",
-      status: "pending",
+      status: "staged",
     });
     expect(typeof putCommand.input.Item?.["createdAt"]).toBe("string");
   });

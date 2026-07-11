@@ -145,6 +145,7 @@ describe("GET /files/changes", () => {
                 filename: "later.pdf",
                 createdAt: "2024-01-02T12:00:00.000Z",
                 s3Key: "staged/later.pdf",
+                status: "staged",
                 pageCount: 3,
               },
               {
@@ -153,6 +154,7 @@ describe("GET /files/changes", () => {
                 filename: "earlier.pdf",
                 createdAt: "2024-01-01T12:00:00.000Z",
                 s3Key: "staged/earlier.pdf",
+                status: "staged",
               },
             ],
           });
@@ -203,6 +205,7 @@ describe("GET /files/changes", () => {
               filename: "page-two.pdf",
               createdAt: "2024-01-03T12:00:00.000Z",
               s3Key: "staged/page-two.pdf",
+              status: "staged",
             },
           ],
           LastEvaluatedKey: {
@@ -273,6 +276,7 @@ describe("GET /files/changes", () => {
               filename: "final.pdf",
               createdAt: "2024-01-05T12:00:00.000Z",
               s3Key: "staged/final.pdf",
+              status: "staged",
             },
           ],
         });

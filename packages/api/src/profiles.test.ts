@@ -5,10 +5,14 @@ import type { SyncProfile } from "@petroglyph/core";
 const mockListProfiles = vi.hoisted(() => vi.fn<() => Promise<SyncProfile[]>>());
 const mockPutProfile = vi.hoisted(() => vi.fn<() => Promise<void>>());
 
-vi.mock("@petroglyph/core", () => ({
-  listProfiles: mockListProfiles,
-  putProfile: mockPutProfile,
-}));
+vi.mock("@petroglyph/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@petroglyph/core")>();
+  return {
+    ...actual,
+    listProfiles: mockListProfiles,
+    putProfile: mockPutProfile,
+  };
+});
 
 vi.mock("./db.js", () => ({
   docClient: {},
