@@ -197,22 +197,48 @@ describe("GET /files/changes", () => {
   it("uses the opaque cursor to continue from the next page", async () => {
     mockDbSend.mockImplementation((command: unknown) => {
       if (command instanceof QueryCommand) {
-        return Promise.resolve({
-          Items: [
-            {
+        // Profile query (listProfiles queries by userId)
+        if (command.input.KeyConditionExpression?.includes("userId")) {
+          return Promise.resolve({
+            Items: [
+              {
+                profileId: "default",
+                userId: "user-42",
+                name: "Test Profile",
+                sourceFolderPath: "/test",
+                destinationVaultPath: "vault",
+                pollingIntervalMinutes: 5,
+                enabled: true,
+                active: true,
+                initialSyncEnabled: true,
+                createdAt: "2024-01-01T00:00:00Z",
+                updatedAt: "2024-01-01T00:00:00Z",
+              },
+            ],
+          });
+        }
+        // File records query
+        if (command.input.KeyConditionExpression?.includes("profileId")) {
+          return Promise.resolve({
+            Items: [
+              {
+                profileId: "default",
+                fileId: "file-3",
+                filename: "page-two.pdf",
+                createdAt: "2024-01-03T12:00:00.000Z",
+                s3Key: "staged/page-two.pdf",
+              },
+            ],
+            LastEvaluatedKey: {
               profileId: "default",
-              fileId: "file-3",
+            fileId: "file-3",
               filename: "page-two.pdf",
               createdAt: "2024-01-03T12:00:00.000Z",
               s3Key: "staged/page-two.pdf",
               status: "staged",
             },
-          ],
-          LastEvaluatedKey: {
-            profileId: "default",
-            fileId: "file-4",
-          },
-        });
+          });
+        }
       }
 
       return Promise.reject(new Error("Unexpected DB call"));
@@ -235,12 +261,12 @@ describe("GET /files/changes", () => {
     expect(response.status).toBe(200);
 
     const queryCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof QueryCommand);
-    expect(queryCalls).toHaveLength(1);
-
-    const [command] = queryCalls[0] as [
-      { input: { ExclusiveStartKey: { profileId: string; fileId: string } } },
-    ];
-    expect(command.input.ExclusiveStartKey).toEqual({
+    // 1 profile query (listProfiles) + 1 file records query
+    // The file records query is the second QueryCommand call
+    const fileRecordsCommand = queryCalls[1][0] as {
+      input: { ExclusiveStartKey: { profileId: string; fileId: string } };
+    };
+    expect(fileRecordsCommand.input.ExclusiveStartKey).toEqual({
       profileId: "default",
       fileId: "file-2",
     });
@@ -268,18 +294,40 @@ describe("GET /files/changes", () => {
   it("returns null nextToken on the last page", async () => {
     mockDbSend.mockImplementation((command: unknown) => {
       if (command instanceof QueryCommand) {
-        return Promise.resolve({
-          Items: [
-            {
-              profileId: "default",
-              fileId: "file-5",
-              filename: "final.pdf",
-              createdAt: "2024-01-05T12:00:00.000Z",
-              s3Key: "staged/final.pdf",
-              status: "staged",
-            },
-          ],
-        });
+        // Profile query (listProfiles queries by userId)
+        if (command.input.KeyConditionExpression?.includes("userId")) {
+          return Promise.resolve({
+            Items: [
+              {
+                profileId: "default",
+                userId: "user-42",
+                name: "Test Profile",
+                sourceFolderPath: "/test",
+                destinationVaultPath: "vault",
+                pollingIntervalMinutes: 5,
+                enabled: true,
+                active: true,
+                initialSyncEnabled: true,
+                createdAt: "2024-01-01T00:00:00Z",
+                updatedAt: "2024-01-01T00:00:00Z",
+              },
+            ],
+          });
+        }
+        // File records query
+        if (command.input.KeyConditionExpression?.includes("profileId")) {
+          return Promise.resolve({
+            Items: [
+              {
+                profileId: "default",
+                fileId: "file-5",
+                filename: "final.pdf",
+                createdAt: "2024-01-05T12:00:00.000Z",
+                s3Key: "staged/final.pdf",
+              },
+            ],
+          });
+        }
       }
 
       return Promise.reject(new Error("Unexpected DB call"));

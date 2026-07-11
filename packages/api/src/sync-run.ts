@@ -1,3 +1,4 @@
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { listProfiles } from "@petroglyph/core";
@@ -17,11 +18,24 @@ interface GraphDeltaPage {
 interface GraphDriveFileItem {
   id: string;
   name: string;
+  odataType: string;
+  webUrl?: string;
+  parentReference?: { driveId: string; path: string };
 }
 
 interface UnknownRecord {
   [key: string]: unknown;
 }
+
+function ingestQueueUrl(): string {
+  const url = process.env["INGEST_QUEUE_URL"];
+  if (!url) {
+    throw new Error("INGEST_QUEUE_URL env var not set");
+  }
+  return url;
+}
+
+const sqsClient = new SQSClient({});
 
 function fileRecordsTableName(): string {
   return process.env["FILE_RECORDS_TABLE"] ?? "petroglyph-file-records-default";
@@ -118,9 +132,28 @@ function parseGraphDriveFileItem(value: unknown): GraphDriveFileItem | null {
     return null;
   }
 
+  const odataType =
+    typeof value["@odata.type"] === "string" ? value["@odata.type"] : "#microsoft.graph.driveItem";
+  const webUrl = typeof value["webUrl"] === "string" ? value["webUrl"] : undefined;
+  const parentReference = isRecord(value["parentReference"])
+    ? {
+        driveId:
+          typeof value["parentReference"]["driveId"] === "string"
+            ? value["parentReference"]["driveId"]
+            : "",
+        path:
+          typeof value["parentReference"]["path"] === "string"
+            ? value["parentReference"]["path"]
+            : "",
+      }
+    : undefined;
+
   return {
     id: value["id"],
     name: filename,
+    odataType,
+    webUrl,
+    parentReference,
   };
 }
 
@@ -160,6 +193,28 @@ async function writeFileRecord(
         createdAt,
         status: "pending",
       },
+    }),
+  );
+}
+
+async function sendIngestMessage(file: GraphDriveFileItem, profileId: string): Promise<void> {
+  const message = {
+    fileId: file.id,
+    profileId,
+    itemMetadata: {
+      id: file.id,
+      odataType: file.odataType,
+      name: file.name,
+      webUrl: file.webUrl,
+      resource: `me/drive/items/${file.id}`,
+      parentReference: file.parentReference,
+    },
+  };
+
+  await sqsClient.send(
+    new SendMessageCommand({
+      QueueUrl: ingestQueueUrl(),
+      MessageBody: JSON.stringify(message),
     }),
   );
 }
@@ -210,6 +265,7 @@ export async function handleSyncRun(c: Context): Promise<Response> {
       }
 
       await writeFileRecord(file, createdAt, activeProfile.profileId);
+      await sendIngestMessage(file, activeProfile.profileId);
       queued += 1;
     }
 

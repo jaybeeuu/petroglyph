@@ -4,10 +4,23 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 const mockDbSend = vi.hoisted(() => vi.fn());
 const mockFetch = vi.hoisted(() => vi.fn());
+const mockSqsSend = vi.hoisted(() => vi.fn());
 
 vi.mock("./db.js", () => ({
   docClient: { send: mockDbSend },
 }));
+
+vi.mock("@aws-sdk/client-sqs", () => {
+  const mockSend = mockSqsSend;
+  return {
+    SQSClient: class {
+      send = mockSend;
+    },
+    SendMessageCommand: class {
+      constructor(public input: unknown) {}
+    },
+  };
+});
 
 vi.stubGlobal("fetch", mockFetch);
 
@@ -33,8 +46,13 @@ describe("POST /sync/run", () => {
     vi.stubEnv("DELTA_TOKENS_TABLE", "petroglyph-delta-tokens-test");
     vi.stubEnv("MICROSOFT_CLIENT_ID", "test-client-id");
     vi.stubEnv("MICROSOFT_CLIENT_SECRET", "test-client-secret");
+    vi.stubEnv(
+      "INGEST_QUEUE_URL",
+      "https://sqs.eu-west-2.amazonaws.com/123456789/petroglyph-ingest-test",
+    );
     mockDbSend.mockReset();
     mockFetch.mockReset();
+    mockSqsSend.mockReset();
     resetKeyCache();
   });
 
@@ -209,6 +227,28 @@ describe("POST /sync/run", () => {
     expect(deltaTokenCommand.input.TableName).toBe("petroglyph-delta-tokens-test");
     expect(deltaTokenCommand.input.Item.profileId).toBe("default");
     expect(deltaTokenCommand.input.Item.deltaToken).toBe("delta-token-1");
+
+    // Check SQS ingest message
+    expect(mockSqsSend).toHaveBeenCalledTimes(1);
+    const sqsCommand = mockSqsSend.mock.calls[0][0] as {
+      input: { QueueUrl: string; MessageBody: string };
+    };
+    expect(sqsCommand.input.QueueUrl).toBe(
+      "https://sqs.eu-west-2.amazonaws.com/123456789/petroglyph-ingest-test",
+    );
+    const sqsMessage = JSON.parse(sqsCommand.input.MessageBody) as { [key: string]: unknown };
+    expect(sqsMessage).toEqual({
+      fileId: "pdf-1",
+      profileId: "default",
+      itemMetadata: {
+        id: "pdf-1",
+        odataType: "#microsoft.graph.driveItem",
+        name: "notes.pdf",
+        webUrl: undefined,
+        resource: "me/drive/items/pdf-1",
+        parentReference: undefined,
+      },
+    });
   });
 
   it("continues an incremental sync from the stored delta token across pages", async () => {
@@ -303,6 +343,24 @@ describe("POST /sync/run", () => {
     ];
     expect(deltaTokenCommand.input.TableName).toBe("petroglyph-delta-tokens-test");
     expect(deltaTokenCommand.input.Item.deltaToken).toBe("delta-token-2");
+
+    // Check SQS ingest messages (2 PDFs queued)
+    expect(mockSqsSend).toHaveBeenCalledTimes(2);
+    const sqsFileIds = mockSqsSend.mock.calls.map(
+      (call) =>
+        (JSON.parse((call[0] as { input: { MessageBody: string } }).input.MessageBody) as {
+          fileId: string;
+        }).fileId,
+    );
+    expect(sqsFileIds).toEqual(["pdf-2", "pdf-3"]);
+
+    const firstSqsMessage = JSON.parse(
+      (mockSqsSend.mock.calls[0][0] as { input: { MessageBody: string } }).input.MessageBody,
+    ) as { [key: string]: unknown };
+    expect(firstSqsMessage.itemMetadata).toMatchObject({
+      id: "pdf-2",
+      resource: "me/drive/items/pdf-2",
+    });
   });
 
   it("returns queued=0 when the delta query contains no new PDF items", async () => {
@@ -347,6 +405,9 @@ describe("POST /sync/run", () => {
     expect(deltaTokenCommand.input.TableName).toBe("petroglyph-delta-tokens-test");
     expect(deltaTokenCommand.input.Item.profileId).toBe("default");
     expect(deltaTokenCommand.input.Item.deltaToken).toBe("delta-token-3");
+
+    // No SQS messages should be sent when nothing is queued
+    expect(mockSqsSend).not.toHaveBeenCalled();
   });
 
   it("refreshes an expiring access token before querying Graph", async () => {

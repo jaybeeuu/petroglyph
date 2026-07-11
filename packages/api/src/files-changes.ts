@@ -7,7 +7,10 @@ import { listProfiles, fileRecordSchema } from "@petroglyph/core";
 import type { FileRecord, StagedFileRecord } from "@petroglyph/core";
 import { docClient } from "./db.js";
 
-const DEFAULT_PROFILE_ID = "default";
+function fileRecordsTableName(): string {
+  return process.env["FILE_RECORDS_TABLE"] ?? "petroglyph-file-records-default";
+}
+
 const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 25;
 const PRESIGNED_URL_EXPIRES_IN_SECONDS = 15 * 60;
@@ -46,10 +49,6 @@ interface CursorToken {
   fileId: string;
 }
 
-function fileRecordsTableName(): string {
-  return process.env["FILE_RECORDS_TABLE"] ?? "petroglyph-file-records-default";
-}
-
 function stagedBucketName(): string {
   const bucketName = process.env["STAGED_PDFS_BUCKET"];
   if (!bucketName) {
@@ -82,6 +81,7 @@ async function readInitialSyncEnabled(userId: string): Promise<boolean> {
 }
 
 async function readFileRecordPage(
+  profileId: string,
   limit: number,
   exclusiveStartKey?: CursorToken,
 ): Promise<{ fileRecords: FileRecord[]; nextToken: string | null }> {
@@ -90,7 +90,7 @@ async function readFileRecordPage(
       TableName: fileRecordsTableName(),
       KeyConditionExpression: "profileId = :profileId",
       ExpressionAttributeValues: {
-        ":profileId": DEFAULT_PROFILE_ID,
+        ":profileId": profileId,
       },
       Limit: limit,
       ScanIndexForward: true,
@@ -165,6 +165,12 @@ export async function handleFilesChanges(c: Context): Promise<Response> {
     }
   }
 
+  const profiles = await listProfiles(docClient, syncProfilesTableName(), userId);
+  const activeProfile = profiles.find((p) => p.active);
+  if (!activeProfile) {
+    return c.json({ error: "No active profile configured" }, 400);
+  }
+
   let exclusiveStartKey: CursorToken | undefined;
   if (query.data.after !== undefined) {
     try {
@@ -174,7 +180,11 @@ export async function handleFilesChanges(c: Context): Promise<Response> {
     }
   }
 
-  const { fileRecords, nextToken } = await readFileRecordPage(query.data.limit, exclusiveStartKey);
+  const { fileRecords, nextToken } = await readFileRecordPage(
+    activeProfile.profileId,
+    query.data.limit,
+    exclusiveStartKey,
+  );
 
   const stagedRecords = fileRecords.filter(
     (r): r is StagedFileRecord => r.status === "staged" && r.s3Key.length > 0,
