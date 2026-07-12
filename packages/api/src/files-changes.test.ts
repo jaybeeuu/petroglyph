@@ -265,10 +265,10 @@ describe("GET /files/changes", () => {
     // 1 profile query (listProfiles) + 1 file records query
     // The file records query is the second QueryCommand call
     expect(queryCalls[1]).toBeDefined();
-    const fileRecordQuery = queryCalls[1];
-    const fileRecordsCommand = fileRecordQuery![0] as {
-      input: { ExclusiveStartKey: { profileId: string; fileId: string } };
-    };
+    const fileRecordQuery: unknown = queryCalls[1];
+    const fileRecordsCommand = (
+      fileRecordQuery as [{ input: { ExclusiveStartKey: { profileId: string; fileId: string } } }]
+    )[0];
     expect(fileRecordsCommand.input.ExclusiveStartKey).toEqual({
       profileId: "default",
       fileId: "file-2",

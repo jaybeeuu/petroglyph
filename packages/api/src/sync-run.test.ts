@@ -230,15 +230,18 @@ describe("POST /sync/run", () => {
 
     // Check SQS ingest message
     expect(mockSqsSend).toHaveBeenCalledTimes(1);
-    const sqsCall = mockSqsSend.mock.calls[0];
+    const sqsCall: unknown = mockSqsSend.mock.calls[0];
     expect(sqsCall).toBeDefined();
-    const sqsInput = sqsCall![0] as {
-      input: { QueueUrl: string; MessageBody: string };
-    };
-    expect(sqsInput.input.QueueUrl).toBe(
+    const sqsCommand = sqsCall as [
+      {
+        input: { QueueUrl: string; MessageBody: string };
+      },
+    ];
+    const sqsInput = sqsCommand[0].input;
+    expect(sqsInput.QueueUrl).toBe(
       "https://sqs.eu-west-2.amazonaws.com/123456789/petroglyph-ingest-test",
     );
-    const sqsMessage = JSON.parse(sqsInput.input.MessageBody) as { [key: string]: unknown };
+    const sqsMessage = JSON.parse(sqsInput.MessageBody) as { [key: string]: unknown };
     expect(sqsMessage).toEqual({
       fileId: "pdf-1",
       profileId: "default",
@@ -358,12 +361,16 @@ describe("POST /sync/run", () => {
     );
     expect(sqsFileIds).toEqual(["pdf-2", "pdf-3"]);
 
-    const sqsCall2 = mockSqsSend.mock.calls[0];
+    const sqsCall2: unknown = mockSqsSend.mock.calls[0];
     expect(sqsCall2).toBeDefined();
-    expect(sqsCall2![0]).toBeDefined();
-    const firstSqsMessage = JSON.parse(
-      (sqsCall2![0] as { input: { MessageBody: string } }).input.MessageBody,
-    ) as { [key: string]: unknown };
+    const sqsCommand2 = sqsCall2 as [
+      {
+        input: { MessageBody: string };
+      },
+    ];
+    const firstSqsMessage = JSON.parse(sqsCommand2[0].input.MessageBody) as {
+      [key: string]: unknown;
+    };
     expect(firstSqsMessage["itemMetadata"]).toMatchObject({
       id: "pdf-2",
       resource: "me/drive/items/pdf-2",
