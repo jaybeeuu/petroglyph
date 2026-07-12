@@ -264,7 +264,7 @@ async function writeFileRecord(
         filename,
         s3Key,
         createdAt: new Date().toISOString(),
-        status: "pending",
+        status: "staged",
       },
     }),
   );
