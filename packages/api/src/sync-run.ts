@@ -19,8 +19,8 @@ interface GraphDriveFileItem {
   id: string;
   name: string;
   odataType: string;
-  webUrl?: string;
-  parentReference?: { driveId: string; path: string };
+  webUrl: string | undefined;
+  parentReference: { driveId: string; path: string } | undefined;
 }
 
 interface UnknownRecord {

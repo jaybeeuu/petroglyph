@@ -227,11 +227,12 @@ describe("GET /files/changes", () => {
                 filename: "page-two.pdf",
                 createdAt: "2024-01-03T12:00:00.000Z",
                 s3Key: "staged/page-two.pdf",
+                status: "staged",
               },
             ],
             LastEvaluatedKey: {
               profileId: "default",
-            fileId: "file-3",
+              fileId: "file-3",
               filename: "page-two.pdf",
               createdAt: "2024-01-03T12:00:00.000Z",
               s3Key: "staged/page-two.pdf",
@@ -263,7 +264,9 @@ describe("GET /files/changes", () => {
     const queryCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof QueryCommand);
     // 1 profile query (listProfiles) + 1 file records query
     // The file records query is the second QueryCommand call
-    const fileRecordsCommand = queryCalls[1][0] as {
+    expect(queryCalls[1]).toBeDefined();
+    const fileRecordQuery = queryCalls[1];
+    const fileRecordsCommand = fileRecordQuery![0] as {
       input: { ExclusiveStartKey: { profileId: string; fileId: string } };
     };
     expect(fileRecordsCommand.input.ExclusiveStartKey).toEqual({
@@ -288,7 +291,7 @@ describe("GET /files/changes", () => {
         createdAt: "2024-01-03T12:00:00.000Z",
       },
     ]);
-    expect(body.nextToken).toBe(encodeCursor({ profileId: "default", fileId: "file-4" }));
+    expect(body.nextToken).toBe(encodeCursor({ profileId: "default", fileId: "file-3" }));
   });
 
   it("returns null nextToken on the last page", async () => {
@@ -324,6 +327,7 @@ describe("GET /files/changes", () => {
                 filename: "final.pdf",
                 createdAt: "2024-01-05T12:00:00.000Z",
                 s3Key: "staged/final.pdf",
+                status: "staged",
               },
             ],
           });
