@@ -419,6 +419,7 @@ describe("POST /onedrive/connect", () => {
         input: {
           TableName: string;
           Key: { userId: string; profileId: string };
+          UpdateExpression: string;
           ExpressionAttributeValues: { [key: string]: unknown };
         };
       },
