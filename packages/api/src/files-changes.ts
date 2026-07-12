@@ -24,8 +24,6 @@ const cursorSchema = z.object({
   fileId: z.string().min(1),
 });
 
-
-
 const queryResultSchema = z.object({
   Items: z.array(fileRecordSchema).optional(),
   LastEvaluatedKey: cursorSchema.optional(),
@@ -178,7 +176,9 @@ export async function handleFilesChanges(c: Context): Promise<Response> {
 
   const { fileRecords, nextToken } = await readFileRecordPage(query.data.limit, exclusiveStartKey);
 
-  const stagedRecords = fileRecords.filter((r): r is StagedFileRecord => r.status === "staged" && r.s3Key.length > 0);
+  const stagedRecords = fileRecords.filter(
+    (r): r is StagedFileRecord => r.status === "staged" && r.s3Key.length > 0,
+  );
 
   const files = await Promise.all(
     stagedRecords.map(async (fileRecord) => presignFileRecord(fileRecord)),

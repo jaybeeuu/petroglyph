@@ -10,6 +10,7 @@ const mockDeleteProfile = vi.hoisted(() => vi.fn());
 const mockDbSend = vi.hoisted(() => vi.fn());
 
 vi.mock("@petroglyph/core", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import("@petroglyph/core")>();
   return {
     ...actual,
@@ -18,7 +19,7 @@ vi.mock("@petroglyph/core", async (importOriginal) => {
     putProfile: mockPutProfile,
     deleteProfile: mockDeleteProfile,
   };
-});
+})
 
 vi.mock("./db.js", () => ({
   docClient: { send: mockDbSend },
