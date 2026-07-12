@@ -19,7 +19,7 @@ vi.mock("@petroglyph/core", async (importOriginal) => {
     putProfile: mockPutProfile,
     deleteProfile: mockDeleteProfile,
   };
-})
+});
 
 vi.mock("./db.js", () => ({
   docClient: { send: mockDbSend },
