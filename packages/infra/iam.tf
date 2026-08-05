@@ -74,6 +74,12 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
         ]
       },
       {
+        Sid      = "SQSSendIngestMessage"
+        Effect   = "Allow"
+        Action   = "sqs:SendMessage"
+        Resource = aws_sqs_queue.ingest.arn
+      },
+      {
         Sid    = "SSMGetParameter"
         Effect = "Allow"
         Action = ["ssm:GetParameter", "ssm:GetParameters"]

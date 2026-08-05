@@ -37,6 +37,7 @@ resource "aws_lambda_function" "petroglyph_api" {
       FILE_RECORDS_TABLE             = aws_dynamodb_table.file_records.name
       DELTA_TOKENS_TABLE             = aws_dynamodb_table.delta_tokens.name
       STAGED_PDFS_BUCKET             = aws_s3_bucket.staged_pdfs.id
+      INGEST_QUEUE_URL               = aws_sqs_queue.ingest.url
     }
   }
 
