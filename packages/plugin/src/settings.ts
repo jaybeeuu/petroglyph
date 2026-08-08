@@ -115,10 +115,16 @@ class DeleteConfirmModal extends Modal {
 
 export class PetroglyphSettingTab extends PluginSettingTab {
   private readonly plugin: PetroglyphPlugin;
+  private _unsubscribe: (() => void) | undefined;
 
   constructor(app: App, plugin: PetroglyphPlugin) {
     super(app, plugin);
     this.plugin = plugin;
+  }
+
+  onunload(): void {
+    this._unsubscribe?.();
+    this._unsubscribe = undefined;
   }
 
   display(): void {
@@ -275,5 +281,15 @@ export class PetroglyphSettingTab extends PluginSettingTab {
           );
       }
     }
+
+    // Subscribe to state changes for reactive re-rendering
+    this._unsubscribe?.();
+    const handler = (): void => {
+      this.display();
+    };
+    this.plugin.on("state-changed", handler);
+    this._unsubscribe = (): void => {
+      this.plugin.off("state-changed", handler);
+    };
   }
 }
