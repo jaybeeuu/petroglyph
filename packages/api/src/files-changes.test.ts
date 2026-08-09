@@ -75,7 +75,7 @@ describe("GET /files/changes", () => {
           return Promise.resolve({
             Items: [
               {
-                profileId: "default",
+                profileId: "a406e706-6477-4ade-9053-c984e09cae02",
                 userId: "user-42",
                 name: "Test Profile",
                 sourceFolderPath: "/test",
@@ -120,7 +120,7 @@ describe("GET /files/changes", () => {
           return Promise.resolve({
             Items: [
               {
-                profileId: "default",
+                profileId: "a406e706-6477-4ade-9053-c984e09cae02",
                 userId: "user-42",
                 name: "Test Profile",
                 sourceFolderPath: "/test",
@@ -140,7 +140,7 @@ describe("GET /files/changes", () => {
           return Promise.resolve({
             Items: [
               {
-                profileId: "default",
+                profileId: "a406e706-6477-4ade-9053-c984e09cae02",
                 fileId: "file-2",
                 filename: "later.pdf",
                 createdAt: "2024-01-02T12:00:00.000Z",
@@ -149,7 +149,7 @@ describe("GET /files/changes", () => {
                 pageCount: 3,
               },
               {
-                profileId: "default",
+                profileId: "a406e706-6477-4ade-9053-c984e09cae02",
                 fileId: "file-1",
                 filename: "earlier.pdf",
                 createdAt: "2024-01-01T12:00:00.000Z",
@@ -174,6 +174,24 @@ describe("GET /files/changes", () => {
     const response = await getChanges("?limit=25");
 
     expect(response.status).toBe(200);
+
+    // The file records query must target the active profile's profileId, not a
+    // hardcoded partition key (regression: readFileRecordPage used to query the
+    // deleted "default" profile). listProfiles queries by userId, so the file
+    // records query is the one keyed on profileId (it is not simply the second
+    // QueryCommand: readInitialSyncEnabled issues an extra listProfiles call).
+    const fileRecordQuery: unknown = mockDbSend.mock.calls.find(
+      ([command]) =>
+        command instanceof QueryCommand &&
+        command.input.KeyConditionExpression?.includes("profileId"),
+    );
+    expect(fileRecordQuery).toBeDefined();
+    const fileRecordsCommand = (
+      fileRecordQuery as [{ input: { ExpressionAttributeValues: { ":profileId": string } } }]
+    )[0];
+    expect(fileRecordsCommand.input.ExpressionAttributeValues).toEqual({
+      ":profileId": "a406e706-6477-4ade-9053-c984e09cae02",
+    });
     expect(await response.json()).toEqual({
       files: [
         {
@@ -202,7 +220,7 @@ describe("GET /files/changes", () => {
           return Promise.resolve({
             Items: [
               {
-                profileId: "default",
+                profileId: "a406e706-6477-4ade-9053-c984e09cae02",
                 userId: "user-42",
                 name: "Test Profile",
                 sourceFolderPath: "/test",
@@ -222,7 +240,7 @@ describe("GET /files/changes", () => {
           return Promise.resolve({
             Items: [
               {
-                profileId: "default",
+                profileId: "a406e706-6477-4ade-9053-c984e09cae02",
                 fileId: "file-3",
                 filename: "page-two.pdf",
                 createdAt: "2024-01-03T12:00:00.000Z",
@@ -231,7 +249,7 @@ describe("GET /files/changes", () => {
               },
             ],
             LastEvaluatedKey: {
-              profileId: "default",
+              profileId: "a406e706-6477-4ade-9053-c984e09cae02",
               fileId: "file-3",
               filename: "page-two.pdf",
               createdAt: "2024-01-03T12:00:00.000Z",
@@ -253,7 +271,7 @@ describe("GET /files/changes", () => {
     );
 
     const after = encodeCursor({
-      profileId: "default",
+      profileId: "a406e706-6477-4ade-9053-c984e09cae02",
       fileId: "file-2",
     });
 
@@ -270,7 +288,7 @@ describe("GET /files/changes", () => {
       fileRecordQuery as [{ input: { ExclusiveStartKey: { profileId: string; fileId: string } } }]
     )[0];
     expect(fileRecordsCommand.input.ExclusiveStartKey).toEqual({
-      profileId: "default",
+      profileId: "a406e706-6477-4ade-9053-c984e09cae02",
       fileId: "file-2",
     });
 
@@ -291,7 +309,9 @@ describe("GET /files/changes", () => {
         createdAt: "2024-01-03T12:00:00.000Z",
       },
     ]);
-    expect(body.nextToken).toBe(encodeCursor({ profileId: "default", fileId: "file-3" }));
+    expect(body.nextToken).toBe(
+      encodeCursor({ profileId: "a406e706-6477-4ade-9053-c984e09cae02", fileId: "file-3" }),
+    );
   });
 
   it("returns null nextToken on the last page", async () => {
@@ -302,7 +322,7 @@ describe("GET /files/changes", () => {
           return Promise.resolve({
             Items: [
               {
-                profileId: "default",
+                profileId: "a406e706-6477-4ade-9053-c984e09cae02",
                 userId: "user-42",
                 name: "Test Profile",
                 sourceFolderPath: "/test",
@@ -322,7 +342,7 @@ describe("GET /files/changes", () => {
           return Promise.resolve({
             Items: [
               {
-                profileId: "default",
+                profileId: "a406e706-6477-4ade-9053-c984e09cae02",
                 fileId: "file-5",
                 filename: "final.pdf",
                 createdAt: "2024-01-05T12:00:00.000Z",
@@ -339,7 +359,7 @@ describe("GET /files/changes", () => {
     mockGetSignedUrl.mockResolvedValue("signed:staged/final.pdf:900");
 
     const after = encodeCursor({
-      profileId: "default",
+      profileId: "a406e706-6477-4ade-9053-c984e09cae02",
       fileId: "file-4",
     });
 
