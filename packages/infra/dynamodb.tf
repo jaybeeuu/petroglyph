@@ -89,3 +89,23 @@ resource "aws_dynamodb_table" "delta_tokens" {
     environment = terraform.workspace
   }
 }
+
+resource "aws_dynamodb_table" "sync_jobs" {
+  name         = "petroglyph-sync-jobs-${terraform.workspace}"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "jobId"
+
+  attribute {
+    name = "jobId"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
