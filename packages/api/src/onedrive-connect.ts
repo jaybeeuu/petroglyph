@@ -1,4 +1,4 @@
-import { markConnected } from "./onedrive-lifecycle.js";
+import { markConnected, registerGraphSubscription } from "./onedrive-lifecycle.js";
 import { is, isObject } from "@jaybeeuu/is";
 import { DeleteCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
@@ -31,10 +31,6 @@ interface MicrosoftTokenResponse {
   expires_in: number;
 }
 
-interface GraphDriveResponse {
-  id: string;
-}
-
 class UpstreamError extends Error {
   constructor(message: string) {
     super(message);
@@ -61,10 +57,6 @@ const isMicrosoftTokenResponse = isObject<MicrosoftTokenResponse>({
   access_token: is("string"),
   refresh_token: is("string"),
   expires_in: is("number"),
-});
-
-const isGraphDriveResponse = isObject<GraphDriveResponse>({
-  id: is("string"),
 });
 
 function parseMicrosoftTokenResponse(data: unknown): MicrosoftTokenResponse {
@@ -141,25 +133,6 @@ async function exchangeCodeForTokens(
   return parseMicrosoftTokenResponse(await response.json());
 }
 
-async function fetchGraphDriveId(accessToken: string): Promise<string> {
-  const response = await fetch("https://graph.microsoft.com/v1.0/me/drive", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new UpstreamError(`Graph drive lookup failed: ${response.status} ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  if (!isGraphDriveResponse(data)) {
-    throw new UpstreamError("Invalid Graph drive response shape");
-  }
-
-  return data.id;
-}
-
 async function storeTokensInDynamoDB(
   userId: string,
   accessToken: string,
@@ -182,64 +155,6 @@ async function storeTokensInDynamoDB(
       },
     }),
   );
-}
-
-async function registerGraphSubscription(accessToken: string, userId: string): Promise<void> {
-  const notificationUrl = process.env["GRAPH_NOTIFICATION_URL"]?.trim();
-  if (!notificationUrl) {
-    console.warn("[onedrive-connect] GRAPH_NOTIFICATION_URL not configured, skipping subscription");
-    return;
-  }
-
-  const lifecycleNotificationUrl = process.env["GRAPH_LIFECYCLE_URL"]?.trim();
-  let driveId: string;
-  try {
-    driveId = await fetchGraphDriveId(accessToken);
-  } catch (error) {
-    console.warn("[onedrive-connect] Graph drive lookup failed", error);
-    return;
-  }
-
-  const graphSubscriptionMaxMinutes = 4230;
-  const expirationDateTime = new Date(
-    Date.now() + graphSubscriptionMaxMinutes * 60 * 1000,
-  ).toISOString();
-
-  const requestBody = {
-    changeType: "updated",
-    notificationUrl,
-    resource: `/drives/${driveId}/root`,
-    expirationDateTime,
-    clientState: userId,
-    ...(lifecycleNotificationUrl ? { lifecycleNotificationUrl } : {}),
-  };
-  console.info("[onedrive-connect] Registering Graph subscription", {
-    notificationUrl,
-    resource: requestBody.resource,
-    expirationDateTime,
-    lifecycleNotificationUrl: lifecycleNotificationUrl ?? null,
-  });
-
-  const response = await fetch("https://graph.microsoft.com/v1.0/subscriptions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(requestBody),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    console.warn(
-      `[onedrive-connect] Graph subscription registration failed: ${response.status} ${response.statusText}`,
-      text,
-    );
-    return;
-  }
-  console.info("[onedrive-connect] Graph subscription created", {
-    status: response.status,
-  });
 }
 
 async function upsertSyncProfile(userId: string): Promise<void> {
