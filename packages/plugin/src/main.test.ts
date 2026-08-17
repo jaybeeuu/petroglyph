@@ -34,6 +34,12 @@ function makeTestJwtWithoutExp(): string {
   return `${header}.${payload}.fakesignature`;
 }
 
+function makeTestJwtWithPayload(payload: unknown): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${header}.${encodedPayload}.fakesignature`;
+}
+
 async function makePlugin(initialData?: {
   [key: string]: unknown;
 }): Promise<{ plugin: PetroglyphPlugin; savedData: { [key: string]: unknown } }> {
@@ -268,6 +274,50 @@ describe("scheduleRefresh", () => {
     const performRefreshSpy = vi.spyOn(plugin, "performRefresh").mockResolvedValue(undefined);
 
     plugin.scheduleRefresh(makeTestJwtWithoutExp());
+
+    vi.advanceTimersByTime(999_999_999);
+    expect(performRefreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not schedule when the JWT is malformed", async () => {
+    const { plugin } = await makePlugin();
+    const performRefreshSpy = vi.spyOn(plugin, "performRefresh").mockResolvedValue(undefined);
+
+    plugin.scheduleRefresh("not-a-jwt");
+    plugin.scheduleRefresh("two.parts");
+    plugin.scheduleRefresh("four.parts.are.too.many");
+
+    vi.advanceTimersByTime(999_999_999);
+    expect(performRefreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not schedule when the JWT payload is not valid JSON", async () => {
+    const { plugin } = await makePlugin();
+    const performRefreshSpy = vi.spyOn(plugin, "performRefresh").mockResolvedValue(undefined);
+
+    const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+    const garbagePayload = Buffer.from("{{ not json").toString("base64url");
+    plugin.scheduleRefresh(`${header}.${garbagePayload}.fakesignature`);
+
+    vi.advanceTimersByTime(999_999_999);
+    expect(performRefreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not schedule when the JWT payload exp is not a number", async () => {
+    const { plugin } = await makePlugin();
+    const performRefreshSpy = vi.spyOn(plugin, "performRefresh").mockResolvedValue(undefined);
+
+    plugin.scheduleRefresh(makeTestJwtWithPayload({ sub: "test", exp: "soon" }));
+
+    vi.advanceTimersByTime(999_999_999);
+    expect(performRefreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not schedule when the JWT payload is not an object", async () => {
+    const { plugin } = await makePlugin();
+    const performRefreshSpy = vi.spyOn(plugin, "performRefresh").mockResolvedValue(undefined);
+
+    plugin.scheduleRefresh(makeTestJwtWithPayload("a string"));
 
     vi.advanceTimersByTime(999_999_999);
     expect(performRefreshSpy).not.toHaveBeenCalled();

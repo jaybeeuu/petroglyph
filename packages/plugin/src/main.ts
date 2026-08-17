@@ -1,4 +1,5 @@
 import { Notice, Plugin, normalizePath } from "obsidian";
+import { is, isObject } from "@jaybeeuu/is";
 import { PetroglyphSettingTab } from "./settings.js";
 import type { FileChange, PluginData, SyncProfile } from "./types.js";
 import { hasStringProp, isRecord } from "./validate.js";
@@ -13,14 +14,22 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const DEFAULT_PROFILE_ID = "default";
 const VAULT_ROOT = "handwritten";
 
+interface JwtPayload {
+  exp: number;
+}
+
+const isJwtPayload = isObject<JwtPayload>({
+  exp: is("number"),
+});
+
 function decodeJwtExpiry(jwt: string): number | null {
   const parts = jwt.split(".");
   if (parts.length !== 3) return null;
   const payloadBase64 = (parts[1] ?? "").replace(/-/g, "+").replace(/_/g, "/");
   try {
     const payload: unknown = JSON.parse(atob(payloadBase64));
-    if (isRecord(payload) && typeof payload["exp"] === "number") {
-      return payload["exp"];
+    if (isJwtPayload(payload)) {
+      return payload.exp;
     }
   } catch {
     return null;
