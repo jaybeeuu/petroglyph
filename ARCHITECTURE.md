@@ -150,7 +150,7 @@ A TypeScript plugin that runs inside Obsidian, responsible for pulling staged fi
 
 #### Build
 
-Obsidian requires plugins to be distributed as a single CJS file (`dist/main.js`) with `obsidian` left external — the runtime injects it. `tsc` alone cannot produce a bundle, so the build uses **esbuild** (`esbuild.config.mjs`). The dev script adds inline source maps; the production build omits them. `manifest.json` (required by Obsidian alongside `dist/main.js`) lives at the package root and declares the plugin id, name, version, and `minAppVersion`.
+Obsidian requires plugins to be distributed as a single CJS file (`dist/main.js`) with `obsidian` left external — the runtime injects it. `tsc` alone cannot produce a bundle, so the build uses **esbuild** (`esbuild.config.mjs`). The dev script adds inline source maps; the production build omits them. `manifest.json` (required by Obsidian alongside `dist/main.js`) lives at the package root and declares the plugin id, name, version, and `minAppVersion`. The build also copies `styles.css` into `dist/`, so the loadable plugin folder ships as `main.js` + `manifest.json` + `styles.css` (the latter styles plugin UI, e.g. the reconnect banner).
 
 #### Plugin Location
 
