@@ -80,7 +80,6 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
         Action = "sqs:SendMessage"
         Resource = [
           aws_sqs_queue.ingest.arn,
-          aws_sqs_queue.sync_jobs.arn,
         ]
       },
       {
@@ -217,6 +216,59 @@ resource "aws_iam_role_policy" "petroglyph_processor_policy" {
           "logs:PutLogEvents",
         ]
         Resource = "${local.lambda_log_group_arn_prefix}/petroglyph-processor-${terraform.workspace}:*"
+      },
+    ]
+  })
+}
+
+# ---------------------------------------------------------------------------
+# Sync-outbox relay role
+# ---------------------------------------------------------------------------
+
+resource "aws_iam_role" "petroglyph_sync_relay_role" {
+  name               = "petroglyph-sync-relay-${terraform.workspace}"
+  assume_role_policy = local.lambda_assume_role_policy
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+resource "aws_iam_role_policy" "petroglyph_sync_relay_policy" {
+  name = "petroglyph-sync-relay-policy"
+  role = aws_iam_role.petroglyph_sync_relay_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "DynamoDBReadStream"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:DescribeStream",
+          "dynamodb:GetRecords",
+          "dynamodb:GetShardIterator",
+          "dynamodb:ListStreams",
+        ]
+        Resource = [
+          aws_dynamodb_table.sync_jobs.arn,
+          "${aws_dynamodb_table.sync_jobs.arn}/stream/*",
+        ]
+      },
+      {
+        Sid      = "SQSSendMessage"
+        Effect   = "Allow"
+        Action   = "sqs:SendMessage"
+        Resource = aws_sqs_queue.sync_jobs.arn
+      },
+      {
+        Sid    = "CloudWatchLogsWrite"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "${local.lambda_log_group_arn_prefix}/petroglyph-sync-relay-${terraform.workspace}:*"
       },
     ]
   })
