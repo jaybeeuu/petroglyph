@@ -1,3 +1,4 @@
+import type { SendMessageCommandInput } from "@aws-sdk/client-sqs";
 import { GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -173,7 +174,7 @@ describe("POST /sync/run", () => {
             sourceFolderPath: "OnyxBoox",
             userId: "user-42",
           }),
-        }),
+        }) as unknown as SendMessageCommandInput,
       }),
     );
   });
