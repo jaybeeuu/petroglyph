@@ -100,6 +100,9 @@ resource "aws_dynamodb_table" "sync_jobs" {
     type = "S"
   }
 
+  stream_enabled   = true
+  stream_view_type = "NEW_IMAGE"
+
   ttl {
     attribute_name = "expiresAt"
     enabled        = true

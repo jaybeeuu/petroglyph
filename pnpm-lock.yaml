@@ -166,6 +166,22 @@ importers:
         specifier: ^25.5.2
         version: 25.5.2
 
+  packages/sync-relay:
+    dependencies:
+      '@aws-sdk/client-sqs':
+        specifier: ^3.1029.0
+        version: 3.1029.0
+    devDependencies:
+      '@types/aws-lambda':
+        specifier: ^8.10.145
+        version: 8.10.161
+      '@types/node':
+        specifier: ^25.5.2
+        version: 25.5.2
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@25.5.2)(tsx@4.21.0)(yaml@2.8.3)
+
   packages/sync-worker:
     dependencies:
       '@aws-sdk/client-dynamodb':
