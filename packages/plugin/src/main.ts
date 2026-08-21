@@ -28,7 +28,29 @@ function decodeJwtExpiry(jwt: string): number | null {
   return null;
 }
 
+export type PluginEventType = "state-changed";
+
+export type PluginEventHandler = () => void;
+
 export class PetroglyphPlugin extends Plugin {
+  private readonly _listeners: Map<PluginEventType, Set<PluginEventHandler>> = new Map();
+
+  on(event: PluginEventType, handler: PluginEventHandler): void {
+    if (!this._listeners.has(event)) {
+      this._listeners.set(event, new Set());
+    }
+    this._listeners.get(event)?.add(handler);
+  }
+
+  off(event: PluginEventType, handler: PluginEventHandler): void {
+    this._listeners.get(event)?.delete(handler);
+  }
+
+  private emit(event: PluginEventType): void {
+    for (const handler of this._listeners.get(event) ?? []) {
+      handler();
+    }
+  }
   /**
    * Manually trigger a sync: POST /sync/run, then page GET /files/changes until nextToken is null.
    * Shows a notice on completion or error.
@@ -224,6 +246,7 @@ export class PetroglyphPlugin extends Plugin {
   }
 
   refreshSettingsUi(): void {
+    this.emit("state-changed");
     this._settingTab?.display();
   }
 

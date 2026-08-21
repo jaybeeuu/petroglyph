@@ -38,6 +38,8 @@ resource "aws_lambda_function" "petroglyph_api" {
       DELTA_TOKENS_TABLE             = aws_dynamodb_table.delta_tokens.name
       STAGED_PDFS_BUCKET             = aws_s3_bucket.staged_pdfs.id
       INGEST_QUEUE_URL               = aws_sqs_queue.ingest.url
+      SYNC_JOBS_TABLE                = aws_dynamodb_table.sync_jobs.name
+      SYNC_JOB_QUEUE_URL             = aws_sqs_queue.sync_jobs.url
     }
   }
 

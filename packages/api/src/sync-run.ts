@@ -1,55 +1,76 @@
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
-import { PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
-import { listProfiles } from "@petroglyph/core";
+import { randomUUID } from "node:crypto";
 import { docClient } from "./db.js";
-import { resolveOneDriveAccessToken } from "./onedrive-middleware.js";
 
 function syncProfilesTableName(): string {
   return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
 }
 
-interface GraphDeltaPage {
-  value: unknown[];
-  "@odata.nextLink"?: string;
-  "@odata.deltaLink"?: string;
+function syncJobsTableName(): string {
+  return process.env["SYNC_JOBS_TABLE"] ?? "petroglyph-sync-jobs-default";
 }
 
-interface GraphDriveFileItem {
-  id: string;
-  name: string;
-  odataType: string;
-  webUrl: string | undefined;
-  parentReference: { driveId: string; path: string } | undefined;
-}
-
-interface UnknownRecord {
-  [key: string]: unknown;
-}
-
-function ingestQueueUrl(): string {
-  const url = process.env["INGEST_QUEUE_URL"];
+function syncJobQueueUrl(): string {
+  const url = process.env["SYNC_JOB_QUEUE_URL"];
   if (!url) {
-    throw new Error("INGEST_QUEUE_URL env var not set");
+    throw new Error("SYNC_JOB_QUEUE_URL env var not set");
   }
   return url;
 }
 
 const sqsClient = new SQSClient({});
 
-function fileRecordsTableName(): string {
-  return process.env["FILE_RECORDS_TABLE"] ?? "petroglyph-file-records-default";
+interface SyncProfile {
+  profileId: string;
+  userId: string;
+  sourceFolderPath: string;
+  active?: boolean;
 }
 
-function deltaTokensTableName(): string {
-  return process.env["DELTA_TOKENS_TABLE"] ?? "petroglyph-delta-tokens-default";
+function parseSyncProfile(item: unknown): SyncProfile | null {
+  if (typeof item !== "object" || item === null) {
+    return null;
+  }
+
+  const record = item as { [key: string]: unknown };
+  const profileId = record["profileId"];
+  const userId = record["userId"];
+  const sourceFolderPath = record["sourceFolderPath"];
+
+  if (
+    typeof profileId !== "string" ||
+    typeof userId !== "string" ||
+    typeof sourceFolderPath !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    profileId,
+    userId,
+    sourceFolderPath,
+    active: record["active"] === true,
+  };
 }
 
 async function findActiveProfile(
   userId: string,
 ): Promise<{ sourceFolderPath: string; profileId: string } | null> {
   try {
-    const profiles = await listProfiles(docClient, syncProfilesTableName(), userId);
+    const result = await docClient.send(
+      new QueryCommand({
+        TableName: syncProfilesTableName(),
+        KeyConditionExpression: "userId = :userId",
+        ExpressionAttributeValues: { ":userId": userId },
+      }),
+    );
+
+    const profiles = (result.Items ?? [])
+      .map(parseSyncProfile)
+      .filter((p): p is SyncProfile => p !== null);
+
     const active = profiles.find((p) => p.active);
     if (active) {
       return { sourceFolderPath: active.sourceFolderPath, profileId: active.profileId };
@@ -60,174 +81,38 @@ async function findActiveProfile(
   }
 }
 
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-async function readDeltaToken(profileId: string): Promise<string | undefined> {
-  try {
-    const result = await docClient.send(
-      new GetCommand({
-        TableName: deltaTokensTableName(),
-        Key: { profileId },
-      }),
-    );
-    const deltaToken: unknown = result.Item?.["deltaToken"];
-    return typeof deltaToken === "string" ? deltaToken : undefined;
-  } catch (error) {
-    if (error instanceof Error && error.name === "ResourceNotFoundException") {
-      return undefined;
-    }
-    throw error;
-  }
-}
-
-function buildDeltaUrl(folder: string, deltaToken?: string): string {
-  const url = new URL(
-    `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURI(folder)}:/delta`,
-  );
-  if (deltaToken) {
-    url.searchParams.set("token", deltaToken);
-  }
-  return url.toString();
-}
-
-function parseGraphDeltaPage(value: unknown): GraphDeltaPage {
-  if (!isRecord(value) || !Array.isArray(value["value"])) {
-    throw new Error("Invalid Graph delta response");
-  }
-
-  const nextLink = value["@odata.nextLink"];
-  const deltaLink = value["@odata.deltaLink"];
-
-  return {
-    value: value["value"],
-    ...(typeof nextLink === "string" && { "@odata.nextLink": nextLink }),
-    ...(typeof deltaLink === "string" && { "@odata.deltaLink": deltaLink }),
-  };
-}
-
-function parseGraphDriveFileItem(value: unknown): GraphDriveFileItem | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  if (value["deleted"] !== undefined) {
-    return null;
-  }
-
-  if (typeof value["id"] !== "string" || typeof value["name"] !== "string") {
-    return null;
-  }
-
-  if (!isRecord(value["file"])) {
-    return null;
-  }
-
-  const mimeType = value["file"]["mimeType"];
-  const filename = value["name"];
-  const isPdf = mimeType === "application/pdf" || filename.toLowerCase().endsWith(".pdf");
-
-  if (!isPdf) {
-    return null;
-  }
-
-  const odataType =
-    typeof value["@odata.type"] === "string" ? value["@odata.type"] : "#microsoft.graph.driveItem";
-  const webUrl = typeof value["webUrl"] === "string" ? value["webUrl"] : undefined;
-  const parentReference = isRecord(value["parentReference"])
-    ? {
-        driveId:
-          typeof value["parentReference"]["driveId"] === "string"
-            ? value["parentReference"]["driveId"]
-            : "",
-        path:
-          typeof value["parentReference"]["path"] === "string"
-            ? value["parentReference"]["path"]
-            : "",
-      }
-    : undefined;
-
-  return {
-    id: value["id"],
-    name: filename,
-    odataType,
-    webUrl,
-    parentReference,
-  };
-}
-
-function extractDeltaToken(deltaLink: string): string {
-  const url = new URL(deltaLink);
-  return url.searchParams.get("token") ?? deltaLink;
-}
-
-async function fetchDeltaPage(url: string, accessToken: string): Promise<GraphDeltaPage> {
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Graph delta request failed with status ${response.status}`);
-  }
-
-  return parseGraphDeltaPage(await response.json());
-}
-
-async function writeFileRecord(
-  file: GraphDriveFileItem,
-  createdAt: string,
-  profileId: string,
-): Promise<void> {
+async function createSyncJob(jobId: string, userId: string, profileId: string): Promise<void> {
   await docClient.send(
     new PutCommand({
-      TableName: fileRecordsTableName(),
+      TableName: syncJobsTableName(),
       Item: {
+        jobId,
+        userId,
         profileId,
-        fileId: file.id,
-        s3Key: "",
-        filename: file.name,
-        createdAt,
-        status: "pending",
+        status: "queued",
+        createdAt: new Date().toISOString(),
       },
     }),
   );
 }
 
-async function sendIngestMessage(file: GraphDriveFileItem, profileId: string): Promise<void> {
+async function sendSyncJobMessage(
+  jobId: string,
+  profileId: string,
+  sourceFolderPath: string,
+  userId: string,
+): Promise<void> {
   const message = {
-    fileId: file.id,
+    jobId,
     profileId,
-    itemMetadata: {
-      id: file.id,
-      odataType: file.odataType,
-      name: file.name,
-      webUrl: file.webUrl,
-      resource: `me/drive/items/${file.id}`,
-      parentReference: file.parentReference,
-    },
+    sourceFolderPath,
+    userId,
   };
 
   await sqsClient.send(
     new SendMessageCommand({
-      QueueUrl: ingestQueueUrl(),
+      QueueUrl: syncJobQueueUrl(),
       MessageBody: JSON.stringify(message),
-    }),
-  );
-}
-
-async function storeDeltaToken(profileId: string, deltaToken: string): Promise<void> {
-  await docClient.send(
-    new PutCommand({
-      TableName: deltaTokensTableName(),
-      Item: {
-        profileId,
-        deltaToken,
-        updatedAt: new Date().toISOString(),
-      },
     }),
   );
 }
@@ -244,40 +129,9 @@ export async function handleSyncRun(c: Context): Promise<Response> {
     return c.json({ error: "No active profile configured" }, 400);
   }
 
-  const accessToken = await resolveOneDriveAccessToken(userId);
-  const startingDeltaToken = await readDeltaToken(activeProfile.profileId);
+  const jobId = randomUUID();
+  await createSyncJob(jobId, userId, activeProfile.profileId);
+  await sendSyncJobMessage(jobId, activeProfile.profileId, activeProfile.sourceFolderPath, userId);
 
-  let nextUrl: string | undefined = buildDeltaUrl(
-    activeProfile.sourceFolderPath,
-    startingDeltaToken,
-  );
-  let latestDeltaToken: string | undefined;
-  let queued = 0;
-
-  while (nextUrl) {
-    const page = await fetchDeltaPage(nextUrl, accessToken);
-    const createdAt = new Date().toISOString();
-
-    for (const item of page.value) {
-      const file = parseGraphDriveFileItem(item);
-      if (!file) {
-        continue;
-      }
-
-      await writeFileRecord(file, createdAt, activeProfile.profileId);
-      await sendIngestMessage(file, activeProfile.profileId);
-      queued += 1;
-    }
-
-    nextUrl = page["@odata.nextLink"];
-    if (page["@odata.deltaLink"]) {
-      latestDeltaToken = extractDeltaToken(page["@odata.deltaLink"]);
-    }
-  }
-
-  if (latestDeltaToken) {
-    await storeDeltaToken(activeProfile.profileId, latestDeltaToken);
-  }
-
-  return c.json({ queued });
+  return c.json({ jobId }, 201);
 }
