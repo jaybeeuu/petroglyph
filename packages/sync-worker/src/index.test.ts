@@ -141,6 +141,15 @@ describe("sync-worker handler", () => {
 
     expect(result.batchItemFailures).toEqual([]);
 
+    // Check that the job was claimed (status set to running) before work started
+    const claimUpdate = mockDocSend.mock.calls.find(
+      ([command]) =>
+        command instanceof UpdateCommand &&
+        command.input.TableName === "petroglyph-sync-jobs-test" &&
+        command.input.ExpressionAttributeValues?.[":status"] === "running",
+    );
+    expect(claimUpdate).toBeDefined();
+
     // Check that file records were written
     const fileRecordPuts = mockDocSend.mock.calls.filter(
       ([command]) =>
@@ -154,7 +163,9 @@ describe("sync-worker handler", () => {
     // Check that job status was updated to completed
     const jobStatusUpdate = mockDocSend.mock.calls.find(
       ([command]) =>
-        command instanceof UpdateCommand && command.input.TableName === "petroglyph-sync-jobs-test",
+        command instanceof UpdateCommand &&
+        command.input.TableName === "petroglyph-sync-jobs-test" &&
+        command.input.ExpressionAttributeValues?.[":status"] === "completed",
     );
     expect(jobStatusUpdate).toBeDefined();
     const [updateCommand] = jobStatusUpdate as [
@@ -167,7 +178,6 @@ describe("sync-worker handler", () => {
         };
       },
     ];
-    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("completed");
     expect(updateCommand.input.ExpressionAttributeValues[":fileCount"]).toBe(2);
 
     // Check that delta token was stored
@@ -216,7 +226,9 @@ describe("sync-worker handler", () => {
     // Check that job status was updated to failed
     const jobStatusUpdate = mockDocSend.mock.calls.find(
       ([command]) =>
-        command instanceof UpdateCommand && command.input.TableName === "petroglyph-sync-jobs-test",
+        command instanceof UpdateCommand &&
+        command.input.TableName === "petroglyph-sync-jobs-test" &&
+        command.input.ExpressionAttributeValues?.[":status"] === "failed",
     );
     expect(jobStatusUpdate).toBeDefined();
     const [updateCommand] = jobStatusUpdate as [
@@ -229,7 +241,6 @@ describe("sync-worker handler", () => {
         };
       },
     ];
-    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("failed");
     expect(updateCommand.input.ExpressionAttributeValues[":errorMessage"]).toContain(
       "Graph delta request failed",
     );
@@ -420,7 +431,9 @@ describe("sync-worker handler", () => {
     // Check that job status shows correct file count
     const jobStatusUpdate = mockDocSend.mock.calls.find(
       ([command]) =>
-        command instanceof UpdateCommand && command.input.TableName === "petroglyph-sync-jobs-test",
+        command instanceof UpdateCommand &&
+        command.input.TableName === "petroglyph-sync-jobs-test" &&
+        command.input.ExpressionAttributeValues?.[":status"] === "completed",
     );
     const [updateCommand] = jobStatusUpdate as [
       {
@@ -432,5 +445,154 @@ describe("sync-worker handler", () => {
       },
     ];
     expect(updateCommand.input.ExpressionAttributeValues[":fileCount"]).toBe(2);
+  });
+
+  it("claims the job by setting status to running before starting work", async () => {
+    mockDocSend.mockImplementation((command: unknown) => {
+      if (command instanceof GetCommand) {
+        const tableName = command.input.TableName;
+        if (tableName === "petroglyph-refresh-tokens-test") {
+          return Promise.resolve({ Item: mockTokenRecord() });
+        }
+        if (tableName === "petroglyph-delta-tokens-test") {
+          return Promise.resolve({ Item: undefined });
+        }
+      }
+      if (command instanceof PutCommand || command instanceof UpdateCommand) {
+        return Promise.resolve({});
+      }
+      return Promise.resolve({});
+    });
+
+    mockSqsSend.mockResolvedValue({});
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          value: [],
+          "@odata.deltaLink":
+            "https://graph.microsoft.com/v1.0/me/drive/root:/OnyxBoox:/delta?token=delta-token-3",
+        }),
+    });
+
+    const event = makeEvent({
+      jobId: "job-claim",
+      profileId: "profile-claim",
+      sourceFolderPath: "OnyxBoox",
+      userId: "user-42",
+    });
+
+    await handler(event);
+
+    const claimUpdate = mockDocSend.mock.calls.find(
+      ([command]) =>
+        command instanceof UpdateCommand &&
+        command.input.TableName === "petroglyph-sync-jobs-test" &&
+        command.input.ExpressionAttributeValues?.[":status"] === "running",
+    );
+    expect(claimUpdate).toBeDefined();
+    expect(claimUpdate?.[0]).toBe(mockDocSend.mock.calls[0]?.[0]);
+
+    const [claimCommand] = claimUpdate as [
+      {
+        input: {
+          UpdateExpression: string;
+          ConditionExpression: string;
+          ExpressionAttributeValues: {
+            ":status": string;
+            ":queued": string;
+            ":failed": string;
+          };
+        };
+      },
+    ];
+    expect(claimCommand.input.UpdateExpression).toContain(":status");
+    expect(claimCommand.input.ConditionExpression).toContain(":queued");
+    expect(claimCommand.input.ExpressionAttributeValues[":status"]).toBe("running");
+  });
+
+  it("skips a job whose record is already running or completed", async () => {
+    // Claiming fails with a conditional-check violation, as it would when the
+    // record is already running/completed (duplicate delivery).
+    mockDocSend.mockImplementation((command: unknown) => {
+      if (
+        command instanceof UpdateCommand &&
+        command.input.TableName === "petroglyph-sync-jobs-test"
+      ) {
+        const error = new Error("ConditionalCheckFailedException");
+        error.name = "ConditionalCheckFailedException";
+        return Promise.reject(error);
+      }
+      return Promise.resolve({});
+    });
+
+    mockFetch.mockImplementation(() => {
+      throw new Error("Graph should not be called for a duplicate job");
+    });
+
+    const event = makeEvent({
+      jobId: "job-duplicate",
+      profileId: "profile-duplicate",
+      sourceFolderPath: "OnyxBoox",
+      userId: "user-42",
+    });
+
+    const result = await handler(event);
+
+    // The duplicate is consumed without reporting a batch failure and without
+    // any processing side effects.
+    expect(result.batchItemFailures).toEqual([]);
+    expect(mockSqsSend).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("retries a job whose record is marked failed", async () => {
+    mockDocSend.mockImplementation((command: unknown) => {
+      if (command instanceof GetCommand) {
+        const tableName = command.input.TableName;
+        if (tableName === "petroglyph-refresh-tokens-test") {
+          return Promise.resolve({ Item: mockTokenRecord() });
+        }
+        if (tableName === "petroglyph-delta-tokens-test") {
+          return Promise.resolve({ Item: undefined });
+        }
+      }
+      if (command instanceof PutCommand || command instanceof UpdateCommand) {
+        return Promise.resolve({});
+      }
+      return Promise.resolve({});
+    });
+
+    mockSqsSend.mockResolvedValue({});
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          value: [],
+          "@odata.deltaLink":
+            "https://graph.microsoft.com/v1.0/me/drive/root:/OnyxBoox:/delta?token=delta-token-4",
+        }),
+    });
+
+    const event = makeEvent({
+      jobId: "job-retry",
+      profileId: "profile-retry",
+      sourceFolderPath: "OnyxBoox",
+      userId: "user-42",
+    });
+
+    const result = await handler(event);
+
+    // The claim permits jobs already marked failed (SQS redrive) to run again.
+    expect(result.batchItemFailures).toEqual([]);
+    const completionUpdate = mockDocSend.mock.calls.find(
+      ([command]) =>
+        command instanceof UpdateCommand &&
+        command.input.TableName === "petroglyph-sync-jobs-test" &&
+        command.input.ExpressionAttributeValues?.[":status"] === "completed",
+    );
+    expect(completionUpdate).toBeDefined();
   });
 });

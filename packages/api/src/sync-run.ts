@@ -1,4 +1,3 @@
-import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { randomUUID } from "node:crypto";
@@ -11,16 +10,6 @@ function syncProfilesTableName(): string {
 function syncJobsTableName(): string {
   return process.env["SYNC_JOBS_TABLE"] ?? "petroglyph-sync-jobs-default";
 }
-
-function syncJobQueueUrl(): string {
-  const url = process.env["SYNC_JOB_QUEUE_URL"];
-  if (!url) {
-    throw new Error("SYNC_JOB_QUEUE_URL env var not set");
-  }
-  return url;
-}
-
-const sqsClient = new SQSClient({});
 
 interface SyncProfile {
   profileId: string;
@@ -81,7 +70,12 @@ async function findActiveProfile(
   }
 }
 
-async function createSyncJob(jobId: string, userId: string, profileId: string): Promise<void> {
+async function createSyncJob(
+  jobId: string,
+  userId: string,
+  profileId: string,
+  sourceFolderPath: string,
+): Promise<void> {
   await docClient.send(
     new PutCommand({
       TableName: syncJobsTableName(),
@@ -89,30 +83,10 @@ async function createSyncJob(jobId: string, userId: string, profileId: string): 
         jobId,
         userId,
         profileId,
+        sourceFolderPath,
         status: "queued",
         createdAt: new Date().toISOString(),
       },
-    }),
-  );
-}
-
-async function sendSyncJobMessage(
-  jobId: string,
-  profileId: string,
-  sourceFolderPath: string,
-  userId: string,
-): Promise<void> {
-  const message = {
-    jobId,
-    profileId,
-    sourceFolderPath,
-    userId,
-  };
-
-  await sqsClient.send(
-    new SendMessageCommand({
-      QueueUrl: syncJobQueueUrl(),
-      MessageBody: JSON.stringify(message),
     }),
   );
 }
@@ -130,8 +104,7 @@ export async function handleSyncRun(c: Context): Promise<Response> {
   }
 
   const jobId = randomUUID();
-  await createSyncJob(jobId, userId, activeProfile.profileId);
-  await sendSyncJobMessage(jobId, activeProfile.profileId, activeProfile.sourceFolderPath, userId);
+  await createSyncJob(jobId, userId, activeProfile.profileId, activeProfile.sourceFolderPath);
 
   return c.json({ jobId }, 201);
 }

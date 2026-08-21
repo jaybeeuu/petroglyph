@@ -392,8 +392,45 @@ async function processSyncJob(message: SyncJobMessage): Promise<number> {
   return queued;
 }
 
+async function claimSyncJob(jobId: string): Promise<boolean> {
+  try {
+    await docClient.send(
+      new UpdateCommand({
+        TableName: syncJobsTableName(),
+        Key: { jobId },
+        UpdateExpression: "SET #status = :status, startedAt = :startedAt",
+        ConditionExpression: "#status = :queued OR #status = :failed",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":status": "running",
+          ":queued": "queued",
+          ":failed": "failed",
+          ":startedAt": new Date().toISOString(),
+        },
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.name === "ConditionalCheckFailedException") {
+      return false;
+    }
+    throw error;
+  }
+}
+
 async function handleRecord(record: SQSRecord): Promise<void> {
   const message = JSON.parse(record.body) as SyncJobMessage;
+
+  const claimed = await claimSyncJob(message.jobId);
+  if (!claimed) {
+    // At-least-once delivery (SQS redrive + outbox stream) can re-deliver a
+    // message for a job that is already running or completed. The record is
+    // the source of truth, so consume the duplicate without re-processing.
+    console.warn(
+      `[sync-worker] skipping job ${message.jobId}: record is already running/completed`,
+    );
+    return;
+  }
 
   try {
     const fileCount = await processSyncJob(message);
