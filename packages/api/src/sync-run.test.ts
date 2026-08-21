@@ -196,6 +196,29 @@ describe("POST /sync/run", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it("returns 400 when the profile record is missing required fields", async () => {
+    mockDbSend.mockImplementation((command: unknown) => {
+      if (command instanceof QueryCommand) {
+        return Promise.resolve({
+          Items: [
+            {
+              profileId: "default",
+              userId: "user-42",
+              sourceFolderPath: "OnyxBoox",
+              active: true,
+            },
+          ],
+        });
+      }
+      return Promise.resolve({});
+    });
+    mockSqsSend.mockResolvedValue({});
+
+    const response = await postSyncRun();
+
+    expect(response.status).toBe(400);
+  });
+
   it("returns 400 when no active profile is configured", async () => {
     mockDbSend.mockImplementation((command: unknown) => {
       if (command instanceof QueryCommand) {

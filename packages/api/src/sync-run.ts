@@ -1,5 +1,7 @@
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { syncProfileSchema } from "@petroglyph/core";
+import type { SyncProfile } from "@petroglyph/core";
 import type { Context } from "hono";
 import { randomUUID } from "node:crypto";
 import { docClient } from "./db.js";
@@ -22,37 +24,9 @@ function syncJobQueueUrl(): string {
 
 const sqsClient = new SQSClient({});
 
-interface SyncProfile {
-  profileId: string;
-  userId: string;
-  sourceFolderPath: string;
-  active?: boolean;
-}
-
 function parseSyncProfile(item: unknown): SyncProfile | null {
-  if (typeof item !== "object" || item === null) {
-    return null;
-  }
-
-  const record = item as { [key: string]: unknown };
-  const profileId = record["profileId"];
-  const userId = record["userId"];
-  const sourceFolderPath = record["sourceFolderPath"];
-
-  if (
-    typeof profileId !== "string" ||
-    typeof userId !== "string" ||
-    typeof sourceFolderPath !== "string"
-  ) {
-    return null;
-  }
-
-  return {
-    profileId,
-    userId,
-    sourceFolderPath,
-    active: record["active"] === true,
-  };
+  const parsed = syncProfileSchema.safeParse(item);
+  return parsed.success ? parsed.data : null;
 }
 
 async function findActiveProfile(
