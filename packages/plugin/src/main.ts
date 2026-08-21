@@ -14,27 +14,18 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const DEFAULT_PROFILE_ID = "default";
 const VAULT_ROOT = "handwritten";
 
-interface JwtPayload {
-  exp: number;
-}
-
-const isJwtPayload = isObject<JwtPayload>({
+const isJwtPayload = isObject({
   exp: is("number"),
 });
 
-function decodeJwtExpiry(jwt: string): number | null {
+function decodeJwtExpiry(jwt: string): number {
   const parts = jwt.split(".");
-  if (parts.length !== 3) return null;
-  const payloadBase64 = (parts[1] ?? "").replace(/-/g, "+").replace(/_/g, "/");
-  try {
-    const payload: unknown = JSON.parse(atob(payloadBase64));
-    if (isJwtPayload(payload)) {
-      return payload.exp;
-    }
-  } catch {
-    return null;
+  if (parts.length !== 3) {
+    throw new TypeError(`Expected a JWT with three parts but found ${parts.length}.`);
   }
-  return null;
+  const payloadBase64 = (parts[1] ?? "").replace(/-/g, "+").replace(/_/g, "/");
+  const payload = isJwtPayload.check(JSON.parse(atob(payloadBase64)));
+  return payload.exp;
 }
 
 export type PluginEventType = "state-changed";
@@ -279,8 +270,13 @@ export class PetroglyphPlugin extends Plugin {
       window.clearTimeout(this._refreshTimeoutId);
       this._refreshTimeoutId = null;
     }
-    const exp = decodeJwtExpiry(jwt);
-    if (exp === null) return;
+    let exp: number;
+    try {
+      exp = decodeJwtExpiry(jwt);
+    } catch {
+      new Notice("Invalid session token: please sign in again.");
+      return;
+    }
     const delayMs = Math.max(0, exp * 1000 - REFRESH_BUFFER_MS - Date.now());
     this._refreshTimeoutId = window.setTimeout(() => {
       void this.performRefresh();
