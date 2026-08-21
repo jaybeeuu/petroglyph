@@ -133,6 +133,10 @@ importers:
         version: 0.28.0
 
   packages/plugin:
+    dependencies:
+      '@jaybeeuu/is':
+        specifier: ^2.1.1
+        version: 2.1.1
     devDependencies:
       esbuild:
         specifier: ^0.28.0
