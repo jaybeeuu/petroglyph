@@ -36,6 +36,18 @@ variable "processor_zip_s3_key" {
   default     = ""
 }
 
+variable "sync_worker_zip_s3_bucket" {
+  description = "S3 bucket containing the sync-worker Lambda deployment zip. Empty string disables the Lambda."
+  type        = string
+  default     = ""
+}
+
+variable "sync_worker_zip_s3_key" {
+  description = "S3 key of the sync-worker Lambda deployment zip. Empty string disables the Lambda."
+  type        = string
+  default     = ""
+}
+
 variable "api_custom_domain" {
   description = "Custom domain name for the API (e.g. api.petroglyph.page). Empty string disables custom domain resources."
   type        = string
