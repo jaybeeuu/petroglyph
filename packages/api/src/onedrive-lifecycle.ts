@@ -178,6 +178,115 @@ async function storeUserTokens(
   );
 }
 
+async function deleteGraphSubscription(subscriptionId: string, accessToken: string): Promise<void> {
+  const response = await fetch(`https://graph.microsoft.com/v1.0/subscriptions/${subscriptionId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (response.status === 404) {
+    return;
+  }
+  if (!response.ok) {
+    console.warn(
+      `[onedrive-lifecycle] Graph subscription delete failed: ${response.status} ${response.statusText}`,
+    );
+  }
+}
+
+interface GraphDriveResponse {
+  id: string;
+}
+
+function isGraphDriveResponse(value: unknown): value is GraphDriveResponse {
+  return isRecord(value) && typeof value["id"] === "string";
+}
+
+async function fetchGraphDriveId(accessToken: string): Promise<string> {
+  const response = await fetch("https://graph.microsoft.com/v1.0/me/drive", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Graph drive lookup failed: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  if (!isGraphDriveResponse(data)) {
+    throw new Error("Invalid Graph drive response shape");
+  }
+
+  return data.id;
+}
+
+export async function registerGraphSubscription(
+  accessToken: string,
+  userId: string,
+): Promise<boolean> {
+  const notificationUrl = process.env["GRAPH_NOTIFICATION_URL"]?.trim();
+  if (!notificationUrl) {
+    console.warn(
+      "[onedrive-lifecycle] GRAPH_NOTIFICATION_URL not configured, skipping subscription",
+    );
+    return false;
+  }
+
+  const lifecycleNotificationUrl = process.env["GRAPH_LIFECYCLE_URL"]?.trim();
+  let driveId: string;
+  try {
+    driveId = await fetchGraphDriveId(accessToken);
+  } catch (error) {
+    console.warn("[onedrive-lifecycle] Graph drive lookup failed", error);
+    return false;
+  }
+
+  const graphSubscriptionMaxMinutes = 4230;
+  const expirationDateTime = new Date(
+    Date.now() + graphSubscriptionMaxMinutes * 60 * 1000,
+  ).toISOString();
+
+  const requestBody = {
+    changeType: "updated",
+    notificationUrl,
+    resource: `/drives/${driveId}/root`,
+    expirationDateTime,
+    clientState: userId,
+    ...(lifecycleNotificationUrl ? { lifecycleNotificationUrl } : {}),
+  };
+  console.info("[onedrive-lifecycle] Registering Graph subscription", {
+    notificationUrl,
+    resource: requestBody.resource,
+    expirationDateTime,
+    lifecycleNotificationUrl: lifecycleNotificationUrl ?? null,
+  });
+
+  const response = await fetch("https://graph.microsoft.com/v1.0/subscriptions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    console.warn(
+      `[onedrive-lifecycle] Graph subscription registration failed: ${response.status} ${response.statusText}`,
+      text,
+    );
+    return false;
+  }
+  console.info("[onedrive-lifecycle] Graph subscription created", {
+    status: response.status,
+  });
+  return true;
+}
+
 async function handleReauthorizationRequired(notification: LifecycleNotification): Promise<void> {
   if (!notification.subscriptionId) {
     throw new Error("Lifecycle notification missing subscriptionId");
@@ -200,7 +309,22 @@ async function handleReauthorizationRequired(notification: LifecycleNotification
     refreshed.refresh_token,
     refreshed.expires_in,
   );
-  await reauthorizeGraphSubscription(notification.subscriptionId, refreshed.access_token);
+  try {
+    await reauthorizeGraphSubscription(notification.subscriptionId, refreshed.access_token);
+  } catch (error) {
+    console.warn(
+      "[onedrive-lifecycle] Graph subscription reauthorize failed; falling back to delete + recreate",
+      error,
+    );
+    await deleteGraphSubscription(notification.subscriptionId, refreshed.access_token);
+    const recreated = await registerGraphSubscription(
+      refreshed.access_token,
+      notification.clientState,
+    );
+    if (!recreated) {
+      throw new Error("Graph subscription recreate failed after reauthorize failure");
+    }
+  }
   await markConnected(notification.clientState);
 }
 
