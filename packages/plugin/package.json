@@ -13,5 +13,8 @@
   "devDependencies": {
     "esbuild": "^0.28.0",
     "obsidian": "^1.12.3"
+  },
+  "dependencies": {
+    "@jaybeeuu/is": "^2.1.1"
   }
 }
