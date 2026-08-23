@@ -1,6 +1,7 @@
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { SQSBatchResponse, SQSEvent, SQSRecord } from "aws-lambda";
+import { z } from "zod";
 import { docClient } from "./db.js";
 
 const TEN_MINUTES_MS = 10 * 60 * 1000;
@@ -31,12 +32,14 @@ function refreshTokensTableName(): string {
   return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh-tokens-default";
 }
 
-interface SyncJobMessage {
-  jobId: string;
-  profileId: string;
-  sourceFolderPath: string;
-  userId: string;
-}
+export const syncJobMessageSchema = z.object({
+  jobId: z.string().min(1),
+  profileId: z.string().min(1),
+  sourceFolderPath: z.string().min(1),
+  userId: z.string().min(1),
+});
+
+type SyncJobMessage = z.infer<typeof syncJobMessageSchema>;
 
 interface GraphDeltaPage {
   value: unknown[];
@@ -393,7 +396,7 @@ async function processSyncJob(message: SyncJobMessage): Promise<number> {
 }
 
 async function handleRecord(record: SQSRecord): Promise<void> {
-  const message = JSON.parse(record.body) as SyncJobMessage;
+  const message = syncJobMessageSchema.parse(JSON.parse(record.body) as unknown);
 
   try {
     const fileCount = await processSyncJob(message);

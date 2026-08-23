@@ -351,6 +351,56 @@ describe("sync-worker handler", () => {
     expect(url).toContain("token=existing-delta-token");
   });
 
+  it("rejects a message missing required fields without touching the job table", async () => {
+    mockDocSend.mockResolvedValue({});
+    mockSqsSend.mockResolvedValue({});
+
+    const event = makeEvent({
+      profileId: "profile-456",
+      sourceFolderPath: "OnyxBoox",
+      userId: "user-42",
+    });
+
+    const result = await handler(event);
+
+    expect(result.batchItemFailures).toHaveLength(1);
+    expect(result.batchItemFailures[0]?.itemIdentifier).toBe("message-123");
+
+    // An unvalidated jobId must never be used to write job status.
+    const jobStatusUpdates = mockDocSend.mock.calls.filter(
+      ([command]) =>
+        command instanceof UpdateCommand && command.input.TableName === "petroglyph-sync-jobs-test",
+    );
+    expect(jobStatusUpdates).toHaveLength(0);
+
+    // No ingest work should happen for a malformed message.
+    expect(mockSqsSend).not.toHaveBeenCalled();
+  });
+
+  it("rejects a message with wrong-typed fields before acting on it", async () => {
+    mockDocSend.mockResolvedValue({});
+    mockSqsSend.mockResolvedValue({});
+
+    const event = makeEvent({
+      jobId: 123,
+      profileId: "profile-456",
+      sourceFolderPath: "OnyxBoox",
+      userId: "user-42",
+    });
+
+    const result = await handler(event);
+
+    expect(result.batchItemFailures).toHaveLength(1);
+    expect(result.batchItemFailures[0]?.itemIdentifier).toBe("message-123");
+
+    const jobStatusUpdates = mockDocSend.mock.calls.filter(
+      ([command]) =>
+        command instanceof UpdateCommand && command.input.TableName === "petroglyph-sync-jobs-test",
+    );
+    expect(jobStatusUpdates).toHaveLength(0);
+    expect(mockSqsSend).not.toHaveBeenCalled();
+  });
+
   it("handles multiple pages of delta results", async () => {
     mockDocSend.mockImplementation((command: unknown) => {
       if (command instanceof GetCommand) {
