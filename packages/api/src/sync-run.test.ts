@@ -1,3 +1,4 @@
+import type { SendMessageCommandInput } from "@aws-sdk/client-sqs";
 import { GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -163,24 +164,19 @@ describe("POST /sync/run", () => {
     const response = await postSyncRun();
     const { jobId } = (await response.json()) as { jobId: string };
 
-    expect(mockSqsSend).toHaveBeenCalledTimes(1);
-    const sqsCall = mockSqsSend.mock.calls[0];
-    expect(sqsCall).toBeDefined();
-    const sqsCommand = sqsCall as [{ input: { QueueUrl: string; MessageBody: string } }];
-    expect(sqsCommand[0].input.QueueUrl).toBe(
-      "https://sqs.eu-west-2.amazonaws.com/123456789/petroglyph-sync-jobs-test",
+    expect(mockSqsSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          QueueUrl: "https://sqs.eu-west-2.amazonaws.com/123456789/petroglyph-sync-jobs-test",
+          MessageBody: JSON.stringify({
+            jobId,
+            profileId: "default",
+            sourceFolderPath: "OnyxBoox",
+            userId: "user-42",
+          }),
+        }) as unknown as SendMessageCommandInput,
+      }),
     );
-
-    const messageBody = JSON.parse(sqsCommand[0].input.MessageBody) as {
-      jobId: string;
-      profileId: string;
-      sourceFolderPath: string;
-      userId: string;
-    };
-    expect(messageBody.jobId).toBe(jobId);
-    expect(messageBody.profileId).toBe("default");
-    expect(messageBody.sourceFolderPath).toBe("OnyxBoox");
-    expect(messageBody.userId).toBe("user-42");
   });
 
   it("does not perform the Graph delta walk", async () => {
