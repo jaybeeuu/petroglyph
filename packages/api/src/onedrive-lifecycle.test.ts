@@ -46,6 +46,72 @@ describe("POST /onedrive/lifecycle", () => {
     >;
   }
 
+  function usersStatusUpdate():
+    | {
+        input: { TableName?: string; ExpressionAttributeValues: { [key: string]: unknown } };
+      }
+    | undefined {
+    return updateCalls()
+      .map(
+        ([command]) =>
+          command as {
+            input: { TableName?: string; ExpressionAttributeValues: { [key: string]: unknown } };
+          },
+      )
+      .find((command) => command.input.TableName === "petroglyph-users-test");
+  }
+
+  function setupReauthorizeFallbackFetch(options: {
+    subscriptionId: string;
+    deleteStatus: number;
+    recreateOk: boolean;
+  }): void {
+    const { subscriptionId, deleteStatus, recreateOk } = options;
+    mockFetch.mockImplementation((url: string) => {
+      if (url === "https://login.microsoftonline.com/common/oauth2/v2.0/token") {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              access_token: "new-access-token",
+              refresh_token: "new-refresh-token",
+              expires_in: 3600,
+            }),
+        } as Response);
+      }
+      if (url === `https://graph.microsoft.com/v1.0/subscriptions/${subscriptionId}/reauthorize`) {
+        return Promise.resolve({
+          ok: false,
+          status: 308,
+          statusText: "Permanent Redirect",
+        } as Response);
+      }
+      if (url === `https://graph.microsoft.com/v1.0/subscriptions/${subscriptionId}`) {
+        return Promise.resolve({
+          ok: deleteStatus < 400,
+          status: deleteStatus,
+          statusText: deleteStatus === 404 ? "Not Found" : "No Content",
+        } as Response);
+      }
+      if (url === "https://graph.microsoft.com/v1.0/me/drive") {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: "drive-123" }),
+        } as Response);
+      }
+      if (url === "https://graph.microsoft.com/v1.0/subscriptions") {
+        return Promise.resolve({
+          ok: recreateOk,
+          status: recreateOk ? 201 : 500,
+          statusText: recreateOk ? "Created" : "Internal Server Error",
+          json: () => Promise.resolve({ id: "sub-recreated" }),
+          text: () => Promise.resolve('{"error":"subscription creation failed"}'),
+        } as Response);
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+  }
+
   it("returns the Microsoft validation token as plain text", async () => {
     const response = await app.request("/onedrive/lifecycle?validationToken=handshake-token", {
       method: "POST",
@@ -241,31 +307,124 @@ describe("POST /onedrive/lifecycle", () => {
     expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("reconnect_required");
   });
 
-  it("marks the user as reconnect_required when subscription reauthorization fails", async () => {
+  it("falls back to DELETE + recreate and marks connected when Graph reauthorize returns 308", async () => {
+    vi.stubEnv("GRAPH_NOTIFICATION_URL", "https://api.example.com/graph/notify");
+    vi.stubEnv("GRAPH_LIFECYCLE_URL", "https://api.example.com/graph/lifecycle");
     setupDbMock([
       { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
     ]);
-    mockFetch.mockImplementation((url: string) => {
-      if (url === "https://login.microsoftonline.com/common/oauth2/v2.0/token") {
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              access_token: "new-access-token",
-              refresh_token: "new-refresh-token",
-              expires_in: 3600,
-            }),
-        } as Response);
-      }
-      if (url === "https://graph.microsoft.com/v1.0/subscriptions/sub-456/reauthorize") {
-        return Promise.resolve({
-          ok: false,
-          status: 500,
-          statusText: "Internal Server Error",
-          json: () => Promise.resolve({}),
-        } as Response);
-      }
-      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    setupReauthorizeFallbackFetch({
+      subscriptionId: "sub-123",
+      deleteStatus: 204,
+      recreateOk: true,
+    });
+
+    const response = await app.request("/onedrive/lifecycle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        value: [
+          {
+            lifecycleEvent: "reauthorizationRequired",
+            clientState: "user-123",
+            subscriptionId: "sub-123",
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(202);
+
+    await vi.waitFor(() => {
+      const statusUpdate = usersStatusUpdate();
+      expect(statusUpdate).toBeDefined();
+      expect(
+        (statusUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
+          .ExpressionAttributeValues[":status"],
+      ).toBe("connected");
+    });
+
+    const deleteCall = mockFetch.mock.calls.find(
+      ([url]) => url === "https://graph.microsoft.com/v1.0/subscriptions/sub-123",
+    );
+    expect(deleteCall).toBeDefined();
+    const [, deleteOptions] = deleteCall as [string, RequestInit];
+    expect(deleteOptions.method).toBe("DELETE");
+    expect((deleteOptions.headers as { [key: string]: string })["Authorization"]).toBe(
+      "Bearer new-access-token",
+    );
+
+    const recreateCall = mockFetch.mock.calls.find(
+      ([url]) => url === "https://graph.microsoft.com/v1.0/subscriptions",
+    );
+    expect(recreateCall).toBeDefined();
+    const [, recreateOptions] = recreateCall as [string, RequestInit];
+    expect(recreateOptions.method).toBe("POST");
+    expect((recreateOptions.headers as { [key: string]: string })["Authorization"]).toBe(
+      "Bearer new-access-token",
+    );
+  });
+
+  it("ignores a 404 from DELETE and still recreates the subscription", async () => {
+    vi.stubEnv("GRAPH_NOTIFICATION_URL", "https://api.example.com/graph/notify");
+    vi.stubEnv("GRAPH_LIFECYCLE_URL", "https://api.example.com/graph/lifecycle");
+    setupDbMock([
+      { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
+    ]);
+    setupReauthorizeFallbackFetch({
+      subscriptionId: "sub-124",
+      deleteStatus: 404,
+      recreateOk: true,
+    });
+
+    const response = await app.request("/onedrive/lifecycle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        value: [
+          {
+            lifecycleEvent: "reauthorizationRequired",
+            clientState: "user-124",
+            subscriptionId: "sub-124",
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(202);
+
+    await vi.waitFor(() => {
+      const statusUpdate = usersStatusUpdate();
+      expect(statusUpdate).toBeDefined();
+      expect(
+        (statusUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
+          .ExpressionAttributeValues[":status"],
+      ).toBe("connected");
+    });
+
+    const deleteCall = mockFetch.mock.calls.find(
+      ([url]) => url === "https://graph.microsoft.com/v1.0/subscriptions/sub-124",
+    );
+    expect(deleteCall).toBeDefined();
+    const [, deleteOptions] = deleteCall as [string, RequestInit];
+    expect(deleteOptions.method).toBe("DELETE");
+
+    const recreateCall = mockFetch.mock.calls.find(
+      ([url]) => url === "https://graph.microsoft.com/v1.0/subscriptions",
+    );
+    expect(recreateCall).toBeDefined();
+  });
+
+  it("marks the user as reconnect_required when subscription recreate also fails", async () => {
+    vi.stubEnv("GRAPH_NOTIFICATION_URL", "https://api.example.com/graph/notify");
+    vi.stubEnv("GRAPH_LIFECYCLE_URL", "https://api.example.com/graph/lifecycle");
+    setupDbMock([
+      { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
+    ]);
+    setupReauthorizeFallbackFetch({
+      subscriptionId: "sub-456",
+      deleteStatus: 204,
+      recreateOk: false,
     });
 
     const response = await app.request("/onedrive/lifecycle", {
@@ -285,23 +444,13 @@ describe("POST /onedrive/lifecycle", () => {
     expect(response.status).toBe(202);
 
     await vi.waitFor(() => {
-      expect(updateCalls()).toHaveLength(2);
+      const statusUpdate = usersStatusUpdate();
+      expect(statusUpdate).toBeDefined();
+      expect(
+        (statusUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
+          .ExpressionAttributeValues[":status"],
+      ).toBe("reconnect_required");
     });
-
-    const statusUpdate = updateCalls()
-      .map(([command]) => command as { input: unknown })
-      .find(
-        (command) =>
-          (command.input as { TableName?: string }).TableName === "petroglyph-users-test",
-      );
-    expect(statusUpdate).toBeDefined();
-    expect((statusUpdate?.input as { Key: { userId: string } }).Key).toEqual({
-      userId: "user-456",
-    });
-    expect(
-      (statusUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
-        .ExpressionAttributeValues[":status"],
-    ).toBe("reconnect_required");
   });
 
   it("returns 202 after subscriptionRemoved work finishes", async () => {
