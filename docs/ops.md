@@ -110,6 +110,8 @@ When adding a new Lambda:
 1. Add a `package` script that produces `lambda.zip` (bundled ESM).
 2. Ensure the deploy workflow uploads the new zip and passes its S3 key to Terraform.
 
+The sync-worker and sync-relay (DynamoDB-stream outbox relay) are not yet wired into CD: they have no `package` script, and Terraform's `sync_worker_zip_*` / `sync_relay_zip_*` variables default to empty, leaving those Lambdas unprovisioned until the two steps above are completed.
+
 ---
 
 ## Third-party App Registration

@@ -112,3 +112,61 @@ describe.sequential("terraform ingestion infrastructure", () => {
     );
   });
 });
+
+describe.sequential("terraform sync outbox relay", () => {
+  it("enables a DynamoDB stream on the sync-jobs table", () => {
+    runTerraformValidate();
+
+    const dynamodbTerraform = readInfraFile("dynamodb.tf");
+
+    expect(dynamodbTerraform).toMatch(
+      /resource "aws_dynamodb_table" "sync_jobs" \{[\s\S]*stream_enabled\s*=\s*true[\s\S]*stream_view_type\s*=\s*"NEW_IMAGE"/,
+    );
+  });
+
+  it("connects the sync-relay lambda to the sync-jobs stream and queue", () => {
+    runTerraformValidate();
+
+    const relayTerraform = readInfraFile("lambda_sync_relay.tf");
+    const variablesTerraform = readInfraFile("variables.tf");
+
+    expect(relayTerraform).toMatch(
+      /resource "aws_lambda_function" "petroglyph_sync_relay" \{[\s\S]*SYNC_JOB_QUEUE_URL\s*=\s*aws_sqs_queue\.sync_jobs\.url/,
+    );
+    expect(relayTerraform).toMatch(
+      /resource "aws_lambda_event_source_mapping" "sync_jobs_stream" \{[\s\S]*event_source_arn\s*=\s*aws_dynamodb_table\.sync_jobs\.stream_arn[\s\S]*function_name\s*=\s*aws_lambda_function\.petroglyph_sync_relay\[0\]\.arn[\s\S]*starting_position\s*=\s*"LATEST"[\s\S]*function_response_types\s*=\s*\["ReportBatchItemFailures"\]/,
+    );
+    expect(variablesTerraform).toContain('variable "sync_relay_zip_s3_bucket"');
+    expect(variablesTerraform).toContain('variable "sync_relay_zip_s3_key"');
+  });
+
+  it("grants the relay stream-read and queue-send permissions and exposes the stream ARN", () => {
+    runTerraformValidate();
+
+    const iamTerraform = readInfraFile("iam.tf");
+    const outputsTerraform = readInfraFile("outputs.tf");
+
+    expect(iamTerraform).toMatch(
+      /Sid\s*=\s*"DynamoDBReadStream"[\s\S]*Action = \[[\s\S]*"dynamodb:DescribeStream"[\s\S]*"dynamodb:GetRecords"[\s\S]*"dynamodb:GetShardIterator"[\s\S]*"dynamodb:ListStreams"[\s\S]*\][\s\S]*Resource = \[[\s\S]*aws_dynamodb_table\.sync_jobs\.arn[\s\S]*\$\{aws_dynamodb_table\.sync_jobs\.arn\}\/stream\/\*/,
+    );
+    expect(iamTerraform).toMatch(
+      /Sid\s*=\s*"SQSSendMessage"[\s\S]*Action\s*=\s*"sqs:SendMessage"[\s\S]*Resource = aws_sqs_queue\.sync_jobs\.arn/,
+    );
+    expect(outputsTerraform).toContain('output "sync_jobs_stream_arn"');
+  });
+
+  it("removes the sync-jobs queue write permission from the API role", () => {
+    runTerraformValidate();
+
+    const iamTerraform = readInfraFile("iam.tf");
+
+    // The API no longer pushes to the sync-jobs queue; only the relay does.
+    const apiSendMessageStatement = iamTerraform.match(
+      /Sid\s*=\s*"SQSSendMessages"[\s\S]*?Resource = \[[\s\S]*?\]/,
+    );
+    expect(apiSendMessageStatement).toBeDefined();
+    const statement = apiSendMessageStatement?.[0] ?? "";
+    expect(statement).toContain("aws_sqs_queue.ingest.arn");
+    expect(statement).not.toContain("sync_jobs");
+  });
+});
