@@ -62,12 +62,12 @@ resource "aws_lambda_function" "petroglyph_sync_worker" {
 
   environment {
     variables = {
-      FILE_RECORDS_TABLE    = local.file_records_table_name
-      DELTA_TOKENS_TABLE    = local.delta_tokens_table_name
-      SYNC_JOBS_TABLE       = aws_dynamodb_table.sync_jobs.name
-      REFRESH_TOKENS_TABLE  = aws_dynamodb_table.refresh_tokens.name
-      INGEST_QUEUE_URL      = aws_sqs_queue.ingest.url
-      MICROSOFT_CLIENT_ID   = aws_ssm_parameter.onedrive_client_id.value
+      FILE_RECORDS_TABLE   = local.file_records_table_name
+      DELTA_TOKENS_TABLE   = local.delta_tokens_table_name
+      SYNC_JOBS_TABLE      = aws_dynamodb_table.sync_jobs.name
+      REFRESH_TOKENS_TABLE = aws_dynamodb_table.refresh_tokens.name
+      INGEST_QUEUE_URL     = aws_sqs_queue.ingest.url
+      MICROSOFT_CLIENT_ID  = aws_ssm_parameter.onedrive_client_id.value
     }
   }
 

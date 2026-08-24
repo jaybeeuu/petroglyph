@@ -32,3 +32,8 @@ output "ingest_dlq_arn" {
   description = "ARN of the SQS dead-letter queue for ingestion failures"
   value       = aws_sqs_queue.ingest_dlq.arn
 }
+
+output "sync_jobs_stream_arn" {
+  description = "ARN of the DynamoDB stream on the sync-jobs table"
+  value       = aws_dynamodb_table.sync_jobs.stream_arn
+}
