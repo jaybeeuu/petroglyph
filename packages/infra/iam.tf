@@ -256,6 +256,15 @@ resource "aws_iam_role_policy" "petroglyph_sync_relay_policy" {
         ]
       },
       {
+        # The relay re-creates queued jobs removed by TTL (retry-on-removal).
+        Sid    = "DynamoDBRecreateSyncJobs"
+        Effect = "Allow"
+        Action = "dynamodb:PutItem"
+        Resource = [
+          aws_dynamodb_table.sync_jobs.arn,
+        ]
+      },
+      {
         Sid      = "SQSSendMessage"
         Effect   = "Allow"
         Action   = "sqs:SendMessage"

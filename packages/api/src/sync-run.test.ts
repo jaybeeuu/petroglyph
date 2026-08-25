@@ -129,6 +129,26 @@ describe("POST /sync/run", () => {
     );
   });
 
+  it("sets retryCount 0 and a TTL-friendly expiresAt 5 minutes after createdAt", async () => {
+    mockOneDriveDb();
+
+    const response = await postSyncRun();
+    expect(response.status).toBe(201);
+
+    const putCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof PutCommand);
+    expect(putCalls).toHaveLength(1);
+    const [putCallArgs] = putCalls;
+    const [putCommand] = putCallArgs as unknown as [
+      { input: { Item: { createdAt: string; expiresAt: number; retryCount: number } } },
+    ];
+
+    const { createdAt, expiresAt, retryCount } = putCommand.input.Item;
+    const createdAtEpochSeconds = Math.floor(new Date(createdAt).getTime() / 1000);
+    // DynamoDB TTL expects epoch seconds; queued jobs get ~5 minutes of slack.
+    expect(expiresAt).toBe(createdAtEpochSeconds + 5 * 60);
+    expect(retryCount).toBe(0);
+  });
+
   it("does not perform the Graph delta walk", async () => {
     mockOneDriveDb();
 

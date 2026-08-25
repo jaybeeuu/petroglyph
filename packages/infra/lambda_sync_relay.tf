@@ -22,6 +22,7 @@ resource "aws_lambda_function" "petroglyph_sync_relay" {
   environment {
     variables = {
       SYNC_JOB_QUEUE_URL = aws_sqs_queue.sync_jobs.url
+      SYNC_JOBS_TABLE    = aws_dynamodb_table.sync_jobs.name
     }
   }
 
