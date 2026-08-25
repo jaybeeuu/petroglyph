@@ -120,7 +120,7 @@ describe.sequential("terraform sync outbox relay", () => {
     const dynamodbTerraform = readInfraFile("dynamodb.tf");
 
     expect(dynamodbTerraform).toMatch(
-      /resource "aws_dynamodb_table" "sync_jobs" \{[\s\S]*stream_enabled\s*=\s*true[\s\S]*stream_view_type\s*=\s*"NEW_IMAGE"/,
+      /resource "aws_dynamodb_table" "sync_jobs" \{[\s\S]*stream_enabled\s*=\s*true[\s\S]*stream_view_type\s*=\s*"NEW_AND_OLD_IMAGES"/,
     );
   });
 

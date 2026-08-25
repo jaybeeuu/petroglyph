@@ -41,6 +41,11 @@ function numberAttribute(value: number): AttributeValue {
 function jobRecord(
   overrides: {
     eventName?: "INSERT" | "MODIFY" | "REMOVE";
+    // Where the item image lives in the stream record: "new" (NewImage, the
+    // default for INSERT fan-out), "old" (OldImage, where NEW_AND_OLD_IMAGES
+    // streams carry the pre-deletion item on REMOVE), or "none" (a REMOVE
+    // record from a NEW_IMAGE-only stream, which has no item image at all).
+    image?: "new" | "old" | "none";
     sequenceNumber?: string;
     jobId?: string;
     profileId?: string;
@@ -53,6 +58,7 @@ function jobRecord(
 ): DynamoDBStreamEvent["Records"][number] {
   const {
     eventName = "INSERT",
+    image = "new",
     sequenceNumber = "100",
     jobId = "job-123",
     profileId = "profile-456",
@@ -62,6 +68,15 @@ function jobRecord(
     retryCount = 0,
     userIdentity = { principalId: "dynamodb.amazonaws.com", type: "Service" },
   } = overrides;
+
+  const itemImage = {
+    jobId: stringAttribute(jobId),
+    profileId: stringAttribute(profileId),
+    sourceFolderPath: stringAttribute(sourceFolderPath),
+    userId: stringAttribute(userId),
+    status: stringAttribute(status),
+    retryCount: numberAttribute(retryCount),
+  };
 
   return {
     eventID: "event-1",
@@ -73,17 +88,11 @@ function jobRecord(
     dynamodb: {
       ApproximateCreationDateTime: 1,
       Keys: { jobId: stringAttribute(jobId) },
-      NewImage: {
-        jobId: stringAttribute(jobId),
-        profileId: stringAttribute(profileId),
-        sourceFolderPath: stringAttribute(sourceFolderPath),
-        userId: stringAttribute(userId),
-        status: stringAttribute(status),
-        retryCount: numberAttribute(retryCount),
-      },
+      ...(image === "new" ? { NewImage: itemImage } : {}),
+      ...(image === "old" ? { OldImage: itemImage } : {}),
       SequenceNumber: sequenceNumber,
       SizeBytes: 26,
-      StreamViewType: "NEW_IMAGE",
+      StreamViewType: image === "old" ? "NEW_AND_OLD_IMAGES" : "NEW_IMAGE",
     },
     eventSourceARN:
       "arn:aws:dynamodb:eu-west-2:123456789012:table/petroglyph-sync-jobs-test/stream/2026-08-18T00:00:00.000",
@@ -147,7 +156,12 @@ describe("sync-relay handler", () => {
     const result = await handler(
       makeEvent([
         jobRecord({ eventName: "MODIFY", sequenceNumber: "101" }),
-        jobRecord({ eventName: "REMOVE", status: "completed", sequenceNumber: "102" }),
+        jobRecord({
+          eventName: "REMOVE",
+          image: "old",
+          status: "completed",
+          sequenceNumber: "102",
+        }),
       ]),
     );
 
@@ -206,7 +220,7 @@ describe("sync-relay handler", () => {
 
     const before = Math.floor(Date.now() / 1000);
     const result = await handler(
-      makeEvent([jobRecord({ eventName: "REMOVE", sequenceNumber: "400" })]),
+      makeEvent([jobRecord({ eventName: "REMOVE", image: "old", sequenceNumber: "400" })]),
     );
     const after = Math.floor(Date.now() / 1000);
 
@@ -240,9 +254,14 @@ describe("sync-relay handler", () => {
 
     const result = await handler(
       makeEvent([
-        jobRecord({ eventName: "REMOVE", status: "running", sequenceNumber: "401" }),
-        jobRecord({ eventName: "REMOVE", status: "completed", sequenceNumber: "402" }),
-        jobRecord({ eventName: "REMOVE", status: "failed", sequenceNumber: "403" }),
+        jobRecord({ eventName: "REMOVE", image: "old", status: "running", sequenceNumber: "401" }),
+        jobRecord({
+          eventName: "REMOVE",
+          image: "old",
+          status: "completed",
+          sequenceNumber: "402",
+        }),
+        jobRecord({ eventName: "REMOVE", image: "old", status: "failed", sequenceNumber: "403" }),
       ]),
     );
 
@@ -258,6 +277,7 @@ describe("sync-relay handler", () => {
       makeEvent([
         jobRecord({
           eventName: "REMOVE",
+          image: "old",
           userIdentity: null,
           sequenceNumber: "404",
         }),
@@ -273,7 +293,9 @@ describe("sync-relay handler", () => {
     mockDocSend.mockResolvedValue({});
 
     const result = await handler(
-      makeEvent([jobRecord({ eventName: "REMOVE", retryCount: 5, sequenceNumber: "405" })]),
+      makeEvent([
+        jobRecord({ eventName: "REMOVE", image: "old", retryCount: 5, sequenceNumber: "405" }),
+      ]),
     );
 
     expect(result.batchItemFailures).toEqual([]);
@@ -285,7 +307,9 @@ describe("sync-relay handler", () => {
     mockDocSend.mockResolvedValue({});
 
     const result = await handler(
-      makeEvent([jobRecord({ eventName: "REMOVE", retryCount: 4, sequenceNumber: "406" })]),
+      makeEvent([
+        jobRecord({ eventName: "REMOVE", image: "old", retryCount: 4, sequenceNumber: "406" }),
+      ]),
     );
 
     expect(result.batchItemFailures).toEqual([]);
@@ -300,10 +324,31 @@ describe("sync-relay handler", () => {
   it("skips TTL removals that are missing required fields", async () => {
     mockDocSend.mockResolvedValue({});
 
-    const record = jobRecord({ eventName: "REMOVE", sequenceNumber: "407" });
-    delete record.dynamodb?.NewImage?.["sourceFolderPath"];
+    const record = jobRecord({ eventName: "REMOVE", image: "old", sequenceNumber: "407" });
+    delete record.dynamodb?.OldImage?.["sourceFolderPath"];
 
     const result = await handler(makeEvent([record]));
+
+    expect(result.batchItemFailures).toEqual([]);
+    expect(mockSqsSend).not.toHaveBeenCalled();
+    expect(mockDocSend).not.toHaveBeenCalled();
+  });
+
+  it("does not fire the retry backstop for REMOVE records without an OldImage", async () => {
+    mockDocSend.mockResolvedValue({});
+
+    // A REMOVE record from a NEW_IMAGE-only stream carries no item image, and
+    // an item fabricated into NewImage (as the pre-fix tests did) is not the
+    // pre-deletion image either: under NEW_AND_OLD_IMAGES only OldImage carries
+    // the removed job. Neither must re-create anything.
+    const noImageRecord = jobRecord({ eventName: "REMOVE", image: "none", sequenceNumber: "408" });
+    const newImageOnlyRecord = jobRecord({
+      eventName: "REMOVE",
+      image: "new",
+      sequenceNumber: "409",
+    });
+
+    const result = await handler(makeEvent([noImageRecord, newImageOnlyRecord]));
 
     expect(result.batchItemFailures).toEqual([]);
     expect(mockSqsSend).not.toHaveBeenCalled();

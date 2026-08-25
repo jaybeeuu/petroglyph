@@ -68,11 +68,11 @@ interface RemovedJob extends SyncJobMessage {
   retryCount: number;
 }
 
-function parseRemovedJob(newImage: { [key: string]: AttributeValue }): RemovedJob | null {
-  const jobId = stringValue(newImage["jobId"]);
-  const profileId = stringValue(newImage["profileId"]);
-  const sourceFolderPath = stringValue(newImage["sourceFolderPath"]);
-  const userId = stringValue(newImage["userId"]);
+function parseRemovedJob(image: { [key: string]: AttributeValue }): RemovedJob | null {
+  const jobId = stringValue(image["jobId"]);
+  const profileId = stringValue(image["profileId"]);
+  const sourceFolderPath = stringValue(image["sourceFolderPath"]);
+  const userId = stringValue(image["userId"]);
 
   if (!jobId || !profileId || !sourceFolderPath || !userId) {
     return null;
@@ -83,7 +83,7 @@ function parseRemovedJob(newImage: { [key: string]: AttributeValue }): RemovedJo
     profileId,
     sourceFolderPath,
     userId,
-    retryCount: numberValue(newImage["retryCount"]) ?? 0,
+    retryCount: numberValue(image["retryCount"]) ?? 0,
   };
 }
 
@@ -131,14 +131,15 @@ async function recreateQueuedJob(job: RemovedJob): Promise<void> {
 
 async function relayJob(record: DynamoDBRecord): Promise<void> {
   if (isTtlRemoval(record)) {
-    // With stream_view_type=NEW_IMAGE, a TTL REMOVE record carries the
-    // pre-deletion item in NewImage (regular deletes have no item image).
-    const newImage = record.dynamodb?.NewImage;
-    if (!newImage) {
+    // With stream_view_type=NEW_AND_OLD_IMAGES, a TTL REMOVE record carries the
+    // pre-deletion item in OldImage. (A NEW_IMAGE-only stream emits no item
+    // image on REMOVE at all, so there is nothing to read here.)
+    const oldImage = record.dynamodb?.OldImage;
+    if (!oldImage) {
       return;
     }
 
-    const removedJob = parseRemovedJob(newImage);
+    const removedJob = parseRemovedJob(oldImage);
     if (!removedJob) {
       console.warn("[sync-relay] skipping TTL removal with missing or invalid job fields");
       return;
@@ -147,7 +148,7 @@ async function relayJob(record: DynamoDBRecord): Promise<void> {
     // TTL deletions of running/completed/failed records are routine cleanup:
     // running is ambiguous (double-run risk), the others have their own
     // retention windows. Only a queued job is re-created.
-    if (stringValue(newImage["status"]) !== "queued") {
+    if (stringValue(oldImage["status"]) !== "queued") {
       return;
     }
 
