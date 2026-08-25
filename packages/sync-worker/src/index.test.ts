@@ -645,4 +645,161 @@ describe("sync-worker handler", () => {
     );
     expect(completionUpdate).toBeDefined();
   });
+
+  it("sets a ~2 hour TTL expiry when claiming a job as running", async () => {
+    mockDocSend.mockImplementation((command: unknown) => {
+      if (command instanceof GetCommand) {
+        const tableName = command.input.TableName;
+        if (tableName === "petroglyph-refresh-tokens-test") {
+          return Promise.resolve({ Item: mockTokenRecord() });
+        }
+        if (tableName === "petroglyph-delta-tokens-test") {
+          return Promise.resolve({ Item: undefined });
+        }
+      }
+      if (command instanceof PutCommand || command instanceof UpdateCommand) {
+        return Promise.resolve({});
+      }
+      return Promise.resolve({});
+    });
+
+    mockSqsSend.mockResolvedValue({});
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          value: [],
+          "@odata.deltaLink":
+            "https://graph.microsoft.com/v1.0/me/drive/root:/OnyxBoox:/delta?token=delta-token-ttl-1",
+        }),
+    });
+
+    const before = Math.floor(Date.now() / 1000);
+    await handler(
+      makeEvent({
+        jobId: "job-ttl-claim",
+        profileId: "profile-ttl",
+        sourceFolderPath: "OnyxBoox",
+        userId: "user-42",
+      }),
+    );
+    const after = Math.floor(Date.now() / 1000);
+
+    const claimUpdate = mockDocSend.mock.calls.find(
+      ([command]) =>
+        command instanceof UpdateCommand &&
+        command.input.TableName === "petroglyph-sync-jobs-test" &&
+        command.input.ExpressionAttributeValues?.[":status"] === "running",
+    );
+    expect(claimUpdate).toBeDefined();
+    const [claimCommand] = claimUpdate as unknown as [
+      { input: { ExpressionAttributeValues: { ":expiresAt": number } } },
+    ];
+    const runningTtlSeconds = claimCommand.input.ExpressionAttributeValues[":expiresAt"];
+    expect(runningTtlSeconds).toBeGreaterThanOrEqual(before + 2 * 60 * 60 - 1);
+    expect(runningTtlSeconds).toBeLessThanOrEqual(after + 2 * 60 * 60 + 1);
+  });
+
+  it("sets a ~7 day TTL expiry when completing a job", async () => {
+    mockDocSend.mockImplementation((command: unknown) => {
+      if (command instanceof GetCommand) {
+        const tableName = command.input.TableName;
+        if (tableName === "petroglyph-refresh-tokens-test") {
+          return Promise.resolve({ Item: mockTokenRecord() });
+        }
+        if (tableName === "petroglyph-delta-tokens-test") {
+          return Promise.resolve({ Item: undefined });
+        }
+      }
+      if (command instanceof PutCommand || command instanceof UpdateCommand) {
+        return Promise.resolve({});
+      }
+      return Promise.resolve({});
+    });
+
+    mockSqsSend.mockResolvedValue({});
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          value: [],
+          "@odata.deltaLink":
+            "https://graph.microsoft.com/v1.0/me/drive/root:/OnyxBoox:/delta?token=delta-token-ttl-2",
+        }),
+    });
+
+    const before = Math.floor(Date.now() / 1000);
+    await handler(
+      makeEvent({
+        jobId: "job-ttl-complete",
+        profileId: "profile-ttl",
+        sourceFolderPath: "OnyxBoox",
+        userId: "user-42",
+      }),
+    );
+    const after = Math.floor(Date.now() / 1000);
+
+    const completionUpdate = mockDocSend.mock.calls.find(
+      ([command]) =>
+        command instanceof UpdateCommand &&
+        command.input.TableName === "petroglyph-sync-jobs-test" &&
+        command.input.ExpressionAttributeValues?.[":status"] === "completed",
+    );
+    expect(completionUpdate).toBeDefined();
+    const [completionCommand] = completionUpdate as unknown as [
+      { input: { ExpressionAttributeValues: { ":expiresAt": number } } },
+    ];
+    const completedTtlSeconds = completionCommand.input.ExpressionAttributeValues[":expiresAt"];
+    expect(completedTtlSeconds).toBeGreaterThanOrEqual(before + 7 * 24 * 60 * 60 - 1);
+    expect(completedTtlSeconds).toBeLessThanOrEqual(after + 7 * 24 * 60 * 60 + 1);
+  });
+
+  it("sets a ~90 day TTL expiry when failing a job", async () => {
+    mockDocSend.mockImplementation((command: unknown) => {
+      if (command instanceof GetCommand) {
+        const tableName = command.input.TableName;
+        if (tableName === "petroglyph-refresh-tokens-test") {
+          return Promise.resolve({ Item: mockTokenRecord() });
+        }
+        if (tableName === "petroglyph-delta-tokens-test") {
+          return Promise.resolve({ Item: undefined });
+        }
+      }
+      if (command instanceof UpdateCommand) {
+        return Promise.resolve({});
+      }
+      return Promise.resolve({});
+    });
+
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+    });
+
+    const before = Math.floor(Date.now() / 1000);
+    await handler(
+      makeEvent({
+        jobId: "job-ttl-fail",
+        profileId: "profile-ttl",
+        sourceFolderPath: "OnyxBoox",
+        userId: "user-42",
+      }),
+    );
+    const after = Math.floor(Date.now() / 1000);
+
+    const failureUpdate = mockDocSend.mock.calls.find(
+      ([command]) =>
+        command instanceof UpdateCommand &&
+        command.input.TableName === "petroglyph-sync-jobs-test" &&
+        command.input.ExpressionAttributeValues?.[":status"] === "failed",
+    );
+    expect(failureUpdate).toBeDefined();
+    const [failureCommand] = failureUpdate as unknown as [
+      { input: { ExpressionAttributeValues: { ":expiresAt": number } } },
+    ];
+    const failedTtlSeconds = failureCommand.input.ExpressionAttributeValues[":expiresAt"];
+    expect(failedTtlSeconds).toBeGreaterThanOrEqual(before + 90 * 24 * 60 * 60 - 1);
+    expect(failedTtlSeconds).toBeLessThanOrEqual(after + 90 * 24 * 60 * 60 + 1);
+  });
 });
