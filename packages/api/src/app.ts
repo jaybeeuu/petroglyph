@@ -15,6 +15,7 @@ import { handleListProfiles, handleCreateProfile } from "./profiles.js";
 import { handleGetProfile, handlePutProfile, handleDeleteProfile } from "./profiles-crud.js";
 import { handleStatus } from "./status.js";
 import { handleSyncRun } from "./sync-run.js";
+import { handleSyncJobStatus } from "./sync-jobs.js";
 import { handleSyncReset } from "./sync-reset.js";
 import { docClient } from "./db.js";
 
@@ -109,6 +110,8 @@ app.post("/onedrive/lifecycle", (c) => handleOnedriveLifecycle(c));
 app.post("/sync/reset", (c) => handleSyncReset(c));
 
 app.post("/sync/run", (c) => handleSyncRun(c));
+
+app.get("/sync/jobs/:jobId", (c) => handleSyncJobStatus(c));
 
 app.use("/onedrive/*", (c, next) =>
   // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
