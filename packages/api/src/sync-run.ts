@@ -50,6 +50,7 @@ async function createSyncJob(
   profileId: string,
   sourceFolderPath: string,
 ): Promise<void> {
+  const createdAt = new Date().toISOString();
   await docClient.send(
     new PutCommand({
       TableName: syncJobsTableName(),
@@ -59,7 +60,12 @@ async function createSyncJob(
         profileId,
         sourceFolderPath,
         status: "queued",
-        createdAt: new Date().toISOString(),
+        createdAt,
+        // DynamoDB TTL expects epoch seconds. A healthy job is picked up within
+        // ~5-30s, so 5 minutes is a ~10x margin: stuck jobs are chopped (and
+        // retried via the relay backstop) without ever chopping healthy ones.
+        expiresAt: Math.floor(new Date(createdAt).getTime() / 1000) + 5 * 60,
+        retryCount: 0,
       },
     }),
   );

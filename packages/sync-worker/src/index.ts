@@ -6,6 +6,17 @@ import { docClient } from "./db.js";
 
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 
+// TTL durations for sync_jobs records, in epoch seconds (DynamoDB TTL expects
+// seconds since epoch). queued jobs are chopped by TTL after 5 minutes as the
+// failure detector + retry trigger; the relay re-creates them on REMOVE.
+const RUNNING_JOB_TTL_SECONDS = 2 * 60 * 60;
+const COMPLETED_JOB_TTL_SECONDS = 7 * 24 * 60 * 60;
+const FAILED_JOB_TTL_SECONDS = 90 * 24 * 60 * 60;
+
+function nowEpochSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
 const sqsClient = new SQSClient({});
 
 function fileRecordsTableName(): string {
@@ -334,12 +345,15 @@ async function updateSyncJobStatus(
 ): Promise<void> {
   const updateExpression =
     status === "completed"
-      ? "SET #status = :status, fileCount = :fileCount, updatedAt = :updatedAt"
-      : "SET #status = :status, errorMessage = :errorMessage, updatedAt = :updatedAt";
+      ? "SET #status = :status, fileCount = :fileCount, updatedAt = :updatedAt, expiresAt = :expiresAt"
+      : "SET #status = :status, errorMessage = :errorMessage, updatedAt = :updatedAt, expiresAt = :expiresAt";
 
   const expressionAttributeValues: { [key: string]: unknown } = {
     ":status": status,
     ":updatedAt": new Date().toISOString(),
+    ":expiresAt":
+      nowEpochSeconds() +
+      (status === "completed" ? COMPLETED_JOB_TTL_SECONDS : FAILED_JOB_TTL_SECONDS),
   };
 
   if (status === "completed" && metadata?.fileCount !== undefined) {
@@ -401,7 +415,7 @@ async function claimSyncJob(jobId: string): Promise<boolean> {
       new UpdateCommand({
         TableName: syncJobsTableName(),
         Key: { jobId },
-        UpdateExpression: "SET #status = :status, startedAt = :startedAt",
+        UpdateExpression: "SET #status = :status, startedAt = :startedAt, expiresAt = :expiresAt",
         ConditionExpression: "#status = :queued OR #status = :failed",
         ExpressionAttributeNames: { "#status": "status" },
         ExpressionAttributeValues: {
@@ -409,6 +423,7 @@ async function claimSyncJob(jobId: string): Promise<boolean> {
           ":queued": "queued",
           ":failed": "failed",
           ":startedAt": new Date().toISOString(),
+          ":expiresAt": nowEpochSeconds() + RUNNING_JOB_TTL_SECONDS,
         },
       }),
     );
