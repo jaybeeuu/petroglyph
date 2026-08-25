@@ -18,6 +18,13 @@ const isJwtPayload = isObject({
   exp: is("number"),
 });
 
+/** Delay between sync job status polls, growing by backoff up to SYNC_POLL_MAX_DELAY_MS. */
+export const SYNC_POLL_INITIAL_DELAY_MS = 2_000;
+/** Maximum delay between sync job status polls once backoff saturates. */
+export const SYNC_POLL_MAX_DELAY_MS = 30_000;
+/** Total wall-clock budget for syncing before syncNow gives up, so the UI cannot hang. */
+export const SYNC_POLL_TIMEOUT_MS = 5 * 60 * 1000;
+
 function decodeJwtExpiry(jwt: string): number {
   const parts = jwt.split(".");
   if (parts.length !== 3) {
@@ -52,8 +59,9 @@ export class PetroglyphPlugin extends Plugin {
     }
   }
   /**
-   * Manually trigger a sync: POST /sync/run, then page GET /files/changes until nextToken is null.
-   * Shows a notice on completion or error.
+   * Manually trigger a sync: POST /sync/run, poll the job status until completed or failed
+   * (bounded backoff and timeout), then page GET /files/changes until nextToken is null.
+   * Shows a notice on completion, failure, or timeout.
    */
   async syncNow(): Promise<void> {
     if (this._data.jwt === undefined || !this._data.oneDriveConnected) {
@@ -70,8 +78,23 @@ export class PetroglyphPlugin extends Plugin {
         new Notice("Sync failed: could not start sync");
         return;
       }
-      // Now page GET /files/changes until nextToken is null
-      const profileId = DEFAULT_PROFILE_ID;
+      const runBody: unknown = await runResp.json();
+      if (!isRecord(runBody) || !hasStringProp(runBody, "jobId")) {
+        new Notice("Sync failed: invalid sync start response");
+        return;
+      }
+      new Notice("Sync started");
+      const job = await this.pollSyncJob(runBody.jobId, headers);
+      if (job === null) {
+        new Notice("Sync failed: timed out waiting for sync to complete");
+        return;
+      }
+      if (job.status === "failed") {
+        new Notice(job.error !== undefined ? `Sync failed: ${job.error}` : "Sync failed");
+        return;
+      }
+      // Job completed; page GET /files/changes until nextToken is null
+      const profileId = this.resolveProfileId();
       let afterToken = this._data.changeTokens?.[profileId];
       let hasMore = true;
       while (hasMore) {
@@ -115,6 +138,57 @@ export class PetroglyphPlugin extends Plugin {
     } catch {
       new Notice("Sync failed: network or server error");
     }
+  }
+
+  /**
+   * Poll GET /sync/jobs/:jobId until the job is completed or failed, with exponential backoff
+   * and a hard timeout. Resolves with the job's terminal status (and error message when failed),
+   * or null if the job never finished before the timeout.
+   */
+  private pollSyncJob(
+    jobId: string,
+    headers: { [key: string]: string },
+  ): Promise<{ status: "completed" | "failed"; error?: string } | null> {
+    return new Promise((resolve) => {
+      const startedAt = Date.now();
+      let attempt = 0;
+      const tick = async (): Promise<void> => {
+        attempt += 1;
+        try {
+          const resp = await fetch(`${this._data.apiBaseUrl}/sync/jobs/${jobId}`, { headers });
+          if (resp.ok) {
+            const body: unknown = await resp.json();
+            if (isRecord(body) && typeof body["status"] === "string") {
+              const status = body["status"];
+              if (status === "completed" || status === "failed") {
+                const error = typeof body["error"] === "string" ? body["error"] : undefined;
+                resolve({ status, ...(error !== undefined ? { error } : {}) });
+                return;
+              }
+            }
+          }
+        } catch {
+          // Network errors are ignored; polling retries until the timeout.
+        }
+        if (Date.now() - startedAt >= SYNC_POLL_TIMEOUT_MS) {
+          resolve(null);
+          return;
+        }
+        const delayMs = Math.min(
+          SYNC_POLL_INITIAL_DELAY_MS * 2 ** (attempt - 1),
+          SYNC_POLL_MAX_DELAY_MS,
+        );
+        this._syncPollTimeoutId = window.setTimeout(() => {
+          void tick();
+        }, delayMs);
+      };
+      void tick();
+    });
+  }
+
+  /** The profile whose change token and files/changes paging are used; falls back to "default". */
+  private resolveProfileId(): string {
+    return this._data.activeProfileId ?? DEFAULT_PROFILE_ID;
   }
 
   /**
@@ -207,6 +281,7 @@ export class PetroglyphPlugin extends Plugin {
   private _refreshTimeoutId: number | null = null;
   private _statusPollIntervalId: number | null = null;
   private _syncPollIntervalId: number | null = null;
+  private _syncPollTimeoutId: number | null = null;
   private _settingTab: PetroglyphSettingTab | null = null;
 
   get data(): Readonly<PluginData> {
@@ -225,6 +300,10 @@ export class PetroglyphPlugin extends Plugin {
     if (this._syncPollIntervalId !== null) {
       window.clearInterval(this._syncPollIntervalId);
       this._syncPollIntervalId = null;
+    }
+    if (this._syncPollTimeoutId !== null) {
+      window.clearTimeout(this._syncPollTimeoutId);
+      this._syncPollTimeoutId = null;
     }
     const {
       jwt: _j,
@@ -309,7 +388,7 @@ export class PetroglyphPlugin extends Plugin {
     if (this._data.jwt === undefined || !this._data.oneDriveConnected) return;
 
     try {
-      const profileId = DEFAULT_PROFILE_ID;
+      const profileId = this.resolveProfileId();
       let afterToken = this._data.changeTokens?.[profileId];
       let hasMore = true;
 
@@ -486,6 +565,10 @@ export class PetroglyphPlugin extends Plugin {
     if (this._syncPollIntervalId !== null) {
       window.clearInterval(this._syncPollIntervalId);
       this._syncPollIntervalId = null;
+    }
+    if (this._syncPollTimeoutId !== null) {
+      window.clearTimeout(this._syncPollTimeoutId);
+      this._syncPollTimeoutId = null;
     }
   }
 
