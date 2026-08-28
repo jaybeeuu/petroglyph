@@ -89,3 +89,30 @@ resource "aws_dynamodb_table" "delta_tokens" {
     environment = terraform.workspace
   }
 }
+
+resource "aws_dynamodb_table" "sync_jobs" {
+  name         = "petroglyph-sync-jobs-${terraform.workspace}"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "jobId"
+
+  attribute {
+    name = "jobId"
+    type = "S"
+  }
+
+  stream_enabled   = true
+  # NEW_AND_OLD_IMAGES keeps NewImage on INSERT (the relay fan-out path) and
+  # adds OldImage on REMOVE — the only place the relay's TTL-retry backstop can
+  # read the pre-deletion job (a NEW_IMAGE-only stream emits no item image on
+  # REMOVE). Changing StreamViewType is an in-place stream-spec update.
+  stream_view_type = "NEW_AND_OLD_IMAGES"
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
+  tags = {
+    environment = terraform.workspace
+  }
+}

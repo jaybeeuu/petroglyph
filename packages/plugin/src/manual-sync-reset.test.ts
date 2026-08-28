@@ -40,18 +40,23 @@ describe("PetroglyphPlugin manual sync/reset commands", () => {
     vi.clearAllMocks();
   });
 
-  it("syncNow calls POST /sync/run then pages GET /files/changes to completion", async () => {
+  it("syncNow posts /sync/run, polls the job to completion, then pages GET /files/changes", async () => {
     const plugin = await makePluginWithMocks({
       jwt: "jwt-token",
       oneDriveConnected: true,
       changeTokens: { default: undefined },
     });
     let syncRunCalled = false;
+    let jobPollCalls = 0;
     let filesChangesCalls = 0;
     global.fetch = vi.fn((...args) => {
       if (typeof args[0] === "string" && args[0].endsWith("/sync/run")) {
         syncRunCalled = true;
-        return Promise.resolve({ ok: true });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ jobId: "job-1" }) });
+      }
+      if (typeof args[0] === "string" && args[0].includes("/sync/jobs/")) {
+        jobPollCalls++;
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "completed" }) });
       }
       if (typeof args[0] === "string" && args[0].includes("/files/changes")) {
         filesChangesCalls++;
@@ -64,6 +69,7 @@ describe("PetroglyphPlugin manual sync/reset commands", () => {
     }) as unknown as typeof fetch;
     await plugin.syncNow();
     expect(syncRunCalled).toBe(true);
+    expect(jobPollCalls).toBe(1);
     expect(filesChangesCalls).toBe(1);
     expect(Notice).toHaveBeenCalledWith("Sync complete");
   });

@@ -951,6 +951,216 @@ describe("oauth/callback URI handler registration", () => {
   });
 });
 
+describe("syncNow async polling", () => {
+  let pollInitialDelayMs: number;
+  let pollMaxDelayMs: number;
+  let pollTimeoutMs: number;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+    const { SYNC_POLL_INITIAL_DELAY_MS, SYNC_POLL_MAX_DELAY_MS, SYNC_POLL_TIMEOUT_MS } =
+      await import("./main.js");
+    pollInitialDelayMs = SYNC_POLL_INITIAL_DELAY_MS;
+    pollMaxDelayMs = SYNC_POLL_MAX_DELAY_MS;
+    pollTimeoutMs = SYNC_POLL_TIMEOUT_MS;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("posts /sync/run, reads jobId, polls to completed, then pages /files/changes", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ jobId: "job-123" }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ status: "completed" }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ files: [], nextToken: null }),
+      });
+
+    const syncPromise = plugin.syncNow();
+    await syncPromise;
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/sync/run"),
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/sync/jobs/job-123"),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer jwt-token" }) as unknown as {
+          [key: string]: string;
+        },
+      }),
+    );
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/files/changes"),
+      expect.anything(),
+    );
+    expect(Notice).toHaveBeenCalledWith("Sync complete");
+  });
+
+  it("polls the job status again after the initial delay while queued", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ jobId: "job-123" }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ status: "queued" }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ status: "completed" }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ files: [], nextToken: null }),
+      });
+
+    const syncPromise = plugin.syncNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining("/files/changes"),
+      expect.anything(),
+    );
+    await vi.advanceTimersByTimeAsync(pollInitialDelayMs);
+    await syncPromise;
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/sync/jobs/job-123"),
+      expect.anything(),
+    );
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/files/changes"),
+      expect.anything(),
+    );
+    expect(Notice).toHaveBeenCalledWith("Sync complete");
+  });
+
+  it("shows an error notice with the job error when the job fails", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ jobId: "job-456" }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ status: "failed", error: "Graph delta walk failed" }),
+      });
+
+    const syncPromise = plugin.syncNow();
+    await syncPromise;
+
+    expect(Notice).toHaveBeenCalledWith("Sync failed: Graph delta walk failed");
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining("/files/changes"),
+      expect.anything(),
+    );
+  });
+
+  it("stops polling and shows a notice when the job times out", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ jobId: "job-123" }) })
+      .mockResolvedValue({ ok: true, json: () => Promise.resolve({ status: "queued" }) });
+
+    const syncPromise = plugin.syncNow();
+    await vi.advanceTimersByTimeAsync(pollTimeoutMs + pollMaxDelayMs);
+    await syncPromise;
+
+    expect(Notice).toHaveBeenCalledWith("Sync failed: timed out waiting for sync to complete");
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining("/files/changes"),
+      expect.anything(),
+    );
+  });
+
+  it("pages /files/changes with the active profile's profileId and token", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p2",
+      changeTokens: { p2: "after-p2" },
+    });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ jobId: "job-123" }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ status: "completed" }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            files: [
+              {
+                fileId: "file-1",
+                s3PresignedUrl: "https://s3.example.com/file.pdf",
+                filename: "note.pdf",
+                createdAt: "2026-04-11T10:00:00Z",
+              },
+            ],
+            nextToken: null,
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
+      });
+
+    const mockVault = {
+      adapter: {
+        exists: vi.fn(() => Promise.resolve(true)),
+        mkdir: vi.fn(() => Promise.resolve()),
+        writeBinary: vi.fn(() => Promise.resolve()),
+        write: vi.fn(() => Promise.resolve()),
+      },
+    };
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: mockVault };
+
+    const syncPromise = plugin.syncNow();
+    await syncPromise;
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/files/changes?after=after-p2"),
+      expect.anything(),
+    );
+    expect(plugin.data.changeTokens?.["p2"]).toBe("file-1");
+    expect(plugin.data.changeTokens?.["default"]).toBeUndefined();
+  });
+
+  it("shows a start notice after dispatching the job", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ jobId: "job-123" }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ status: "completed" }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ files: [], nextToken: null }),
+      });
+
+    const syncPromise = plugin.syncNow();
+    await syncPromise;
+
+    expect(Notice).toHaveBeenCalledWith("Sync started");
+  });
+});
+
 describe("sync poller", () => {
   beforeEach(() => {
     vi.clearAllMocks();
