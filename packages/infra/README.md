@@ -42,6 +42,12 @@ artifact bucket that Terraform needs before it can store its own state. It
 also uploads a placeholder Lambda zip so the first `terraform apply` has a
 valid S3 object to reference.
 
+The deploy IAM role and its managed policy (used by GitHub Actions CD) are
+also created here; both are defined in `scripts/bootstrap.sh`. On re-run the
+script converges the live policy to that checked-in document — if they drift
+it creates a new policy version, pruning the oldest ones to respect IAM's
+5-version limit.
+
 The script is idempotent — safe to re-run at any time.
 
 ```bash
