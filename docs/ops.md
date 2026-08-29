@@ -79,11 +79,11 @@ Before running `terraform apply` for the first time, the bootstrap resources mus
 
 This creates and verifies the following (bucket names embed your AWS account ID to guarantee global S3 uniqueness):
 
-| Resource       | Name pattern                               | Purpose                         |
-| -------------- | ------------------------------------------ | ------------------------------- |
-| S3 bucket      | `petroglyph-terraform-state-<ACCOUNT_ID>`  | Terraform remote state storage  |
-| DynamoDB table | `petroglyph-terraform-locks`               | Terraform state locking         |
-| S3 bucket      | `petroglyph-lambda-artifacts-<ACCOUNT_ID>` | Lambda deployment ZIP artifacts |
+| Resource           | Name pattern                                  | Purpose                                                                                |
+| ------------------ | --------------------------------------------- | -------------------------------------------------------------------------------------- |
+| S3 bucket          | `petroglyph-terraform-state-<ACCOUNT_ID>`     | Terraform remote state storage                                                         |
+| DynamoDB table     | `petroglyph-terraform-locks`                  | Terraform state locking                                                                |
+| S3 bucket          | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`    | Lambda deployment ZIP artifacts                                                        |
 | IAM managed policy | `petroglyph-github-actions-deploy-production` | Deploy role permissions; bootstrap.sh converges it to the checked-in document on drift |
 
 Once applied, the following values are needed as GitHub Actions secrets on the `production` environment for CD:
