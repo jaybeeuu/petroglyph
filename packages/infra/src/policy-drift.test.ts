@@ -49,6 +49,26 @@ function projectTableArns(bootstrapScript: string): string[] {
   return [...(statementMatch[1] ?? "").matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? "");
 }
 
+/** The Lambda actions in the LambdaProjectFunctions statement of the deploy-role policy. */
+function lambdaProjectFunctionsActions(bootstrapScript: string): string[] {
+  const statementMatch = bootstrapScript.match(
+    /"Sid"\s*:\s*"LambdaProjectFunctions"[\s\S]*?"Action"\s*:\s*\[([\s\S]*?)\]/,
+  );
+  if (statementMatch === null) {
+    throw new Error("LambdaProjectFunctions statement not found in bootstrap.sh");
+  }
+  return [...(statementMatch[1] ?? "").matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? "");
+}
+
+/** The lambda EventSourceMapping CRUD actions needed once sync-worker (SQS) and sync-relay (DynamoDB stream) are wired into CD. */
+const eventSourceMappingActions: string[] = [
+  "lambda:CreateEventSourceMapping",
+  "lambda:DeleteEventSourceMapping",
+  "lambda:GetEventSourceMapping",
+  "lambda:ListEventSourceMappings",
+  "lambda:UpdateEventSourceMapping",
+];
+
 describe("deploy-role DynamoDbProjectTables policy", () => {
   const declaredTables = productionTableNames(readInfraFile("dynamodb.tf"));
   const policyTableArns = projectTableArns(readScript("bootstrap.sh"));
@@ -68,5 +88,13 @@ describe("deploy-role DynamoDbProjectTables policy", () => {
 
   it.each(declaredTables)("covers the %s table in the deploy-role policy", (tableName) => {
     expect(policyTableArns).toContain(`arn:aws:dynamodb:eu-west-2:${accountId}:table/${tableName}`);
+  });
+});
+
+describe("deploy-role LambdaProjectFunctions policy", () => {
+  const policyActions = lambdaProjectFunctionsActions(readScript("bootstrap.sh"));
+
+  it.each(eventSourceMappingActions)("covers the %s action", (action) => {
+    expect(policyActions).toContain(action);
   });
 });
