@@ -426,7 +426,7 @@ if $AWS iam get-policy --policy-arn "$POLICY_ARN" &>/dev/null; then
     --policy-arn "$POLICY_ARN" \
     --version-id "$DEFAULT_VERSION_ID" \
     --query 'PolicyVersion.Document' \
-    --output text)
+    --output json)
 
   # IAM may normalise whitespace and key order, so compare the documents
   # semantically (as parsed JSON) rather than as raw text.
