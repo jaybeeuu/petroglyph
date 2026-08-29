@@ -38,6 +38,19 @@ describe("infra script workflow split", () => {
       const script = readScript("bootstrap.sh");
       expect(script).not.toMatch(/^\s*(?:AWS_PROFILE=\S+\s+)?terraform\b/m);
     });
+
+    it("updates the deploy managed policy when the live version drifts", () => {
+      const script = readScript("bootstrap.sh");
+      expect(script).toMatch(/get-policy-version/);
+      expect(script).toMatch(/create-policy-version/);
+      expect(script).toMatch(/--set-as-default/);
+    });
+
+    it("prunes the oldest policy versions to stay under the IAM limit", () => {
+      const script = readScript("bootstrap.sh");
+      expect(script).toMatch(/list-policy-versions/);
+      expect(script).toMatch(/delete-policy-version/);
+    });
   });
 
   describe("tf-apply.sh", () => {
