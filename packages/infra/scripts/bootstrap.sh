@@ -271,7 +271,8 @@ POLICY_DOC=$(cat << EOF
         "dynamodb:TagResource",
         "dynamodb:UntagResource",
         "dynamodb:UpdateItem",
-        "dynamodb:UpdateTable"
+        "dynamodb:UpdateTable",
+        "dynamodb:UpdateTimeToLive"
       ],
       "Resource": [
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-terraform-locks",
