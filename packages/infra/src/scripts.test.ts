@@ -46,7 +46,7 @@ describe("infra script workflow split", () => {
       expect(script).toMatch(/--set-as-default/);
       // The live document is parsed as JSON by the drift check, so it must
       // be fetched in a parseable format (--output text flattens dicts and
-      // lists into a text table that json.load cannot read).
+      // lists into a text table that JSON.parse cannot read).
       expect(script).toMatch(
         /get-policy-version[\s\S]*--query 'PolicyVersion\.Document'[\s\S]*--output json/,
       );

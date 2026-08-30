@@ -430,15 +430,14 @@ if $AWS iam get-policy --policy-arn "$POLICY_ARN" &>/dev/null; then
 
   # IAM may normalise whitespace and key order, so compare the documents
   # semantically (as parsed JSON) rather than as raw text.
-  if ! python3 -c '
-import json
-import sys
+  if ! node --input-type=commonjs -e '
+const { isDeepStrictEqual } = require("node:util");
+const { readFileSync } = require("node:fs");
 
-generated = json.loads(sys.argv[1])
-live = json.load(sys.stdin)
-if isinstance(live, str):
-    live = json.loads(live)
-sys.exit(0 if generated == live else 1)
+const generated = JSON.parse(process.argv[1]);
+let live = JSON.parse(readFileSync(0, "utf8"));
+if (typeof live === "string") live = JSON.parse(live);
+process.exit(isDeepStrictEqual(generated, live) ? 0 : 1);
 ' "$POLICY_DOC" <<< "$LIVE_POLICY_DOC"; then
     info "Deploy managed policy drifted from bootstrap.sh — creating a new version..."
 
