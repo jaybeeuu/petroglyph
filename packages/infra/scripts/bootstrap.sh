@@ -279,7 +279,8 @@ POLICY_DOC=$(cat << EOF
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-refresh-tokens-production",
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-profiles-production",
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-file-records-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-tokens-production"
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-tokens-production",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-jobs-production"
       ]
     },
     {
@@ -307,6 +308,11 @@ POLICY_DOC=$(cat << EOF
         "lambda:CreateFunctionUrlConfig",
         "lambda:UpdateFunctionUrlConfig",
         "lambda:DeleteFunctionUrlConfig",
+        "lambda:CreateEventSourceMapping",
+        "lambda:DeleteEventSourceMapping",
+        "lambda:GetEventSourceMapping",
+        "lambda:ListEventSourceMappings",
+        "lambda:UpdateEventSourceMapping",
         "lambda:TagResource",
         "lambda:UntagResource",
         "lambda:ListTags"
@@ -411,7 +417,56 @@ EOF
 )
 
 if $AWS iam get-policy --policy-arn "$POLICY_ARN" &>/dev/null; then
-  success "Deploy managed policy already exists"
+  DEFAULT_VERSION_ID=$($AWS iam get-policy \
+    --policy-arn "$POLICY_ARN" \
+    --query 'Policy.DefaultVersionId' \
+    --output text)
+
+  LIVE_POLICY_DOC=$($AWS iam get-policy-version \
+    --policy-arn "$POLICY_ARN" \
+    --version-id "$DEFAULT_VERSION_ID" \
+    --query 'PolicyVersion.Document' \
+    --output json)
+
+  # IAM may normalise whitespace and key order, so compare the documents
+  # semantically (as parsed JSON) rather than as raw text.
+  if ! node --input-type=commonjs -e '
+const { isDeepStrictEqual } = require("node:util");
+const { readFileSync } = require("node:fs");
+
+const generated = JSON.parse(process.argv[1]);
+let live = JSON.parse(readFileSync(0, "utf8"));
+if (typeof live === "string") live = JSON.parse(live);
+process.exit(isDeepStrictEqual(generated, live) ? 0 : 1);
+' "$POLICY_DOC" <<< "$LIVE_POLICY_DOC"; then
+    info "Deploy managed policy drifted from bootstrap.sh — creating a new version..."
+
+    # IAM allows at most 5 versions per policy. Delete the oldest
+    # non-default versions until there is room for the new one.
+    VERSION_COUNT=$($AWS iam list-policy-versions \
+      --policy-arn "$POLICY_ARN" \
+      --query 'length(Versions)' \
+      --output text)
+    while [[ "$VERSION_COUNT" -ge 5 ]]; do
+      OLDEST_VERSION_ID=$($AWS iam list-policy-versions \
+        --policy-arn "$POLICY_ARN" \
+        --query 'sort_by(Versions[?IsDefaultVersion==`false`], &CreationDate)[0].VersionId' \
+        --output text)
+      $AWS iam delete-policy-version \
+        --policy-arn "$POLICY_ARN" \
+        --version-id "$OLDEST_VERSION_ID"
+      info "Deleted old policy version $OLDEST_VERSION_ID"
+      VERSION_COUNT=$((VERSION_COUNT - 1))
+    done
+
+    $AWS iam create-policy-version \
+      --policy-arn "$POLICY_ARN" \
+      --policy-document "$POLICY_DOC" \
+      --set-as-default
+    success "Deploy managed policy updated to match bootstrap.sh"
+  else
+    success "Deploy managed policy already in sync with bootstrap.sh"
+  fi
 else
   info "Creating deploy managed policy..."
   $AWS iam create-policy \
