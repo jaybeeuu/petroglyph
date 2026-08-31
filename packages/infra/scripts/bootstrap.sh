@@ -323,6 +323,9 @@ POLICY_DOC=$(cat << EOF
         "lambda:DeleteEventSourceMapping",
         "lambda:GetEventSourceMapping",
         "lambda:ListEventSourceMappings",
+        "lambda:ListTags",
+        "lambda:TagResource",
+        "lambda:UntagResource",
         "lambda:UpdateEventSourceMapping"
       ],
       "Resource": "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:event-source-mapping:*"
