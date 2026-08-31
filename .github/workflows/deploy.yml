@@ -79,6 +79,10 @@ jobs:
         with:
           name: ingest-onedrive-zip
           path: packages/ingest-onedrive/lambda.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: processor-zip
+          path: packages/processor/lambda.zip
 
   deploy:
     needs: [package]
@@ -117,6 +121,10 @@ jobs:
         with:
           name: sync-relay-zip
           path: packages/sync-relay
+      - uses: actions/download-artifact@v4
+        with:
+          name: processor-zip
+          path: packages/processor
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -140,6 +148,11 @@ jobs:
         id: relay-artifact-hash
         run: |
           HASH=$(sha256sum packages/sync-relay/lambda.zip | cut -d' ' -f1)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+      - name: Compute processor lambda content hash
+        id: processor-artifact-hash
+        run: |
+          HASH=$(sha256sum packages/processor/lambda.zip | cut -d' ' -f1)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
       - name: Upload lambda zip to S3
         run: |
@@ -173,6 +186,14 @@ jobs:
           else
             aws s3 cp packages/sync-relay/lambda.zip s3://${{ secrets.LAMBDA_ARTIFACT_BUCKET }}/$KEY
           fi
+      - name: Upload processor lambda zip to S3
+        run: |
+          KEY="processor-${{ steps.processor-artifact-hash.outputs.hash }}.zip"
+          if aws s3api head-object --bucket ${{ secrets.LAMBDA_ARTIFACT_BUCKET }} --key "$KEY" 2>/dev/null; then
+            echo "Artifact already exists at $KEY — skipping upload"
+          else
+            aws s3 cp packages/processor/lambda.zip s3://${{ secrets.LAMBDA_ARTIFACT_BUCKET }}/$KEY
+          fi
       - uses: hashicorp/setup-terraform@v4
       - name: Terraform init
         working-directory: packages/infra
@@ -199,6 +220,8 @@ jobs:
             -var="sync_worker_zip_s3_key=sync-worker-${{ steps.worker-artifact-hash.outputs.hash }}.zip" \
             -var="sync_relay_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
             -var="sync_relay_zip_s3_key=sync-relay-${{ steps.relay-artifact-hash.outputs.hash }}.zip" \
+            -var="processor_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
+            -var="processor_zip_s3_key=processor-${{ steps.processor-artifact-hash.outputs.hash }}.zip" \
             -var="api_custom_domain=api.petroglyph.page"
       - name: Capture API function URL
         id: api-function-url
