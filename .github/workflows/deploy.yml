@@ -65,6 +65,14 @@ jobs:
       - run: pnpm package
       - uses: actions/upload-artifact@v4
         with:
+          name: sync-worker-zip
+          path: packages/sync-worker/lambda.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sync-relay-zip
+          path: packages/sync-relay/lambda.zip
+      - uses: actions/upload-artifact@v4
+        with:
           name: lambda-zip
           path: packages/api/lambda.zip
       - uses: actions/upload-artifact@v4
