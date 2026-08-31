@@ -195,6 +195,10 @@ jobs:
             -var="api_zip_s3_key=lambda-${{ steps.artifact-hash.outputs.hash }}.zip" \
             -var="ingest_onedrive_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
             -var="ingest_onedrive_zip_s3_key=ingest-onedrive-${{ steps.ingest-artifact-hash.outputs.hash }}.zip" \
+            -var="sync_worker_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
+            -var="sync_worker_zip_s3_key=sync-worker-${{ steps.worker-artifact-hash.outputs.hash }}.zip" \
+            -var="sync_relay_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
+            -var="sync_relay_zip_s3_key=sync-relay-${{ steps.relay-artifact-hash.outputs.hash }}.zip" \
             -var="api_custom_domain=api.petroglyph.page"
       - name: Capture API function URL
         id: api-function-url
