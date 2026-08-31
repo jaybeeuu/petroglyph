@@ -20,6 +20,10 @@
 
 set -euo pipefail
 
+# Directory containing this script, so helper tools can be referenced
+# regardless of the working directory the script is invoked from.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ── Defaults ────────────────────────────────────────────────────────────────
 
 PROFILE="petroglyph-admin"
@@ -131,11 +135,7 @@ else
   cat > "$TMPDIR/index.js" << 'EOF'
 exports.handler = async () => ({ statusCode: 200, body: '{"status":"placeholder"}' });
 EOF
-  python3 -c "
-import zipfile, os
-with zipfile.ZipFile('$TMPDIR/lambda.zip', 'w') as z:
-    z.write('$TMPDIR/index.js', 'index.js')
-"
+  node "$SCRIPT_DIR/make-zip.mjs" "$TMPDIR/index.js" "$TMPDIR/lambda.zip"
   $AWS s3 cp "$TMPDIR/lambda.zip" "s3://$LAMBDA_ARTIFACT_BUCKET/$PLACEHOLDER_KEY"
   rm -rf "$TMPDIR"
   success "Placeholder zip uploaded"
