@@ -175,13 +175,17 @@ resource "aws_iam_role_policy" "petroglyph_processor_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "DynamoDBWriteFileRecords"
+        Sid    = "DynamoDBFileRecordsAndTokens"
         Effect = "Allow"
         Action = [
+          "dynamodb:GetItem",
           "dynamodb:PutItem",
           "dynamodb:UpdateItem",
         ]
-        Resource = local.file_records_table_arn
+        Resource = [
+          local.file_records_table_arn,
+          aws_dynamodb_table.refresh_tokens.arn,
+        ]
       },
       {
         Sid      = "S3PutObject"

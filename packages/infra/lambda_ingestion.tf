@@ -139,7 +139,8 @@ resource "aws_lambda_function" "petroglyph_processor" {
   environment {
     variables = {
       FILE_RECORDS_TABLE  = local.file_records_table_name
-      MICROSOFT_CLIENT_ID = aws_ssm_parameter.onedrive_client_id.value
+      REFRESH_TOKENS_TABLE = aws_dynamodb_table.refresh_tokens.name
+      MICROSOFT_CLIENT_ID = data.aws_ssm_parameter.onedrive_client_id.value
       STAGED_PDFS_BUCKET  = aws_s3_bucket.staged_pdfs.bucket
       STAGED_PDF_PREFIX   = "handwritten"
     }
