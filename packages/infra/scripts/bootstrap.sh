@@ -461,7 +461,7 @@ process.exit(isDeepStrictEqual(generated, live) ? 0 : 1);
     while [[ "$VERSION_COUNT" -ge 5 ]]; do
       OLDEST_VERSION_ID=$($AWS iam list-policy-versions \
         --policy-arn "$POLICY_ARN" \
-        --query 'sort_by(Versions[?IsDefaultVersion==`false`], &CreationDate)[0].VersionId' \
+        --query 'sort_by(Versions[?IsDefaultVersion==`false`], &CreateDate)[0].VersionId' \
         --output text)
       $AWS iam delete-policy-version \
         --policy-arn "$POLICY_ARN" \
