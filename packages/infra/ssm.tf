@@ -1,3 +1,11 @@
+# Read the live onedrive client id so Lambda env vars can be baked at plan time even
+# when terraform runs with -refresh=false. The underlying parameter is updated
+# manually (ignore_changes on the resource), so referencing the resource's stale
+# state value would bake PLACEHOLDER into env vars.
+data "aws_ssm_parameter" "onedrive_client_id" {
+  name = aws_ssm_parameter.onedrive_client_id.name
+}
+
 resource "aws_ssm_parameter" "github_client_id" {
   name  = "/petroglyph/github/client-id"
   type  = "SecureString"
