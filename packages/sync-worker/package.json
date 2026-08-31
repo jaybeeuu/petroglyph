@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node esbuild.config.mjs",
     "dev": "tsc -p tsconfig.build.json --watch",
     "lint": "eslint .",
+    "package": "bash scripts/package.sh",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
@@ -21,6 +22,7 @@
   "devDependencies": {
     "@types/aws-lambda": "^8.10.145",
     "@types/node": "^25.5.2",
+    "esbuild": "^0.28.0",
     "vitest": "^3.2.4"
   }
 }
