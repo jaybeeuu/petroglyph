@@ -309,16 +309,23 @@ POLICY_DOC=$(cat << EOF
         "lambda:CreateFunctionUrlConfig",
         "lambda:UpdateFunctionUrlConfig",
         "lambda:DeleteFunctionUrlConfig",
-        "lambda:CreateEventSourceMapping",
-        "lambda:DeleteEventSourceMapping",
-        "lambda:GetEventSourceMapping",
-        "lambda:ListEventSourceMappings",
-        "lambda:UpdateEventSourceMapping",
         "lambda:TagResource",
         "lambda:UntagResource",
         "lambda:ListTags"
       ],
       "Resource": "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-*"
+    },
+    {
+      "Sid": "LambdaEventSourceMappings",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:CreateEventSourceMapping",
+        "lambda:DeleteEventSourceMapping",
+        "lambda:GetEventSourceMapping",
+        "lambda:ListEventSourceMappings",
+        "lambda:UpdateEventSourceMapping"
+      ],
+      "Resource": "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:event-source-mapping:*"
     },
     {
       "Sid": "ManageProjectRoles",
