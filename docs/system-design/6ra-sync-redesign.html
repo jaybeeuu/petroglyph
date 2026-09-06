@@ -1,0 +1,2662 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Petroglyph — Sync redesign (6ra) — system sketch</title>
+    <style>
+      :root {
+        --bg: #0a0e16;
+        --panel: #101623;
+        --panel-2: #151d2e;
+        --card: #1a2236;
+        --card-2: #1f2940;
+        --line: #26324d;
+        --line-soft: #1e2940;
+        --text: #dbe4f5;
+        --muted: #8b97b3;
+        --faint: #5d6a86;
+        --accent-src: #2dd4bf; /* external sources        */
+        --accent-adapter: #f59e0b; /* one-drive adapter       */
+        --accent-reg: #38bdf8; /* business-event registry  */
+        --accent-staging: #a78bfa; /* s3 staging              */
+        --accent-core: #94a3b8; /* platform core            */
+        --accent-plugin: #34d399; /* plugin / vault           */
+        --st-discuss: #fb7185; /* decisions open           */
+        --st-locked: #34d399;
+        --st-research: #38bdf8;
+        --st-planned: #fbbf24;
+        --st-deferred: #64748b;
+        --radius: 16px;
+        --mono:
+          ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+        overflow-x: clip;
+      }
+      body {
+        margin: 0;
+        overflow-x: clip;
+        background:
+          radial-gradient(1200px 600px at 70% -10%, #15233f22, transparent 60%),
+          radial-gradient(900px 500px at -10% 30%, #1c2e5522, transparent 55%), var(--bg);
+        color: var(--text);
+        font:
+          14px/1.55 -apple-system,
+          "Segoe UI",
+          Roboto,
+          "Helvetica Neue",
+          Arial,
+          sans-serif;
+      }
+      .wrap {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 0 28px 80px;
+      }
+
+      /* ---------- header ---------- */
+      header.hero {
+        padding: 30px 0 18px;
+      }
+      header.hero h1 {
+        margin: 0;
+        font-size: 26px;
+        letter-spacing: 0.2px;
+      }
+      header.hero h1 .bead {
+        color: var(--accent-adapter);
+      }
+      header.hero .sub {
+        color: var(--muted);
+        margin: 6px 0 0;
+        max-width: 900px;
+      }
+      .src-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+      .src-chip {
+        font-size: 12px;
+        color: var(--muted);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 4px 12px;
+      }
+      .src-chip code {
+        color: var(--text);
+        font-family: var(--mono);
+        font-size: 11.5px;
+      }
+
+      /* ---------- tabs ---------- */
+      .tabs {
+        position: sticky;
+        top: 0;
+        z-index: 60;
+        display: flex;
+        gap: 6px;
+        padding: 10px 0 12px;
+        background: linear-gradient(var(--bg) 72%, transparent);
+        backdrop-filter: blur(6px);
+        border-bottom: 1px solid var(--line-soft);
+      }
+      .tab-btn {
+        font: inherit;
+        font-size: 13.5px;
+        color: var(--muted);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px 16px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        transition:
+          color 0.15s,
+          border-color 0.15s,
+          background 0.15s;
+      }
+      .tab-btn .n {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--faint);
+      }
+      .tab-btn:hover {
+        color: var(--text);
+        border-color: #3a4a6e;
+      }
+      .tab-btn.active {
+        color: #fff;
+        background: var(--card-2);
+        border-color: #4a5f8c;
+      }
+      .tab-btn.active .n {
+        color: var(--accent-reg);
+      }
+
+      .tab {
+        display: none;
+        padding-top: 18px;
+        animation: fade 0.25s ease;
+      }
+      .tab.active {
+        display: block;
+      }
+      @keyframes fade {
+        from {
+          opacity: 0;
+          transform: translateY(4px);
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      /* ---------- legend ---------- */
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        align-items: center;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 10px 16px;
+        margin: 4px 0 20px;
+        font-size: 12.5px;
+        color: var(--muted);
+      }
+      .legend .lg {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .legend b {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .sw {
+        width: 22px;
+        height: 0;
+        border-top: 2.5px solid currentColor;
+        display: inline-block;
+      }
+      .sw.dash {
+        border-top-style: dashed;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+
+      /* ---------- stage & arrow layer ---------- */
+      .stage {
+        position: relative;
+      }
+      svg.wire {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 0;
+        overflow: visible;
+      }
+      .wire path {
+        fill: none;
+      }
+      .wire-label {
+        position: absolute;
+        z-index: 2;
+        transform: translate(-50%, -50%);
+        font-size: 11px;
+        line-height: 1.3;
+        color: var(--muted);
+        background: #0c12208f;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 2px 9px;
+        max-width: 270px;
+        text-align: center;
+        backdrop-filter: blur(4px);
+        pointer-events: none;
+      }
+
+      /* ---------- flow sections / domains ---------- */
+      .domain {
+        position: relative;
+        z-index: 5;
+        background: linear-gradient(180deg, var(--panel-2), var(--panel));
+        border: 1px solid var(--line);
+        border-top: 3px solid var(--c, var(--accent-core));
+        border-radius: var(--radius);
+        padding: 14px 16px 16px;
+        margin: 26px 0;
+      }
+      .domain-head {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 4px;
+      }
+      .domain-title {
+        font-size: 17px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .domain-title .role {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--c);
+        border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
+        border-radius: 7px;
+        padding: 2px 9px;
+        letter-spacing: 0.4px;
+      }
+      .domain-title .pkg {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--faint);
+        font-weight: 500;
+      }
+      .domain-desc {
+        color: var(--muted);
+        margin: 6px 0 12px;
+        max-width: 1000px;
+      }
+      .domain-desc b {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .domain-desc .tt b {
+        border-bottom: 1px dashed var(--faint);
+      }
+
+      .meta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .bead-chip {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 2px 8px;
+        color: var(--muted);
+        background: #0d1322;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .bead-chip .bd {
+        color: var(--text);
+      }
+      .bead-chip .st {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--sc, var(--st-planned));
+      }
+
+      .status-label {
+        font-size: 11.5px;
+        color: var(--muted);
+        margin-top: 10px;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .status-label .dot {
+        width: 8px;
+        height: 8px;
+      }
+      .agg {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--faint);
+      }
+
+      /* ---------- component cards ---------- */
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 12px;
+        margin-top: 10px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--c, var(--accent-core));
+        border-radius: 12px;
+        padding: 11px 13px;
+        transition:
+          border-color 0.15s,
+          transform 0.15s,
+          box-shadow 0.15s;
+      }
+      .card:hover {
+        border-color: #37476b;
+        transform: translateY(-1px);
+        box-shadow: 0 6px 18px #00000055;
+      }
+      .card.discuss {
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-discuss) 35%, transparent);
+      }
+      .card-head {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .card-head .badge {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--faint);
+        margin-top: 3px;
+        white-space: nowrap;
+      }
+      .card-title {
+        font-size: 14px;
+        font-weight: 650;
+        line-height: 1.35;
+      }
+      .card-desc {
+        color: var(--muted);
+        font-size: 12.5px;
+        margin-top: 3px;
+      }
+      .caret {
+        margin-left: auto;
+        color: var(--faint);
+        transition: transform 0.2s;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+      .card.open .caret {
+        transform: rotate(90deg);
+        color: var(--text);
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .infra-chip {
+        font-size: 11px;
+        color: var(--muted);
+        background: #0e1526;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 2px 8px;
+      }
+      .infra-chip b {
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      .anno {
+        display: none;
+        border-top: 1px dashed var(--line);
+        margin-top: 11px;
+        padding-top: 10px;
+      }
+      .card.open .anno {
+        display: block;
+        animation: fade 0.2s ease;
+      }
+      .anno h5 {
+        margin: 10px 0 4px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: var(--faint);
+      }
+      .anno p,
+      .anno li {
+        font-size: 12.5px;
+        color: var(--muted);
+        margin: 0 0 6px;
+      }
+      .anno ul {
+        margin: 0 0 8px;
+        padding-left: 18px;
+      }
+      .anno li b {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .anno .openq {
+        color: var(--st-discuss);
+      }
+      .anno .openq li b {
+        color: var(--st-discuss);
+      }
+      .anno .todo {
+        color: var(--st-planned);
+      }
+      .anno .ken {
+        color: var(--st-locked);
+      }
+      .anno .ken li b {
+        color: var(--st-locked);
+      }
+      .anno .dies {
+        color: var(--st-discuss);
+      }
+      .anno .dies li b {
+        color: var(--st-discuss);
+      }
+      .opens-note {
+        font-size: 11.5px;
+        color: var(--st-discuss);
+        margin-top: 6px;
+      }
+
+      /* ---------- infrastructure nodes ---------- */
+      .infra-rail {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px dashed var(--line-soft);
+      }
+      .infra-rail .rail-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: var(--faint);
+        align-self: center;
+        margin-right: 4px;
+      }
+      .infra-node {
+        position: relative;
+        z-index: 5;
+        font-size: 11.5px;
+        color: var(--muted);
+        background: #0d1424;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 4px 10px 4px 26px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .infra-node .ic {
+        position: absolute;
+        left: 7px;
+        font-size: 13px;
+      }
+      .infra-node b {
+        color: var(--text);
+        font-weight: 600;
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+      .infra-node .why {
+        font-size: 11px;
+        color: var(--faint);
+      }
+
+      /* ---------- tooltips ---------- */
+      .tt {
+        position: relative;
+        cursor: help;
+      }
+      .tt::after {
+        content: attr(data-tip);
+        position: absolute;
+        z-index: 80;
+        left: 50%;
+        bottom: calc(100% + 8px);
+        transform: translateX(-50%) translateY(2px);
+        width: max-content;
+        max-width: 300px;
+        background: #0b1220f2;
+        border: 1px solid #33415f;
+        border-radius: 9px;
+        padding: 7px 11px;
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--text);
+        opacity: 0;
+        pointer-events: none;
+        transition:
+          opacity 0.12s,
+          transform 0.12s;
+        box-shadow: 0 8px 24px #0009;
+      }
+      .tt:hover::after {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+      }
+
+      /* ---------- package map ---------- */
+      .pkgmap {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px 6px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 16px;
+        margin-top: 26px;
+      }
+      .pkgmap .pm-head {
+        width: 100%;
+        font-size: 13px;
+        color: var(--text);
+        font-weight: 700;
+        letter-spacing: 0.3px;
+      }
+      .pkgmap .pm-sub {
+        width: 100%;
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: -6px;
+      }
+      .pkg {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--text);
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 7px 12px;
+        display: inline-flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .pkg .who {
+        font-family: inherit;
+        font-size: 10.5px;
+        color: var(--faint);
+      }
+      .pkg.new {
+        border-color: var(--accent-staging);
+        box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-staging) 30%, transparent);
+      }
+      .pkg.dead {
+        opacity: 0.45;
+        border-style: dashed;
+      }
+      .pkg-hop {
+        color: var(--faint);
+        font-family: var(--mono);
+        font-size: 13px;
+      }
+
+      /* ---------- bead chain ---------- */
+      .chain {
+        margin-top: 26px;
+      }
+      .chain .ch-head {
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        margin-bottom: 4px;
+      }
+      .chain .ch-sub {
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 12px;
+      }
+      .chain-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+      .chain-row .row-label {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--faint);
+        margin-right: 4px;
+      }
+      .mini {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--muted);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 4px 9px;
+        background: #0d1322;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+      }
+      .mini .st {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--sc, var(--st-planned));
+      }
+      .mini:hover {
+        border-color: #3a4a6e;
+      }
+      .arrow-sep {
+        color: var(--faint);
+        font-size: 12px;
+      }
+
+      /* ---------- reset map ---------- */
+      .table-scroll {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+      }
+      table.delta {
+        width: 100%;
+        min-width: 760px;
+        border-collapse: collapse;
+        margin: 0;
+        font-size: 13px;
+      }
+      table.delta th {
+        text-align: left;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: var(--faint);
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      table.delta td {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line-soft);
+        vertical-align: top;
+      }
+      table.delta tr:hover td {
+        background: #ffffff08;
+      }
+      table.delta .fate {
+        font-size: 12px;
+        border-radius: 7px;
+        padding: 2px 9px;
+        white-space: nowrap;
+      }
+      .fate.dies {
+        color: var(--st-discuss);
+        background: color-mix(in srgb, var(--st-discuss) 13%, transparent);
+        border: 1px solid color-mix(in srgb, var(--st-discuss) 35%, transparent);
+      }
+      .fate.superseded {
+        color: var(--st-planned);
+        background: color-mix(in srgb, var(--st-planned) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--st-planned) 35%, transparent);
+      }
+      .fate.kept {
+        color: var(--st-locked);
+        background: color-mix(in srgb, var(--st-locked) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--st-locked) 35%, transparent);
+      }
+      .fate.interim {
+        color: var(--st-research);
+        background: color-mix(in srgb, var(--st-research) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--st-research) 35%, transparent);
+      }
+      .fate.open {
+        color: var(--st-discuss);
+        background: color-mix(in srgb, var(--st-discuss) 13%, transparent);
+        border: 1px solid color-mix(in srgb, var(--st-discuss) 35%, transparent);
+      }
+      .fate.deferred {
+        color: var(--st-deferred);
+        background: color-mix(in srgb, var(--st-deferred) 13%, transparent);
+        border: 1px solid color-mix(in srgb, var(--st-deferred) 35%, transparent);
+      }
+      table.delta code,
+      .mono {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--text);
+      }
+      table.delta .land {
+        color: var(--muted);
+      }
+      table.delta .land code {
+        color: var(--accent-staging);
+      }
+
+      footer.src {
+        margin-top: 40px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line-soft);
+        color: var(--faint);
+        font-size: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 18px;
+      }
+      footer.src code {
+        font-family: var(--mono);
+      }
+
+      @media (max-width: 760px) {
+        .wrap {
+          padding: 0 14px 60px;
+        }
+        header.hero h1 {
+          font-size: 21px;
+        }
+        .cards {
+          grid-template-columns: 1fr;
+        }
+        .wire-label {
+          display: none;
+        } /* decorative; flow details live in the annotations */
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <!-- ================= header ================= -->
+      <header class="hero">
+        <h1>Petroglyph — Sync pipeline <span class="bead">6ra</span> redesign · system sketch</h1>
+        <p class="sub">
+          Server-side redesign <b>OneDrive → S3 → API</b>, per the locked design in
+          <code>6ra.5-redesign-decisions.md</code> (2026-09-01, amended 09-03). This sketch is a
+          live map for discussion: domains, their components and beads, the infrastructure each one
+          owns, and where decisions are still open. Hover any
+          <span class="tt" data-tip="Tooltips explain a single concept — hover me">· · ·</span>
+          underlined term, click any card to expand its annotation.
+        </p>
+        <div class="src-chips">
+          <span class="src-chip">bead <code>6ra</code> (epic · Sync)</span>
+          <span class="src-chip">bead <code>6ra.5</code> redesign (locked)</span>
+          <span class="src-chip">bead <code>6ra.6</code> comms-loop discovery (done)</span>
+          <span class="src-chip"
+            >beads <code>6ra.5.2.x</code> / <code>6ra.6.x</code> (build units)</span
+          >
+          <span class="src-chip">ground truth: <code>graph-comms-loop-discovery.md</code></span>
+        </div>
+      </header>
+
+      <!-- ================= tabs ================= -->
+      <nav class="tabs">
+        <button class="tab-btn active" data-tab="tab-redesigned">
+          <span class="n">01</span> Redesigned target
+        </button>
+        <button class="tab-btn" data-tab="tab-legacy">
+          <span class="n">02</span> Legacy (pre-reset)
+        </button>
+        <button class="tab-btn" data-tab="tab-reset">
+          <span class="n">03</span> Reset map — what dies
+        </button>
+      </nav>
+
+      <div class="legend">
+        <span class="lg"
+          ><span class="sw" style="color: var(--accent-reg)"></span> <b>solid</b> = runtime data
+          flow (events / calls)</span
+        >
+        <span class="lg"
+          ><span class="sw dash" style="color: var(--accent-core)"></span> <b>dashed</b> = package
+          (compile-time) dependency</span
+        >
+        <span class="lg"
+          ><span class="dot" style="background: var(--st-discuss)"></span> decisions open</span
+        >
+        <span class="lg"
+          ><span class="dot" style="background: var(--st-planned)"></span> planned / not
+          started</span
+        >
+        <span class="lg"
+          ><span class="dot" style="background: var(--st-locked)"></span> decided / locked</span
+        >
+        <span class="lg"
+          ><span class="dot" style="background: var(--st-research)"></span> research complete</span
+        >
+        <span class="lg"
+          ><span class="dot" style="background: var(--st-deferred)"></span> deferred</span
+        >
+      </div>
+
+      <!-- ============================================================
+       TAB 1 — REDESIGNED TARGET
+       ============================================================ -->
+      <section id="tab-redesigned" class="tab active">
+        <div class="stage" id="stage-redesigned">
+          <!-- external: source side -->
+          <div class="domain" style="--c: var(--accent-src)">
+            <div class="domain-head">
+              <div class="domain-title">Source side <span class="role">external</span></div>
+              <div class="meta-row">
+                <span class="bead-chip"
+                  ><span class="st" style="--sc: var(--st-deferred)"></span> not part of the
+                  redesign</span
+                >
+              </div>
+            </div>
+            <p class="domain-desc">
+              Everything upstream of the server. The redesign takes these contracts
+              <b>as given</b> — the whole point of <code>6ra.6</code> was to pin down how they
+              actually behave.
+            </p>
+            <div class="cards">
+              <div class="card" id="n-boox" style="--c: var(--accent-src)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">device</span>
+                  <div>
+                    <div class="card-title">Onyx Boox Note Air 5C</div>
+                    <div class="card-desc">
+                      Saves handwritten notes as PDF, auto-syncs to OneDrive.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <p>
+                    Source of truth for the *source*. No server-side behaviour depends on the device
+                    itself — Only the OneDrive folder content matters.
+                  </p>
+                </div>
+              </div>
+              <div class="card" id="n-od" style="--c: var(--accent-src)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">external</span>
+                  <div>
+                    <div class="card-title">OneDrive + Microsoft Graph</div>
+                    <div class="card-desc">
+                      Drive-root subscription · delta verb · delegated OAuth.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Ground truth (6ra.6, research complete)</h5>
+                  <ul class="ken">
+                    <li>
+                      <b>Webhooks carry no change info</b> — no item id, no changeType, no
+                      resourceData. Verbatim: “the notification doesn’t include any information
+                      about the changes… use the delta verb”. The bell-only contract.
+                    </li>
+                    <li>
+                      <b>Delta is the data path</b>: first call = full enumeration; page
+                      <code>@odata.nextLink</code> → <code>@odata.deltaLink</code>; opaque tokens;
+                      <code>deleted:{}</code> facet; <code>410 Gone</code> /
+                      <code>syncStateNotFound</code> ⇒ full resync.
+                    </li>
+                    <li>
+                      <b>Subscriptions expire (~3 days</b> driveItem); renew via PATCH before
+                      expiry; 404 on renew ⇒ recreate (the only removal detector).
+                    </li>
+                    <li>
+                      <b>Latency avg &lt;1 min, max 6 hours</b> ⇒ periodic catch-up sync is the
+                      reliability net, not optional.
+                    </li>
+                    <li>
+                      Personal OneDrive: root or subfolder subscriptions · OneDrive for Business:
+                      <b>root only</b>. No file-level subscriptions.
+                    </li>
+                    <li>
+                      Auth: delegated <code>files.readwrite offline_access</code>, refresh-token
+                      rotation.
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- domain: one-drive adapter -->
+          <div class="domain" id="dom-adapter" style="--c: var(--accent-adapter)">
+            <div class="domain-head">
+              <div class="domain-title">
+                OneDrive Source Adapter <span class="role">Unit 1 · source domain</span>
+                <span class="pkg">@petroglyph/ingest-onedrive</span>
+              </div>
+              <div class="meta-row">
+                <span class="bead-chip"><span class="bd">6ra.5.1</span> umbrella</span>
+                <span class="bead-chip"><span class="bd">6ra.6.1–6.6.5</span></span>
+                <span class="bead-chip"><span class="bd">6ra.5.1.1</span> glue</span>
+              </div>
+            </div>
+            <p class="domain-desc">
+              The <b>single home for all OneDrive/Graph knowledge</b>: OAuth, subscriptions,
+              webhook, delta walk, and the
+              <b
+                class="tt"
+                data-tip="The adapter-owned routine that turns delta change events into staged facts: Graph /content fetch → PDF gate → staging-lib land() → emit events."
+                >fetch + gate + land</b
+              >
+              routine. It talks to the outside world and emits <b>facts</b> (business events) to the
+              central registry — it never pushes into another domain’s queue. This domain owns the
+              <b>/onedrive/*</b>
+              surface the plugin talks to for anything source-specific.
+            </p>
+            <div class="status-label">
+              <span class="dot" style="background: var(--st-discuss)"></span> 1 component with open
+              decisions <span class="agg">· 6ra.6.1</span> &nbsp;|&nbsp;
+              <span class="dot" style="background: var(--st-planned)"></span> 5 planned
+              (descriptions only) <span class="agg">· 6.6.2–6.6.5, 5.1.1</span>
+            </div>
+
+            <div class="cards">
+              <!-- 6.6.1 tokens -->
+              <div class="card discuss" id="n-tok" style="--c: var(--accent-adapter)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">6ra.6.1</span>
+                  <div>
+                    <div class="card-title">
+                      Account &amp; token management
+                      <span
+                        class="tt"
+                        data-tip="Decisions open — plan drafted, awaiting user reaction"
+                        >🔴</span
+                      >
+                    </div>
+                    <div class="card-desc">
+                      Single home for delegated OAuth + per-profile token lifecycle.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <p>
+                    Auth URL + token exchange (redirect flow), refresh-token rotation on every
+                    refresh, &lt;10 min expiry threshold,
+                    <b
+                      class="tt"
+                      data-tip="CAS = compare-and-swap conditional write, so concurrent refreshes can’t clobber each other"
+                      >CAS</b
+                    >
+                    token storage keyed by <code>profileId</code>, Bearer injection into every Graph
+                    call (401 → re-resolve → retry once).
+                  </p>
+                  <h5>Kills</h5>
+                  <ul class="dies">
+                    <li>
+                      <b>3 duplicate token copies</b>: api/onedrive-middleware, sync-worker,
+                      processor → one home here.
+                    </li>
+                  </ul>
+                  <h5>Consumers (provides for)</h5>
+                  <p>6.6.2 subscriptions · 6.6.3 delta · 6.6.5 surface · 5.1.1 fetch+gate+land.</p>
+                  <h5 class="openq" style="color: var(--st-discuss)">
+                    Open decisions (6 questions — 6ra.6.1)
+                  </h5>
+                  <ul class="openq">
+                    <li>
+                      <b>Q1</b> token types/resolver in <code>@petroglyph/core</code> (rec) vs
+                      all-adapter-local
+                    </li>
+                    <li>
+                      <b>Q2</b> DDB re-key <code>tokenHash:userId</code> → <code>profileId</code>:
+                      in place / new table / defer
+                    </li>
+                    <li>
+                      <b>Q3</b> <code>reconnectRequired</code> stickiness: sticky fast-fail (rec) vs
+                      timed retry
+                    </li>
+                    <li><b>Q4</b> old token copies: die-with-owner (rec) vs die-now</li>
+                    <li><b>Q5</b> Graph client 401-retry: once, 401 only (rec)</li>
+                    <li><b>Q6</b> refresh threshold const (10 min) shared from core</li>
+                  </ul>
+                  <div class="opens-note">
+                    Plan ready: <code>.working-docs/6ra.6.1-token-management-plan.md</code> —
+                    awaiting user reaction.
+                  </div>
+                </div>
+              </div>
+
+              <!-- 6.6.2 subscriptions -->
+              <div class="card" id="n-sub" style="--c: var(--accent-adapter)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">6ra.6.2</span>
+                  <div>
+                    <div class="card-title">Subscription management</div>
+                    <div class="card-desc">
+                      Create / renew / recreate; stored-subscription registry.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Responsibility</h5>
+                  <ul>
+                    <li>
+                      Create subscription; renew via PATCH before ~3-day expiry (guided by
+                      <code>subscriptionExpirationDateTime</code> in every notification).
+                    </li>
+                    <li>
+                      Recreate on PATCH 404 — for driveItem this is the <b>only</b> removal detector
+                      (<code>subscriptionRemoved</code>/<code>missed</code> are Outlook-only).
+                    </li>
+                    <li>
+                      <code>reauthorizationRequired</code> lifecycle notification → refresh tokens.
+                    </li>
+                    <li>
+                      Registry (per profile: <code>subscriptionId</code>, <code>clientState</code>,
+                      <code>resource</code>, <code>expirationDateTime</code>) that the webhook
+                      receiver validates inbound bombs against.
+                    </li>
+                    <li>Business = root-only subscriptions; Personal = root or subfolder.</li>
+                  </ul>
+                  <h5>Status</h5>
+                  <p>
+                    Planned — description + tests defined, no plan doc yet. Blocked by <b>6.6.1</b>.
+                  </p>
+                </div>
+              </div>
+
+              <!-- 6.6.4 webhook receiver -->
+              <div class="card" id="n-wr" style="--c: var(--accent-adapter)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">6ra.6.4</span>
+                  <div>
+                    <div class="card-title">
+                      Webhook receiver
+                      <span
+                        class="tt"
+                        data-tip="The bell. No item data ever parsed — 6ra.6 discovery proved the old resourceData schema was impossible-by-design."
+                        >🔔</span
+                      >
+                    </div>
+                    <div class="card-desc">
+                      Receives Graph notification POSTs — bell only, no content parsing.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Responsibility</h5>
+                  <ul>
+                    <li>
+                      <b>Validation-token dance</b> at create-time:
+                      <code>POST ?validationToken=</code> → 200 text/plain, URL-decoded echo, within
+                      10s.
+                    </li>
+                    <li>
+                      Validate inbound <code>subscriptionId</code> +
+                      <code>clientState</code> against the registry (6.6.2); reject unknown
+                      subscriptions.
+                    </li>
+                    <li>
+                      <b
+                        class="tt"
+                        data-tip="Correctness requirement from 6ra.6 §3: enqueue the delta trigger synchronously, then respond 2xx within 3s. The current fire-and-forget enqueue silently loses SQS sends when the Lambda event loop freezes."
+                        >Ack contract</b
+                      >: enqueue delta-trigger synchronously → 2xx within 3s; 5xx if unqueued.
+                    </li>
+                    <li>Emits “delta trigger” events consumed by delta sync (6.6.3).</li>
+                  </ul>
+                  <h5>Kills</h5>
+                  <ul class="dies">
+                    <li>
+                      <b>ingest-onedrive resourceData zod schema</b> — the 400 “Invalid notification
+                      payload” root cause.
+                    </li>
+                    <li><b>Fire-and-forget enqueue</b> — the lost-SQS-send Lambda bug.</li>
+                  </ul>
+                </div>
+              </div>
+
+              <!-- 6.6.3 delta -->
+              <div class="card" id="n-delta" style="--c: var(--accent-adapter)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">6ra.6.3</span>
+                  <div>
+                    <div class="card-title">Delta sync + change-token mgmt</div>
+                    <div class="card-desc">
+                      The data path. Walks Graph delta; emits FileChangeEvent.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Responsibility</h5>
+                  <ul>
+                    <li>
+                      First run (no token) = <b>full enumeration</b>; page
+                      <code>@odata.nextLink</code> ($skiptoken) until
+                      <code>@odata.deltaLink</code> ($deltatoken).
+                    </li>
+                    <li>
+                      Store opaque token per profile — copy URL verbatim, never re-append query
+                      params.
+                    </li>
+                    <li>
+                      <code>deleted:{}</code> facet → deleted change; <code>410 Gone</code> +
+                      empty-token Location / <code>syncStateNotFound</code> →
+                      <b>full resync</b> with token cleared.
+                    </li>
+                    <li>
+                      <b
+                        class="tt"
+                        data-tip="The only component allowed to know OneDrive paths: parentReference.path format is normalised here and must never leak past this point. Zero OneDrive vocabulary past the adapter seam."
+                        >Normalises relativePath</b
+                      >
+                      — OneDrive <code>parentReference.path</code> never leaks.
+                    </li>
+                    <li>
+                      Walker stays pure/fast — no content fetching, no S3, no token logic beyond the
+                      delta call.
+                    </li>
+                  </ul>
+                  <h5>Emits</h5>
+                  <p>
+                    <code>FileChangeEvent</code> { profileId, changeType, itemId, name,
+                    relativePath, mimeType? } — adapter-internal, <b>not registered</b>.
+                  </p>
+                </div>
+              </div>
+
+              <!-- 6.6.5 user surface -->
+              <div class="card" id="n-oc" style="--c: var(--accent-adapter)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">6ra.6.5</span>
+                  <div>
+                    <div class="card-title">Adapter user surface <code>/onedrive/*</code></div>
+                    <div class="card-desc">
+                      Auth bootstrap, sync control, profiles, status — common envelope.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Responsibility</h5>
+                  <ul>
+                    <li>
+                      <code>/onedrive/auth-url</code> + <code>/onedrive/connect</code>: OAuth
+                      bootstrap → exchange code → persist <b>initial</b> tokens (refresh/use is
+                      6.6.1’s job).
+                    </li>
+                    <li>
+                      Sync control: <b>“Sync Now” = emit a catch-up delta-trigger event</b> — same
+                      bell the webhook fires.
+                      <b
+                        class="tt"
+                        data-tip="Locked decision (6ra.5 §9): the job machine is dropped. No jobId, no polling a job — the plugin just polls the files feed."
+                        >No job machine</b
+                      >.
+                    </li>
+                    <li>
+                      Profile source-config CRUD + active selection —
+                      <b>neutral record shape</b> (shared, not adapter-owned).
+                    </li>
+                    <li>Status: profile records + source connection state.</li>
+                    <li>
+                      Common response envelope — same shape for any future source (GDrive/Dropbox).
+                    </li>
+                  </ul>
+                  <h5>Decided</h5>
+                  <ul class="ken">
+                    <li>
+                      <b>No third profile service</b> — registry + adapter-hosted surface now; a
+                      profile service is a future extension point (not built).
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
+              <!-- 5.1.1 fetch+gate+land -->
+              <div class="card" id="n-fgl" style="--c: var(--accent-adapter)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">6ra.5.1.1</span>
+                  <div>
+                    <div class="card-title">
+                      fetch + gate + land
+                      <span
+                        class="tt"
+                        data-tip="The adapter's ONLY touchpoint with Unit 2 (staging). Owns no layout logic, no index logic, no subscription/webhook/delta logic."
+                        >⇄</span
+                      >
+                    </div>
+                    <div class="card-desc">
+                      Turns FileChangeEvents into staged facts via staging-lib.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Flow per FileChangeEvent</h5>
+                  <ul>
+                    <li>
+                      <b>created/updated</b>: GET Graph <code>/content</code> (token via 6.6.1) →
+                      <b>PDF gate</b> (mimeType <code>application/pdf</code> OR
+                      <code>.pdf</code> suffix; skip = no S3 write, no event) →
+                      <code>staging-lib land()</code> (5.2.1, layout-versioned keys
+                      <code>staging/v1/…</code>) → emit <code>FileStagedEvent</code>.
+                    </li>
+                    <li>
+                      <b>deleted</b>: emit <code>FileDeletedEvent</code> { itemId, relativePath,
+                      s3Key: null | removed key } — no fetch.
+                    </li>
+                  </ul>
+                  <h5>Owns nothing else</h5>
+                  <p>
+                    No layout logic (lib does), no index logic (Unit 2 does), no
+                    subscription/webhook/delta logic. Idempotent: same event → same s3Key.
+                  </p>
+                  <h5>Status</h5>
+                  <p class="todo">
+                    Planned — blocked by <b>6.6.1</b> (tokens), <b>6.6.3</b> (delta events),
+                    <b>5.2.1</b> (staging-lib).
+                  </p>
+                </div>
+              </div>
+            </div>
+            <!-- /cards -->
+
+            <!-- adapter infra -->
+            <div class="infra-rail">
+              <span class="rail-label">Infrastructure in this domain</span>
+              <span
+                class="infra-node tt"
+                id="n-route-web"
+                data-tip="HTTP API route receiving Graph notification POSTs (validation dance + ack contract)."
+                ><span class="ic">🌐</span> API GW <b>/webhooks/onedrive</b></span
+              >
+              <span
+                class="infra-node tt"
+                data-tip="The receiver enqueues here synchronously before 2xx. This queue is adapter-internal (its delta trigger)."
+                ><span class="ic">📨</span> SQS <b>delta-trigger</b>
+                <span class="why">internal</span></span
+              >
+              <span
+                class="infra-node tt"
+                id="n-ddb-tok"
+                data-tip="Per-profile OAuth tokens (CAS). Re-key tokenHash→profileId is open question 6.6.1 Q2."
+                ><span class="ic">🗄️</span> DDB <b>refresh-tokens</b>
+                <span class="why">re-key OPEN</span></span
+              >
+              <span
+                class="infra-node tt"
+                id="n-ddb-del"
+                data-tip="Opaque delta token per profile (copied verbatim from the deltaLink URL)."
+                ><span class="ic">🗄️</span> DDB <b>delta-tokens</b></span
+              >
+              <span
+                class="infra-node tt"
+                data-tip="Stored subscriptions (subscriptionId, clientState, resource, expirationDateTime) validated by the webhook receiver."
+                ><span class="ic">🗄️</span> DDB <b>subscription registry</b></span
+              >
+              <span
+                class="infra-node tt"
+                data-tip="Neutral profile records: {profileId, userId, source, active, syncEnabled, config?}. Shared, read one-way by staging."
+                ><span class="ic">🗄️</span> DDB <b>sync-profiles</b></span
+              >
+              <span
+                class="infra-node tt"
+                data-tip="OneDrive client id/secret stay in SSM; access/refresh tokens move to per-profile DDB (6.6.1)."
+                ><span class="ic">🔑</span> SSM <b>onedrive client id/secret</b></span
+              >
+              <span
+                class="infra-node tt"
+                data-tip="Adapter runtime (successor of ingest-onedrive): receiver + delta walker + fetch+gate+land land on Lambda(s)."
+                ><span class="ic">⚡</span> Lambda <b>adapter runtime</b></span
+              >
+            </div>
+          </div>
+          <!-- /adapter domain -->
+
+          <!-- registry band -->
+          <div class="domain" id="dom-reg" style="--c: var(--accent-reg)">
+            <div class="domain-head">
+              <div class="domain-title">
+                Business-event registry <span class="role">shared seam · schema-versioned</span>
+              </div>
+              <div class="meta-row">
+                <span class="bead-chip"><span class="bd">6ra.5.2.1</span> Q8 · Q9</span>
+              </div>
+            </div>
+            <p class="domain-desc">
+              The acknowledged cost of the
+              <b
+                class="tt"
+                data-tip="User principle (2026-09-03): producers add domain events; the consuming domain forwards them onto its OWN queue. A queue is a delayed void call INTO a domain, never a conversation mediator between domains."
+                >domain-events / consumer-forwarded</b
+              >
+              pattern. Producers (the adapter) emit <b>facts</b>, not commands:
+              <i
+                >“this file was created/updated/deleted — it lived at
+                <code>&lt;relativePath&gt;</code>; I staged it at <code>&lt;s3Key&gt;</code> (or
+                removed it from there)”</i
+              >. Events are centrally registered with <b>schema versions</b> (additive, like the S3
+              key layout). The registry is <b>not</b> in core — core stays vocabulary-free.
+            </p>
+            <div class="cards">
+              <div class="card discuss" id="n-reg" style="--c: var(--accent-reg)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">registered</span>
+                  <div>
+                    <div class="card-title">
+                      FileStagedEvent · FileDeletedEvent
+                      <span
+                        class="tt"
+                        data-tip="Decisions open — registry transport and package location unresolved"
+                        >🔴</span
+                      >
+                    </div>
+                    <div class="card-desc">
+                      CloudEvents 1.0.2 · envelope {type, schemaVersion, emittedAt, payload}.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Registered business events</h5>
+                  <ul>
+                    <li>
+                      <code>FileStagedEvent</code>: { profileId, source, changeType:
+                      created|updated, itemId, name, relativePath, s3Key, mimeType? }
+                    </li>
+                    <li>
+                      <code>FileDeletedEvent</code>: { profileId, source, changeType: deleted,
+                      itemId, relativePath, s3Key: string|null }
+                    </li>
+                  </ul>
+                  <p>
+                    <code>FileChangeEvent</code> is adapter-internal (delta walk) —
+                    <b>not registered</b>. Queue-internal message shapes are domain-owned and never
+                    registered.
+                  </p>
+                  <h5>Decided</h5>
+                  <ul class="ken">
+                    <li>
+                      <b>CloudEvents 1.0.2</b> structured mode, JSON — envelope format resolved (was
+                      Q3, now §4 of the decisions doc).
+                    </li>
+                    <li>Schema-versioned, additive registration.</li>
+                  </ul>
+                  <h5 class="openq" style="color: var(--st-discuss)">Open decisions</h5>
+                  <ul class="openq">
+                    <li>
+                      <b>Q8 — registry transport</b>: DDB event log (outbox-style, consumer-pull) vs
+                      SNS/EventBridge (one-hop push to consumer forwarders) vs code-level registry
+                      only. The forwarder shape in 5.2.2 follows from it.
+                    </li>
+                    <li>
+                      <b>Q9 — package location</b>: dedicated <code>events</code> package vs inside
+                      <code>staging-contracts</code> (rec for now — staging-centric today).
+                    </li>
+                    <li><b>Q10</b> CloudEvents impl: core CE schema vs official SDK.</li>
+                  </ul>
+                  <div class="opens-note">
+                    Resolved during 5.2.1 planning — user reaction needed.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- domain: s3 staging -->
+          <div class="domain" id="dom-staging" style="--c: var(--accent-staging)">
+            <div class="domain-head">
+              <div class="domain-title">
+                S3 Staging <span class="role">Unit 2 · neutral content domain</span>
+                <span class="pkg">@petroglyph/staging-contracts (new) + runtime (pkg TBD)</span>
+              </div>
+              <div class="meta-row">
+                <span class="bead-chip"><span class="bd">6ra.5.2</span> umbrella</span>
+                <span class="bead-chip"><span class="bd">5.2.1</span> contracts</span>
+                <span class="bead-chip"><span class="bd">5.2.2</span> index</span>
+                <span class="bead-chip"><span class="bd">5.2.3</span> dispatch</span>
+                <span class="bead-chip"><span class="bd">5.2.4</span> /files</span>
+              </div>
+            </div>
+            <p class="domain-desc">
+              Deliberately thin and <b>source-agnostic — zero OneDrive references anywhere</b>.
+              Consumes business events from the registry and
+              <b
+                class="tt"
+                data-tip="Consumers forward registry events onto their own queue — the queue is staging's internal implementation detail, never a producer concern."
+                >forwards them onto its own internal queue</b
+              >; downloads were already done by the adapter, so staging only records state and
+              serves files. Multi-source (GDrive/Dropbox) = another adapter emitting into the same
+              registry; staging diff = zero.
+            </p>
+            <div class="status-label">
+              <span class="dot" style="background: var(--st-discuss)"></span> 1 component with open
+              decisions <span class="agg">· 5.2.1 (Q5, Q6, Q8, Q9, Q10)</span> &nbsp;|&nbsp;
+              <span class="dot" style="background: var(--st-planned)"></span> 3 blocked, not started
+              <span class="agg">· 5.2.2, 5.2.3, 5.2.4</span>
+            </div>
+
+            <div class="cards">
+              <div class="card discuss" id="n-contract" style="--c: var(--accent-staging)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">6ra.5.2.1</span>
+                  <div>
+                    <div class="card-title">
+                      Contracts + staging-lib
+                      <span
+                        class="tt"
+                        data-tip="Decisions open — plan drafted with 5 open questions awaiting user reaction"
+                        >🔴</span
+                      >
+                    </div>
+                    <div class="card-desc">The neutral seam + shared landing library (pure).</div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Responsibility</h5>
+                  <ul>
+                    <li>
+                      Seam contract schemas: FileChangeEvent / FileStagedEvent / FileDeletedEvent
+                      (zod).
+                    </li>
+                    <li>
+                      <code>deriveStagingKey</code> →
+                      <code
+                        >staging/v1/&lt;profileId&gt;/&lt;relativePath&gt;/&lt;name&gt;.pdf</code
+                      >
+                      — <b>layout version in the key</b>; rejects <code>../</code>, leading
+                      <code>/</code>, empty segments; additive v2, never coordinated deploys.
+                    </li>
+                    <li>
+                      <code>stage(store, …)</code> = derive + put only — no fetch/gate/events
+                      (adapter-owned).
+                    </li>
+                    <li>
+                      Generic core beneath: <code>ObjectStore</code> (put/get/delete/presignGet),
+                      <code>Queue&lt;Payload&gt;</code>, CE <code>Envelope</code>.
+                    </li>
+                    <li>
+                      <b>No-Microsoft-vocabulary guard</b> — rejects OneDrive-shaped fields (<code
+                        >parentReference</code
+                      >
+                      etc.).
+                    </li>
+                  </ul>
+                  <h5 class="openq" style="color: var(--st-discuss)">Open decisions</h5>
+                  <ul class="openq">
+                    <li><b>Q8</b> registry transport (see registry band)</li>
+                    <li><b>Q9</b> events package location</li>
+                    <li>
+                      <b>Q5</b> old <code>handwritten/</code> keys + <code>pending</code> records:
+                      leave for 5.2.2 reindex (rec) vs cleanup script now
+                    </li>
+                    <li>
+                      <b>Q6</b> <code>contentType</code> required from adapter gate (rec) vs default
+                      <code>application/pdf</code>
+                    </li>
+                    <li><b>Q10</b> CloudEvents impl: core CE schema vs official SDK</li>
+                  </ul>
+                  <div class="opens-note">
+                    Plan ready: <code>.working-docs/6ra.5.2.1-staging-contracts-plan.md</code> —
+                    awaiting user reaction.
+                  </div>
+                </div>
+              </div>
+
+              <div class="card" id="n-idx" style="--c: var(--accent-staging)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">6ra.5.2.2</span>
+                  <div>
+                    <div class="card-title">Index + lifecycle consumer</div>
+                    <div class="card-desc">
+                      Consumes registry events → forwards to own queue → updates the index.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Responsibility</h5>
+                  <ul>
+                    <li>
+                      Upsert <code>file_record</code> → status <b>staged</b>, keyed {profileId,
+                      itemId}: FileStaged ⇒ set record; FileDeleted ⇒ remove record.
+                    </li>
+                    <li>
+                      <b>Dedupe under at-least-once</b>: re-Staged same itemId = same record;
+                      re-Deleted = no-op.
+                    </li>
+                    <li>Delete semantics: folders removed only once empty (delta ordering).</li>
+                    <li>TTL/cleanup aligned with S3 lifecycle (expire-staged-pdfs).</li>
+                    <li>
+                      Exposes the “ready files” query surface — delivery (5.2.4)
+                      <b>never derives keys</b>.
+                    </li>
+                  </ul>
+                  <h5>Status</h5>
+                  <p class="todo">
+                    Blocked by 5.2.1. Forwarder shape follows from registry transport (Q8).
+                  </p>
+                </div>
+              </div>
+
+              <div class="card" id="n-dispatch" style="--c: var(--accent-staging)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">6ra.5.2.3</span>
+                  <div>
+                    <div class="card-title">Dispatch runtime seam</div>
+                    <div class="card-desc">
+                      Thin SQS consumer → per-event dispatch; composition root.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Responsibility</h5>
+                  <ul>
+                    <li>
+                      Parse + validate each event against the seam contracts, apply via 5.2.2.
+                    </li>
+                    <li>
+                      Batch failure semantics (<code>SQSBatchResponse itemIdentifier</code>) — a
+                      poison event retries alone; DLQ/redrive.
+                    </li>
+                    <li>
+                      <b>Composition root</b>: the only place that knows runtime config (queue URL,
+                      table names, bucket).
+                    </li>
+                    <li>
+                      Provenance/observability: log profileId + itemId + changeType per event.
+                    </li>
+                  </ul>
+                  <p>
+                    Thin by design — plumbing, not feature. Successor to the old processor handler.
+                    <span class="todo">Blocked by 5.2.2.</span>
+                  </p>
+                </div>
+              </div>
+
+              <div class="card" id="n-feed" style="--c: var(--accent-staging)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">6ra.5.2.4</span>
+                  <div>
+                    <div class="card-title">Delivery surface <code>/files</code></div>
+                    <div class="card-desc">Plugin-facing changes feed — monitor + download.</div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Responsibility</h5>
+                  <ul>
+                    <li>
+                      Changes feed on the <code>file_record</code> index: staged records, ordered,
+                      paged (cursor), monitor semantics for the plugin’s poll loop.
+                    </li>
+                    <li>Presigned GET URLs from <b>stored s3Key</b> — never derives keys.</li>
+                    <li><b>Deleted records never served</b> (ripple from 5.2.2).</li>
+                    <li>Identity/auth middleware shared/deferred as-is (GitHub JWT today).</li>
+                  </ul>
+                  <h5>Invariants</h5>
+                  <p>
+                    No Graph calls, no key derivation, talks only to the output of staging (index +
+                    S3). Plugin’s <b>only</b> file-flow surface.
+                    <span class="todo">Blocked by 5.2.2.</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+            <!-- /cards -->
+
+            <div class="infra-rail">
+              <span class="rail-label">Infrastructure in this domain</span>
+              <span
+                class="infra-node tt"
+                id="n-s3"
+                data-tip="Neutral content store, keyed staging/v1/<profileId>/<relPath>/<name>.pdf. Readers follow stored keys; layout changes are additive (v2). Lifecycle: expire-staged-pdfs (90 days)."
+                ><span class="ic">☁️</span> S3 <b>staged-pdfs</b>
+                <span class="why">staging/v1 · lifecycle 90d</span></span
+              >
+              <span
+                class="infra-node tt"
+                id="n-ddb-fr"
+                data-tip="The staged index: file_record {profileId, itemId, s3Key, relativePath, name, source, status: staged}. Idempotent upsert, TTL aligned with S3 lifecycle."
+                ><span class="ic">🗄️</span> DDB <b>file-records</b></span
+              >
+              <span
+                class="infra-node tt"
+                data-tip="Staging's OWN internal queue (consumer-forwarded from the registry). Delayed void call INTO staging — nothing else pushes to it."
+                ><span class="ic">📨</span> SQS <b>staging queue</b>
+                <span class="why">internal</span></span
+              >
+              <span
+                class="infra-node tt"
+                data-tip="A poison event retries alone; batch partial failures via SQSBatchResponse itemIdentifier."
+                ><span class="ic">📨</span> SQS <b>staging DLQ</b></span
+              >
+              <span
+                class="infra-node tt"
+                data-tip="The dispatch seam (5.2.3) Lambda shell — successor to the old processor. The only place with runtime config."
+                ><span class="ic">⚡</span> Lambda <b>dispatch seam</b></span
+              >
+              <span
+                class="infra-node tt"
+                id="n-route-files"
+                data-tip="Plugin's only file-flow surface: GET /files (feed + download). Talks only to index + S3."
+                ><span class="ic">🌐</span> API GW <b>/files</b></span
+              >
+              <span
+                class="infra-node tt"
+                id="n-s3-life"
+                data-tip="Pure time-based retention of staged content. Cleanup is shared between S3 lifecycle and DDB TTL."
+                ><span class="ic">⏱️</span> S3 lifecycle <b>expire-staged-pdfs</b></span
+              >
+            </div>
+          </div>
+          <!-- /staging domain -->
+
+          <!-- platform core rail -->
+          <div class="domain" style="--c: var(--accent-core)">
+            <div class="domain-head">
+              <div class="domain-title">
+                Platform core <span class="role">shared library · vocabulary-free</span>
+                <span class="pkg">@petroglyph/core</span>
+              </div>
+              <div class="meta-row">
+                <span class="bead-chip"><span class="bd">5.2.1</span></span
+                ><span class="bead-chip"><span class="bd">6.6.1</span> Q1</span
+                ><span class="bead-chip"><span class="bd">oru</span> counter-precedent</span>
+              </div>
+            </div>
+            <p class="domain-desc">
+              Generic, <b>vocabulary-free</b> AWS/platform abstractions — no domain vocabulary, no
+              OneDrive-shaped anything. Type parameters named by role/payload (e.g.
+              <code>Envelope&lt;Payload&gt;</code>), never bare <code>T</code>. Domain contracts
+              live in their owning domain’s package, not here.
+            </p>
+            <div class="cards">
+              <div class="card" style="--c: var(--accent-core)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">core</span>
+                  <div>
+                    <div class="card-title">
+                      <code>Queue&lt;Payload&gt;</code> · <code>ObjectStore</code> · CE
+                      <code>Envelope</code>
+                    </div>
+                    <div class="card-desc">
+                      Typed SQS mechanics · S3 put/get/delete/presignGet · CloudEvents envelope.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <ul class="ken">
+                    <li>
+                      <code>Queue&lt;Payload&gt;</code> — typed SQS; encode/decode injected by the
+                      domain.
+                    </li>
+                    <li>
+                      <code>ObjectStore</code> — keys and bytes, no domain knowledge;
+                      <b>presignGet on the store</b> (decided: delivery never touches the S3 SDK).
+                    </li>
+                    <li>CE-compliant envelope zod-schema + formatter (CloudEvents 1.0.2).</li>
+                    <li>
+                      (rec, pending 6.6.1 Q1) <code>TokenRecord</code> /
+                      <code>TokenStore</code> (CAS) / <code>createTokenResolver</code> —
+                      source-agnostic; future adapters reuse, only the client differs.
+                    </li>
+                  </ul>
+                  <h5>Counter-precedent recorded</h5>
+                  <p>
+                    <code>packages/core/src/sync-profile.ts</code> /
+                    <code>sync-profile-db.ts</code> hold profile-domain knowledge inside core —
+                    exactly what this principle rejects. Tracked on epic <b>oru</b> (Profiles); not
+                    blocking 6ra.5.x.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- domain: plugin -->
+          <div class="domain" id="dom-plugin" style="--c: var(--accent-plugin)">
+            <div class="domain-head">
+              <div class="domain-title">
+                Obsidian Plugin <span class="role">Unit 4 · consumer</span>
+                <span class="pkg">@petroglyph/plugin → @petroglyph/api-client</span>
+              </div>
+              <div class="meta-row">
+                <span class="bead-chip"
+                  ><span class="st" style="--sc: var(--st-deferred)"></span>
+                  <span class="bd">6ra.5.4</span> DEFERRED</span
+                >
+              </div>
+            </div>
+            <p class="domain-desc">
+              The only consumer. Polls the staging files feed, downloads via presigned GET, writes
+              into the GitHub-backed vault. Server contract must stabilise first —
+              <b>deferred until after Units 1–2 land</b>.
+            </p>
+            <div class="cards">
+              <div class="card" id="n-plug" style="--c: var(--accent-plugin)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">6ra.5.4</span>
+                  <div>
+                    <div class="card-title">Plugin sync logic</div>
+                    <div class="card-desc">
+                      Poll /files · download PDF · write vault + .md companion.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Responsibility (existing behaviour, surface rework deferred)</h5>
+                  <ul>
+                    <li>
+                      Background poll of the files feed on a configurable interval;
+                      <b>poll advances the cursor</b> only after a successful vault write.
+                    </li>
+                    <li>
+                      “Sync Now” = trigger catch-up on the adapter surface → plugin polls the feed
+                      (job machine gone).
+                    </li>
+                    <li>
+                      Download PDF from presigned URL → write
+                      <code>handwritten/&lt;path&gt;.pdf</code> → companion <code>.md</code> with
+                      YAML frontmatter (source, synced_at, created_at, page_count, tags).
+                    </li>
+                    <li>
+                      Resets reworked to the new state model: plugin-local (clear cursor) / server
+                      (clear delta token + records) / full.
+                    </li>
+                    <li>OneDrive version wins; deletion handling configurable.</li>
+                  </ul>
+                </div>
+              </div>
+              <div class="card" style="--c: var(--accent-plugin)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">identity</span>
+                  <div>
+                    <div class="card-title">
+                      GitHub OAuth + JWT
+                      <span
+                        class="tt"
+                        data-tip="Deferred — kept as-is today. Orthogonal to the sync redesign."
+                        >⏸️</span
+                      >
+                    </div>
+                    <div class="card-desc">
+                      Auth for both API surfaces; middleware shared as-is across domains.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Decided</h5>
+                  <ul class="ken">
+                    <li>
+                      <b>Deferred, not redesigned</b> — kept as-is (GitHub App + JWT), orthogonal to
+                      the sync reset.
+                    </li>
+                    <li>Shared as middleware on whichever gateway hosts the surfaces.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div class="infra-rail">
+              <span class="rail-label">Runs in</span>
+              <span
+                class="infra-node tt"
+                id="n-vault"
+                data-tip="The user's Obsidian vault, backed by a GitHub repo. The cloud never writes here — the plugin does. GitHub integration stays as-is."
+                ><span class="ic">📓</span> Obsidian vault <b>handwritten/…</b>
+                <span class="why">GitHub-backed</span></span
+              >
+            </div>
+          </div>
+
+          <!-- package map -->
+          <div class="pkgmap">
+            <div class="pm-head">Package dependency map (compile-time, dashed)</div>
+            <div class="pm-sub">
+              One-way, contract-only. No service references another service’s implementation.
+              Producers reference the consuming domain’s contract package — the call signature of
+              the delayed void call.
+            </div>
+            <span class="pkg new"
+              ><b>@petroglyph/staging-contracts</b
+              ><span class="who">NEW · pure · Unit 2’s vocabulary</span></span
+            >
+            <span class="pkg-hop">⟶</span>
+            <span class="pkg"
+              ><b>@petroglyph/core</b
+              ><span class="who">Queue · ObjectStore · CE Envelope (+token types rec)</span></span
+            >
+            <span class="pkg-hop" style="width: 14px"></span>
+            <span class="pkg"
+              ><b>@petroglyph/ingest-onedrive</b
+              ><span class="who"
+                >adapter runtime · tokens client · receiver · delta · glue</span
+              ></span
+            >
+            <span class="pkg-hop">⟶</span>
+            <span class="pkg new"
+              ><b>@petroglyph/staging-contracts</b
+              ><span class="who">producer → consumer contract (land + event schemas)</span></span
+            >
+            <span class="pkg-hop" style="width: 14px"></span>
+            <span class="pkg"
+              ><b>@petroglyph/ingest-onedrive</b><span class="who">language</span></span
+            >
+            <span class="pkg-hop">⟶</span>
+            <span class="pkg"
+              ><b>@petroglyph/core</b><span class="who">generic abstractions</span></span
+            >
+            <span class="pkg-hop" style="width: 14px"></span>
+            <span class="pkg"
+              ><b>staging runtime</b
+              ><span class="who">TBD package · successor to processor</span></span
+            >
+            <span class="pkg-hop">⟶</span>
+            <span class="pkg new"
+              ><b>@petroglyph/staging-contracts</b><span class="who">decode + land …</span></span
+            >
+            <span class="pkg-hop" style="width: 14px"></span>
+            <span class="pkg"><b>@petroglyph/plugin</b><span class="who">consumer</span></span>
+            <span class="pkg-hop">⟶</span>
+            <span class="pkg"
+              ><b>@petroglyph/api-client</b><span class="who">openapi-fetch client</span></span
+            >
+          </div>
+
+          <!-- build order chain -->
+          <div class="chain">
+            <div class="ch-head">Bead build order &amp; dependencies</div>
+            <div class="ch-sub">
+              Discovery (6ra.6) is done and already drove the locked design. Every unit waits on the
+              seam package (5.2.1) or the token home (6.6.1).
+            </div>
+
+            <div class="chain-row">
+              <span class="row-label">ground truth</span>
+              <span class="mini" style="--sc: var(--st-research)"
+                ><span class="st"></span>6ra.6 · discovery
+                <b style="color: var(--st-research)">done</b></span
+              >
+            </div>
+            <div class="chain-row">
+              <span class="row-label">Unit 1</span>
+              <span class="mini" style="--sc: var(--st-discuss)"
+                ><span class="st"></span>6.6.1 tokens 🔴</span
+              ><span class="arrow-sep">→</span>
+              <span class="mini" style="--sc: var(--st-planned)"
+                ><span class="st"></span>6.6.2 subscriptions</span
+              ><span class="arrow-sep">→</span>
+              <span class="mini" style="--sc: var(--st-planned)"
+                ><span class="st"></span>6.6.4 webhook receiver</span
+              >
+            </div>
+            <div class="chain-row">
+              <span class="row-label"></span>
+              <span class="mini" style="--sc: var(--st-planned)"
+                ><span class="st"></span>6.6.3 delta sync</span
+              ><span class="arrow-sep">→</span>
+              <span class="mini" style="--sc: var(--st-planned)"
+                ><span class="st"></span>6.6.5 user surface</span
+              ><span class="arrow-sep">→</span>
+              <span class="mini" style="--sc: var(--st-planned)"
+                ><span class="st"></span>5.1.1 fetch+gate+land</span
+              >
+            </div>
+            <div class="chain-row">
+              <span class="row-label">Unit 2</span>
+              <span class="mini" style="--sc: var(--st-discuss)"
+                ><span class="st"></span>5.2.1 contracts + lib 🔴</span
+              ><span class="arrow-sep">→</span>
+              <span class="mini" style="--sc: var(--st-planned)"
+                ><span class="st"></span>5.2.2 index + lifecycle</span
+              ><span class="arrow-sep">→</span>
+              <span class="mini" style="--sc: var(--st-planned)"
+                ><span class="st"></span>5.2.3 dispatch seam</span
+              >
+            </div>
+            <div class="chain-row">
+              <span class="row-label"></span>
+              <span class="mini" style="--sc: var(--st-planned)"
+                ><span class="st"></span>5.2.2 index + lifecycle</span
+              ><span class="arrow-sep">→</span>
+              <span class="mini" style="--sc: var(--st-planned)"
+                ><span class="st"></span>5.2.4 delivery /files</span
+              >
+            </div>
+            <div class="chain-row">
+              <span class="row-label">consumer</span>
+              <span class="mini" style="--sc: var(--st-deferred)"
+                ><span class="st"></span>6ra.5.4 plugin (DEFERRED)</span
+              >
+              <span class="arrow-sep">⇐ server contract stable</span>
+            </div>
+          </div>
+        </div>
+        <!-- /stage -->
+      </section>
+
+      <!-- ============================================================
+       TAB 2 — LEGACY (pre-reset)
+       ============================================================ -->
+      <section id="tab-legacy" class="tab">
+        <div class="stage" id="stage-legacy">
+          <p class="domain-desc" style="margin-top: 0">
+            The system <b>as deployed before the reset</b> (from <code>ARCHITECTURE.md</code> + the
+            6ra failure evidence). This is what <code>6ra.5</code> tears down and replaces. Each
+            card notes why it failed and what supersedes it — see
+            <a href="#tab-reset" class="tab-jump" data-jump="tab-reset">Tab 3 · Reset map</a>.
+          </p>
+
+          <div class="domain" style="--c: var(--accent-src)">
+            <div class="domain-head">
+              <div class="domain-title">Source side <span class="role">unchanged</span></div>
+            </div>
+            <div class="cards">
+              <div class="card" style="--c: var(--accent-src)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">device</span>
+                  <div>
+                    <div class="card-title">Onyx Boox → OneDrive</div>
+                    <div class="card-desc">PDFs land in OneDrive; Microsoft Graph notifies.</div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <p>Unchanged in the redesign — the failure was server-side.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="domain" id="leg-ingest" style="--c: var(--accent-adapter)">
+            <div class="domain-head">
+              <div class="domain-title">
+                Ingest (webhook → S3)
+                <span class="role">@petroglyph/ingest-onedrive + @petroglyph/processor</span>
+              </div>
+            </div>
+            <div class="cards">
+              <div class="card" style="--c: var(--st-discuss)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">AWS::Lambda</span>
+                  <div>
+                    <div class="card-title">
+                      Webhook Receiver
+                      <span
+                        class="tt"
+                        data-tip="Failed bead 6ra.1 — 400 'Invalid notification payload' + lost SQS sends"
+                        >💀</span
+                      >
+                    </div>
+                    <div class="card-desc">
+                      Validates notification (incl. resourceData schema), enqueues, returns 200.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Failure modes (evidence from 6ra.4 / 6ra.6)</h5>
+                  <ul class="dies">
+                    <li>
+                      <b>resourceData required by schema</b> → every real OneDrive webhook 400.
+                      OneDrive notifications carry no item info — the schema was
+                      impossible-by-design.
+                    </li>
+                    <li>
+                      <b>Fire-and-forget enqueue + immediate 200</b> — Lambda event-loop freeze can
+                      lose the SQS send.
+                    </li>
+                  </ul>
+                  <p>
+                    → Superseded by <b>6.6.4 webhook receiver</b> (bell only, enqueue-then-ack
+                    within 3s).
+                  </p>
+                </div>
+              </div>
+              <div class="card" style="--c: var(--st-discuss)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">AWS::Lambda</span>
+                  <div>
+                    <div class="card-title">
+                      Processor
+                      <span
+                        class="tt"
+                        data-tip="Consumed the ingest queue: resolve metadata, refresh tokens, PDF gate, download, S3 put, DDB record."
+                        >💀</span
+                      >
+                    </div>
+                    <div class="card-desc">
+                      Consumes ingest queue; downloads PDF, uploads to S3, writes file_record.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <ul class="dies">
+                    <li>
+                      Carried its own <b>token-refresh copy</b> (with sync-worker + api middleware =
+                      3 copies).
+                    </li>
+                    <li>Revalidates + re-fetches everything — the “current processor’s sin”.</li>
+                  </ul>
+                  <p>
+                    → Superseded by adapter-owned <b>fetch+gate+land</b> (5.1.1) + staging
+                    <b>dispatch seam</b> (5.2.3).
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div class="infra-rail">
+              <span class="rail-label">Infrastructure</span>
+              <span class="infra-node"
+                ><span class="ic">🌐</span> API GW <b>/webhooks/onedrive</b></span
+              >
+              <span class="infra-node"
+                ><span class="ic">📨</span> SQS <b>ingest</b> + <b>DLQ</b></span
+              >
+              <span class="infra-node"
+                ><span class="ic">🗄️</span> DDB <b>refresh-tokens</b>
+                <span class="why">keyed tokenHash</span></span
+              >
+              <span class="infra-node"
+                ><span class="ic">🔑</span> SSM <b>onedrive access/refresh/expiry</b></span
+              >
+              <span class="infra-node"
+                ><span class="ic">⏱️</span> CW alarm <b>ingest DLQ depth</b></span
+              >
+            </div>
+          </div>
+
+          <div class="domain" style="--c: var(--accent-reg)">
+            <div class="domain-head">
+              <div class="domain-title">
+                Dispatch machinery
+                <span class="role"
+                  >@petroglyph/api + @petroglyph/sync-worker + @petroglyph/sync-relay</span
+                >
+              </div>
+            </div>
+            <div class="cards">
+              <div class="card" style="--c: var(--st-discuss)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">job path</span>
+                  <div>
+                    <div class="card-title">
+                      Sync job machine
+                      <span
+                        class="tt"
+                        data-tip="POST /sync/run writes a sync_jobs row (outbox) → DDB stream → sync-relay → sync-jobs queue → sync-worker delta walk → per-file push into the ingest queue → job status."
+                        >💀</span
+                      >
+                    </div>
+                    <div class="card-desc">
+                      sync-relay outbox + sync-worker delta walk + job polling.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Problems</h5>
+                  <ul class="dies">
+                    <li>
+                      <b>Producer-push into consumer queues</b>: sync-worker → ingestion queue,
+                      sync-relay → sync-jobs queue.
+                    </li>
+                    <li>
+                      <b>Job machine UX</b> (jobId, polling, statuses) — dropped by the locked
+                      design: “Sync Now” = delta-trigger event, plugin polls the feed.
+                    </li>
+                    <li>
+                      sync-worker’s <b>pending double-write</b> (record written, then processor
+                      overwrites).
+                    </li>
+                  </ul>
+                  <p>
+                    → Replaced by: bell → delta → business events → registry → consumer-forwarded →
+                    staging.
+                  </p>
+                </div>
+              </div>
+              <div class="card" style="--c: var(--accent-adapter)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">api</span>
+                  <div>
+                    <div class="card-title">
+                      API Handler
+                      <span
+                        class="tt"
+                        data-tip="The old 'API service' hosts everything: /files/changes, /sync/run + jobs, /sync/reset, /status, /profiles, /onedrive/* with onedrive-middleware token refresh."
+                        >♻</span
+                      >
+                    </div>
+                    <div class="card-desc">
+                      /files/changes · /sync/* · /status · /profiles · /onedrive/*
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <p>
+                    Died as a standalone service: plugin-facing surfaces split by ownership —
+                    source-specific goes to the <b>adapter surface (6.6.5)</b>, file delivery goes
+                    to <b>staging /files (5.2.4)</b>.
+                    <b>onedrive-middleware token refresh dies</b> → 6.6.1.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div class="infra-rail">
+              <span class="rail-label">Infrastructure</span>
+              <span class="infra-node"
+                ><span class="ic">🗄️</span> DDB <b>sync-jobs</b>
+                <span class="why">stream-enabled outbox</span></span
+              >
+              <span class="infra-node"
+                ><span class="ic">📨</span> SQS <b>sync-jobs</b> + <b>DLQ</b></span
+              >
+              <span class="infra-node"
+                ><span class="ic">⚡</span> Lambda <b>sync-relay</b>
+                <span class="why">DDB stream → SQS</span></span
+              >
+              <span class="infra-node"
+                ><span class="ic">⚡</span> Lambda <b>sync-worker</b>
+                <span class="why">delta walk + push</span></span
+              >
+              <span class="infra-node"><span class="ic">🗄️</span> DDB <b>delta-tokens</b></span>
+              <span class="infra-node"
+                ><span class="ic">🗄️</span> DDB <b>file-records</b>
+                <span class="why">status pending/delivered</span></span
+              >
+              <span class="infra-node"
+                ><span class="ic">🖥️</span> DDB <b>users</b> + <b>sync-profiles</b></span
+              >
+            </div>
+          </div>
+
+          <div class="domain" style="--c: var(--accent-staging)">
+            <div class="domain-head">
+              <div class="domain-title">
+                Staged content <span class="role">@petroglyph/api issues presigned URLs</span>
+              </div>
+            </div>
+            <div class="cards">
+              <div class="card" style="--c: var(--accent-staging)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">AWS::S3</span>
+                  <div>
+                    <div class="card-title">
+                      staged-pdfs bucket
+                      <span
+                        class="tt"
+                        data-tip="Keys: <staged-prefix>/<OneDrive folder path>/<name>.pdf — no layout version, derived in the processor."
+                        >🕓</span
+                      >
+                    </div>
+                    <div class="card-desc">Old key layout + pending records.</div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <h5>Interim state</h5>
+                  <ul>
+                    <li>
+                      Old <code>handwritten/…</code>-style prefix keys, no layout version —
+                      superseded by <code>staging/v1/…</code>.
+                    </li>
+                    <li>
+                      Old keys + <code>pending</code> records stay readable until
+                      <b>5.2.2 reindexes</b> (open Q5 — cleanup now vs leave).
+                    </li>
+                    <li>Lifecycle rule <b>expire-staged-pdfs</b> (90 days) — kept as-is.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="domain" style="--c: var(--accent-plugin)">
+            <div class="domain-head">
+              <div class="domain-title">
+                Plugin <span class="role">@petroglyph/plugin — kept, surface reworked later</span>
+              </div>
+            </div>
+            <div class="cards">
+              <div class="card" style="--c: var(--accent-plugin)">
+                <div class="card-head" onclick="toggleCard(this)">
+                  <span class="badge">6ra.3</span>
+                  <div>
+                    <div class="card-title">Sync logic (closed)</div>
+                    <div class="card-desc">
+                      /files/changes polling · Sync Now job polling · resets · status polling.
+                    </div>
+                  </div>
+                  <span class="caret">▶</span>
+                </div>
+                <div class="anno">
+                  <ul>
+                    <li>
+                      Polls <code>GET /files/changes?after=</code> cursor; advances token after
+                      vault write.
+                    </li>
+                    <li>
+                      “Sync Now” = <code>POST /sync/run</code> → jobId → poll
+                      <code>/sync/jobs/:jobId</code> — the job-polling UX dies with the job machine.
+                    </li>
+                    <li>Resets reworked to the new state model in 6ra.5.4.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================
+       TAB 3 — RESET MAP
+       ============================================================ -->
+      <section id="tab-reset" class="tab">
+        <p class="domain-desc" style="margin-top: 0">
+          What the <code>6ra.5</code> reset explicitly kills, supersedes, or keeps — the delta
+          between <b>Tab 2 (legacy)</b> and <b>Tab 1 (redesigned)</b>. Fate legend:
+          <span class="fate dies">💀 dies</span> <span class="fate superseded">♻ superseded</span>
+          <span class="fate kept">✅ kept</span> <span class="fate interim">🕓 interim</span>
+          <span class="fate open">🔧 shape open</span> <span class="fate deferred">⏸ deferred</span>
+        </p>
+
+        <div class="table-scroll">
+          <table class="delta">
+            <thead>
+              <tr>
+                <th>Legacy element</th>
+                <th>Fate</th>
+                <th>Lands on (redesign)</th>
+                <th>Why / note</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>ingest-onedrive</code> resourceData zod schema</td>
+                <td><span class="fate dies">💀 dies</span></td>
+                <td class="land">no equivalent — bell-only payload accepted</td>
+                <td>
+                  400 “Invalid notification payload” root cause; OneDrive webhooks carry no item
+                  info (impossible-by-design).
+                </td>
+              </tr>
+              <tr>
+                <td>Fire-and-forget notification enqueue</td>
+                <td><span class="fate dies">💀 dies</span></td>
+                <td class="land">
+                  <code>6.6.4</code> webhook receiver — enqueue-then-ack (2xx within 3s)
+                </td>
+                <td>Lambda event-loop freeze silently loses SQS sends.</td>
+              </tr>
+              <tr>
+                <td>
+                  3× duplicate token-refresh copies (<code>api/onedrive-middleware</code>,
+                  <code>sync-worker</code>, <code>processor</code>)
+                </td>
+                <td><span class="fate dies">💀 dies</span></td>
+                <td class="land"><code>6.6.1</code> — single home, per-profile CAS store</td>
+                <td>
+                  One token lifecycle, not three. Stale copies die with their owners (open 6.6.1
+                  Q4).
+                </td>
+              </tr>
+              <tr>
+                <td><code>sync-worker</code> pending-status double-write</td>
+                <td><span class="fate dies">💀 dies</span></td>
+                <td class="land">adapter lands + emits → staging indexes (single path)</td>
+                <td>“Write record, then processor overwrites” hazard.</td>
+              </tr>
+              <tr>
+                <td>Webhook-as-data path (metadata from webhook)</td>
+                <td><span class="fate dies">💀 dies</span></td>
+                <td class="land">
+                  webhook = bell only; delta = the data path (<code>6.6.3</code>)
+                </td>
+                <td>Discovery §1: notifications include no change information.</td>
+              </tr>
+              <tr>
+                <td>Processor Lambda (ingest queue consumer)</td>
+                <td><span class="fate superseded">♻ superseded</span></td>
+                <td class="land">
+                  adapter <code>fetch+gate+land</code> (5.1.1) + staging dispatch seam (5.2.3)
+                </td>
+                <td>
+                  Split by ownership: content fetch is adapter-owned; the Lambda shell becomes the
+                  thin dispatch seam.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Job machine: <code>sync_jobs</code> outbox → DDB stream →
+                  <code>sync-relay</code> → <code>sync-jobs</code> queue →
+                  <code>sync-worker</code> + <code>/sync/jobs/:jobId</code> polling
+                </td>
+                <td><span class="fate superseded">♻ superseded</span></td>
+                <td class="land">
+                  “Sync Now” = catch-up delta-trigger event (6.6.5); plugin polls the files feed
+                </td>
+                <td>
+                  Locked decision §9: no job machine. Sync-relay and sync-worker die together with
+                  the outbox.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Producer-push into consumer queues (worker → ingest queue; relay → sync-jobs
+                  queue)
+                </td>
+                <td><span class="fate dies">💀 dies</span></td>
+                <td class="land">
+                  domain events to registry; consumers forward onto their own queues
+                </td>
+                <td>
+                  “A queue is a delayed void call into a domain — never a conversation mediator.”
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Old S3 keys (<code>handwritten/…</code> prefix, no layout version) +
+                  <code>pending</code> records
+                </td>
+                <td><span class="fate interim">🕓 interim</span></td>
+                <td class="land">
+                  <code>staging/v1/&lt;profileId&gt;/…</code>; reindex by <code>5.2.2</code>
+                </td>
+                <td>
+                  Layout version in the key; additive v2. Cleanup-now vs reindex open (5.2.1 Q5).
+                </td>
+              </tr>
+              <tr>
+                <td>Standalone “API service”</td>
+                <td><span class="fate superseded">♻ superseded</span></td>
+                <td class="land">
+                  two surfaces: adapter <code>/onedrive/*</code> (6.6.5) + staging
+                  <code>/files</code> (5.2.4)
+                </td>
+                <td>
+                  Endpoints owned by the service that owns the data. Single base URL kept —
+                  <span class="fate open">deployment shape (gateway prefix routing) still open</span
+                  >.
+                </td>
+              </tr>
+              <tr>
+                <td>Third profile service concept</td>
+                <td><span class="fate dies">💀 not built</span></td>
+                <td class="land">
+                  neutral profile record in core + adapter-hosted surface (common envelope)
+                </td>
+                <td>
+                  Decided: no third service; folder-structure pushed-event is a future
+                  profile-service extension point.
+                </td>
+              </tr>
+              <tr>
+                <td>GitHub App + JWT identity</td>
+                <td><span class="fate kept">✅ kept</span></td>
+                <td class="land">as-is, shared middleware on the surfaces</td>
+                <td>Deferred — orthogonal to the sync redesign.</td>
+              </tr>
+              <tr>
+                <td>S3 lifecycle <code>expire-staged-pdfs</code> (90 days)</td>
+                <td><span class="fate kept">✅ kept</span></td>
+                <td class="land">unchanged; TTL on file_records aligned with it</td>
+                <td>Purely time-based retention, no per-file ack.</td>
+              </tr>
+              <tr>
+                <td>SQS DLQs + CloudWatch alarms + SNS email</td>
+                <td><span class="fate kept">✅ kept</span></td>
+                <td class="land">staging DLQ (5.2.3 redrive) + alarms</td>
+                <td>Same reliability fabric; queues re-homed to owning domains.</td>
+              </tr>
+              <tr>
+                <td>Plugin sync flow (6ra.3, closed)</td>
+                <td><span class="fate deferred">⏸ deferred</span></td>
+                <td class="land">
+                  <code>6ra.5.4</code> — rework to new contract once server stable
+                </td>
+                <td>Poll + cursor + vault write behaviour kept; surface endpoints change.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer class="src">
+        <span
+          >Sources: <code>ARCHITECTURE.md</code> ·
+          <code>.working-docs/6ra.5-redesign-decisions.md</code> (locked 2026-09-01, amended 09-03)
+          · <code>.working-docs/graph-comms-loop-discovery.md</code> (6ra.6) ·
+          <code>.working-docs/6ra.5.2.1-staging-contracts-plan.md</code> ·
+          <code>.working-docs/6ra.6.1-token-management-plan.md</code> · beads <code>6ra</code> /
+          <code>6ra.5</code> / <code>6ra.6</code> + children</span
+        >
+        <span
+          >Sketch for discussion — not an implementation spec. Status reflects bead state at
+          generation time.</span
+        >
+      </footer>
+    </div>
+
+    <script>
+      // ---------- tabs ----------
+      const tabs = document.querySelectorAll(".tab-btn");
+      tabs.forEach((btn) =>
+        btn.addEventListener("click", () => {
+          tabs.forEach((b) => b.classList.toggle("active", b === btn));
+          document
+            .querySelectorAll(".tab")
+            .forEach((t) => t.classList.toggle("active", t.id === btn.dataset.tab));
+          window.dispatchEvent(new Event("rewire"));
+        }),
+      );
+      // jump links inside a tab (reset map header)
+      document.querySelectorAll(".tab-jump").forEach((a) =>
+        a.addEventListener("click", (e) => {
+          e.preventDefault();
+          const target = a.dataset.jump;
+          const btn = document.querySelector(`.tab-btn[data-tab="${target}"]`);
+          if (btn) btn.click();
+          location.hash = "";
+        }),
+      );
+
+      // ---------- collapsible cards ----------
+      function toggleCard(headEl) {
+        const card = headEl.closest(".card");
+        card.classList.toggle("open");
+        window.dispatchEvent(new Event("rewire"));
+      }
+
+      // ---------- arrow layer ----------
+      // One SVG per stage, absolutely positioned, drawing paths between node rects.
+      const STAGES = {
+        "stage-redesigned": [
+          // flow: source side → adapter
+          { from: "n-boox", to: "n-od", label: "device auto-sync (PDF)", kind: "flow" },
+          { from: "n-od", to: "n-wr", label: "webhook POST · bell — no item data", kind: "flow" },
+          { from: "n-od", to: "n-delta", label: "Graph delta API call", kind: "flow" },
+          { from: "n-oc", to: "n-delta", label: "Sync Now (catch-up)", kind: "flow", bend: -0.85 },
+          { from: "n-wr", to: "n-delta", label: "delta trigger (enqueue → 2xx)", kind: "flow" },
+          // adapter internal → registry → staging
+          { from: "n-delta", to: "n-fgl", label: "FileChangeEvent (internal)", kind: "flow" },
+          { from: "n-fgl", to: "n-s3", label: "PutObject via staging-lib land()", kind: "flow" },
+          { from: "n-fgl", to: "n-reg", label: "FileStaged ↓ / FileDeleted (CE)", kind: "flow" },
+          { from: "n-reg", to: "n-idx", label: "consume → forward onto own queue", kind: "flow" },
+          { from: "n-idx", to: "n-ddb-fr", label: "upsert / remove file_record", kind: "flow" },
+          // delivery
+          {
+            from: "n-plug",
+            to: "n-feed",
+            label: "GET /files (monitor poll)",
+            kind: "flow",
+            bend: 0.55,
+          },
+          {
+            from: "n-feed",
+            to: "n-plug",
+            label: "feed + presigned GET URLs",
+            kind: "flow",
+            bend: -0.55,
+          },
+          { from: "n-plug", to: "n-s3", label: "download PDF (presigned)", kind: "flow" },
+          {
+            from: "n-plug",
+            to: "n-oc",
+            label: "/onedrive/* · profiles · sync control · status",
+            kind: "flow",
+          },
+          { from: "n-plug", to: "n-vault", label: "write PDF + .md companion", kind: "flow" },
+        ],
+        "stage-legacy": [],
+      };
+
+      function relRect(el, base) {
+        const r = el.getBoundingClientRect();
+        return {
+          left: r.left - base.left,
+          top: r.top - base.top,
+          right: r.right - base.left,
+          bottom: r.bottom - base.top,
+          width: r.width,
+          height: r.height,
+        };
+      }
+
+      function renderArrows() {
+        document.querySelectorAll(".stage").forEach((stage) => {
+          // (re)create svg
+          let svg = stage.querySelector("svg.wire");
+          if (!svg) {
+            svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            svg.setAttribute("class", "wire");
+            svg.style.position = "absolute";
+            svg.style.inset = "0";
+            svg.style.width = "100%";
+            svg.style.height = "100%";
+            svg.style.pointerEvents = "none";
+            stage.appendChild(svg);
+          }
+          svg.innerHTML = "";
+          stage.querySelectorAll(".wire-label").forEach((l) => l.remove());
+
+          const base = stage.getBoundingClientRect();
+          svg.setAttribute("viewBox", `0 0 ${base.width} ${base.height}`);
+
+          const ns = "http://www.w3.org/2000/svg";
+          const defs = document.createElementNS(ns, "defs");
+          const mk = (id, color) => {
+            const m = document.createElementNS(ns, "marker");
+            m.setAttribute("id", id);
+            m.setAttribute("viewBox", "0 0 10 10");
+            m.setAttribute("refX", "8");
+            m.setAttribute("refY", "5");
+            m.setAttribute("markerWidth", "7");
+            m.setAttribute("markerHeight", "7");
+            m.setAttribute("orient", "auto-start-reverse");
+            const p = document.createElementNS(ns, "path");
+            p.setAttribute("d", "M0,0 L10,5 L0,10 z");
+            p.setAttribute("fill", color);
+            m.appendChild(p);
+            defs.appendChild(m);
+          };
+          mk("arr-flow", "var(--accent-reg)");
+          mk("arr-dep", "var(--accent-core)");
+          svg.appendChild(defs);
+
+          const bezierMid = (p1, c1, c2, p2) => ({
+            x: (p1.x + 3 * c1.x + 3 * c2.x + p2.x) / 8,
+            y: (p1.y + 3 * c1.y + 3 * c2.y + p2.y) / 8,
+          });
+
+          (STAGES[stage.id] || []).forEach((def) => {
+            const fromEl = document.getElementById(def.from);
+            const toEl = document.getElementById(def.to);
+            if (!fromEl || !toEl || def.kind !== "flow") return;
+
+            const fr = relRect(fromEl, base);
+            const to = relRect(toEl, base);
+            const fcx = fr.left + fr.width / 2,
+              fcy = fr.top + fr.height / 2;
+            const tcx = to.left + to.width / 2,
+              tcy = to.top + to.height / 2;
+            const dx = tcx - fcx,
+              dy = tcy - fcy;
+
+            let p1, p2, c1, c2;
+            const bend = def.bend || 0;
+            if (Math.abs(dy) >= Math.abs(dx)) {
+              // vertical flow: connect facing top/bottom edges
+              if (dy >= 0) {
+                p1 = { x: fcx, y: fr.bottom };
+                p2 = { x: tcx, y: to.top };
+              } else {
+                p1 = { x: fcx, y: fr.top };
+                p2 = { x: tcx, y: to.bottom };
+              }
+              const d = Math.max(30, Math.abs(dy) * 0.45);
+              const s = dy >= 0 ? 1 : -1;
+              const bx = bend * Math.max(60, Math.abs(dy) * 0.5);
+              c1 = { x: p1.x + bx, y: p1.y + s * d };
+              c2 = { x: p2.x + bx, y: p2.y - s * d };
+            } else {
+              // horizontal flow: connect facing left/right edges
+              if (dx >= 0) {
+                p1 = { x: fr.right, y: fcy };
+                p2 = { x: to.left, y: tcy };
+              } else {
+                p1 = { x: fr.left, y: fcy };
+                p2 = { x: to.right, y: tcy };
+              }
+              const d = Math.max(30, Math.abs(dx) * 0.45);
+              const s = dx >= 0 ? 1 : -1;
+              const by = bend * Math.max(60, Math.abs(dx) * 0.5);
+              c1 = { x: p1.x + s * d, y: p1.y + by };
+              c2 = { x: p2.x - s * d, y: p2.y + by };
+            }
+
+            const path = document.createElementNS(ns, "path");
+            path.setAttribute(
+              "d",
+              `M ${p1.x} ${p1.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p2.x} ${p2.y}`,
+            );
+            path.setAttribute("data-def", def.from + "→" + def.to);
+            path.setAttribute("stroke", "var(--accent-reg)");
+            path.setAttribute("stroke-width", "1.7");
+            path.setAttribute("fill", "none");
+            path.setAttribute("marker-end", "url(#arr-flow)");
+            svg.appendChild(path);
+
+            const mid = bezierMid(p1, c1, c2, p2);
+            const loff = def.loff || [0, 0];
+            const lab = document.createElement("div");
+            lab.className = "wire-label";
+            lab.style.left = mid.x + loff[0] + "px";
+            lab.style.top = mid.y + loff[1] + "px";
+            lab.textContent = def.label;
+            stage.appendChild(lab);
+          });
+        });
+      }
+
+      // re-render arrows when layout changes
+      window.addEventListener("rewire", () => requestAnimationFrame(renderArrows));
+      window.addEventListener("resize", () => requestAnimationFrame(renderArrows));
+      window.addEventListener("load", () => requestAnimationFrame(renderArrows));
+      document.addEventListener("DOMContentLoaded", () => requestAnimationFrame(renderArrows));
+      // after images/fonts settle
+      setTimeout(() => requestAnimationFrame(renderArrows), 400);
+      requestAnimationFrame(renderArrows);
+    </script>
+  </body>
+</html>
