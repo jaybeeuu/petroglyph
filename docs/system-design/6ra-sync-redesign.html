@@ -54,7 +54,7 @@
           sans-serif;
       }
       .wrap {
-        max-width: 1240px;
+        max-width: 1500px;
         margin: 0 auto;
         padding: 0 28px 80px;
       }
@@ -758,23 +758,21 @@
 
       /* ---------- graph view ---------- */
       .graph-wrap {
-        display: flex;
-        gap: 14px;
-        align-items: flex-start;
+        position: relative;
       }
       .graph-main {
-        flex: 1;
-        min-width: 0;
+        width: 100%;
       }
       .graph-box {
         position: relative;
         border: 1px solid var(--line);
         border-radius: var(--radius);
-        height: 740px;
+        height: min(76vh, 880px);
+        min-height: 520px;
         overflow: hidden;
         background:
-          radial-gradient(900px 420px at 28% -4%, #16233d40, transparent 60%),
-          radial-gradient(700px 380px at 85% 110%, #1b274120, transparent 55%), #0a101d;
+          radial-gradient(1200px 560px at 28% -6%, #16233d40, transparent 60%),
+          radial-gradient(900px 480px at 88% 112%, #1b274120, transparent 55%), #0a101d;
       }
       svg.graph {
         width: 100%;
@@ -843,6 +841,8 @@
         font-weight: 700;
         letter-spacing: 0.3px;
       }
+
+      /* nodes: collapsed by default — badge + desc only when selected */
       .node-g {
         cursor: pointer;
       }
@@ -858,7 +858,8 @@
         filter: drop-shadow(0 4px 12px #0008);
       }
       .node-g.selected .node-rect {
-        stroke-width: 3;
+        stroke-width: 2.8;
+        filter: drop-shadow(0 6px 16px #000c);
       }
       .node-g.dim,
       .link-g.dim {
@@ -874,10 +875,16 @@
         font-family: var(--mono);
         font-size: 9px;
         letter-spacing: 0.3px;
+        opacity: 0;
       }
       .node-desc {
         fill: var(--muted);
         font-size: 9.5px;
+        opacity: 0;
+      }
+      .node-g.selected .node-badge,
+      .node-g.selected .node-desc {
+        opacity: 1;
       }
       .node-dot {
         stroke: #0a101d;
@@ -907,7 +914,7 @@
       }
       .link-label {
         font-family: var(--mono);
-        font-size: 9.5px;
+        font-size: 9px;
         fill: var(--muted);
         pointer-events: none;
       }
@@ -915,18 +922,26 @@
         display: none;
       }
 
-      /* side panel */
+      /* side panel — floating overlay, hidden until a node is selected */
       .panel {
-        width: 336px;
-        flex: 0 0 336px;
-        background: var(--panel-2);
-        border: 1px solid var(--line);
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        z-index: 12;
+        width: 400px;
+        max-width: calc(100% - 24px);
+        background: #0d1524f0;
+        border: 1px solid #2a3854;
         border-radius: var(--radius);
-        padding: 14px 16px;
-        max-height: 740px;
+        padding: 12px 14px;
+        max-height: calc(100% - 24px);
         overflow-y: auto;
-        position: sticky;
-        top: 84px;
+        box-shadow: 0 14px 44px #000a;
+        backdrop-filter: blur(5px);
+        display: none;
+      }
+      .panel.show {
+        display: block;
       }
       .panel h3 {
         margin: 0 0 8px;
@@ -948,6 +963,8 @@
         font-size: 12.5px;
         color: var(--muted);
         margin: 0 0 6px;
+        overflow-wrap: anywhere;
+        word-break: break-word;
       }
       .panel ul {
         margin: 0 0 10px;
@@ -1024,17 +1041,11 @@
       }
 
       @media (max-width: 960px) {
-        .graph-wrap {
-          flex-direction: column;
-        }
-        .panel {
-          width: 100%;
-          flex: none;
-          max-height: none;
-          position: static;
-        }
         .graph-box {
           height: 560px;
+        }
+        .panel {
+          width: min(400px, calc(100% - 24px));
         }
       }
 
@@ -1061,11 +1072,15 @@
         <h1>Petroglyph — Sync pipeline <span class="bead">6ra</span> redesign · system sketch</h1>
         <p class="sub">
           Server-side redesign <b>OneDrive → S3 → API</b>, per the locked design in
-          <code>6ra.5-redesign-decisions.md</code> (2026-09-01, amended 09-03). Interactive system
-          graph: solid edges are data flow (with the event names), dashed edges are package
-          dependencies, tinted regions are domains. Click any node for its annotation; hover to see
-          what it talks to; drag nodes and the canvas, scroll to zoom. Status dots: 🔴 open
-          decisions, 🟡 planned, 🟢 locked, 🔵 researched, ⚪ deferred.
+          <code>6ra.5-redesign-decisions.md</code> (locked 2026-09-01, amended 09-03 &amp; 09-06 —
+          all previously-open decisions are now resolved: registry transport = DDB event log, events
+          package <code>@petroglyph/events</code>, token plan Q1–Q6, data-accuracy mimeType rule).
+          Full-width interactive system graph: <b>nodes are collapsed by default</b> — click any
+          component to expand it and open its annotation (responsibility, infrastructure, beads,
+          open-vs-locked status); hover shows what a component talks to; drag nodes and the canvas,
+          scroll to zoom. Solid edges = data flow (event names), dashed = package dependencies,
+          tinted regions = domains. Status: 🔴 open · 🟡 planned · 🟢 locked · 🔵 researched · ⚪
+          deferred.
         </p>
         <div class="src-chips">
           <span class="src-chip">bead <code>6ra</code> (epic · Sync)</span>
@@ -1075,6 +1090,10 @@
             >beads <code>6ra.5.2.x</code> / <code>6ra.6.x</code> (build units)</span
           >
           <span class="src-chip">ground truth: <code>graph-comms-loop-discovery.md</code></span>
+          <span class="src-chip"
+            >verification gate: test-plan beads <code>6.5.1.2</code> / <code>6.5.2.5</code> /
+            <code>6ra.7</code></span
+          >
         </div>
       </header>
 
@@ -1161,8 +1180,9 @@
         <div class="chain">
           <div class="ch-head">Bead build order &amp; dependencies</div>
           <div class="ch-sub">
-            Discovery (6ra.6) is done and already drove the locked design. Every unit waits on the
-            seam package (5.2.1) or the token home (6.6.1).
+            Discovery (6ra.6) done. Both seam plans (6.6.1 tokens, 5.2.1 contracts) are
+            decision-complete; implementation is gated on the service test-plan beads (6.5.1.2 ·
+            6.5.2.5 · 6ra.7), per the 2026-09-06 verification gate.
           </div>
           <div class="chain-row">
             <span class="row-label">ground truth</span>
@@ -1173,8 +1193,8 @@
           </div>
           <div class="chain-row">
             <span class="row-label">Unit 1</span>
-            <span class="mini" style="--sc: var(--st-discuss)"
-              ><span class="st"></span>6.6.1 tokens 🔴</span
+            <span class="mini" style="--sc: var(--st-locked)"
+              ><span class="st"></span>6.6.1 tokens ✓ resolved</span
             ><span class="arrow-sep">→</span>
             <span class="mini" style="--sc: var(--st-planned)"
               ><span class="st"></span>6.6.2 subscriptions</span
@@ -1197,8 +1217,8 @@
           </div>
           <div class="chain-row">
             <span class="row-label">Unit 2</span>
-            <span class="mini" style="--sc: var(--st-discuss)"
-              ><span class="st"></span>5.2.1 contracts + lib 🔴</span
+            <span class="mini" style="--sc: var(--st-locked)"
+              ><span class="st"></span>5.2.1 contracts + lib ✓ resolved</span
             ><span class="arrow-sep">→</span>
             <span class="mini" style="--sc: var(--st-planned)"
               ><span class="st"></span>5.2.2 index + lifecycle</span
@@ -1214,6 +1234,18 @@
             ><span class="arrow-sep">→</span>
             <span class="mini" style="--sc: var(--st-planned)"
               ><span class="st"></span>5.2.4 delivery /files</span
+            >
+          </div>
+          <div class="chain-row">
+            <span class="row-label">verification gate</span>
+            <span class="mini" style="--sc: var(--st-planned)"
+              ><span class="st"></span>6.5.1.2 Unit 1 tests</span
+            ><span class="arrow-sep">→</span>
+            <span class="mini" style="--sc: var(--st-planned)"
+              ><span class="st"></span>6.5.2.5 Unit 2 tests</span
+            ><span class="arrow-sep">→</span>
+            <span class="mini" style="--sc: var(--st-planned)"
+              ><span class="st"></span>6ra.7 E2E roll-through</span
             >
           </div>
           <div class="chain-row">
@@ -1286,8 +1318,8 @@
             <span class="mini" style="--sc: var(--st-discuss)"
               ><span class="st"></span>3 independent refresh copies</span
             ><span class="arrow-sep">→</span>
-            <span class="mini" style="--sc: var(--st-discuss)"
-              ><span class="st"></span>6.6.1 single CAS store 🔴</span
+            <span class="mini" style="--sc: var(--st-locked)"
+              ><span class="st"></span>6.6.1 single CAS store ✓ resolved</span
             >
           </div>
           <div class="chain-row">
@@ -1366,8 +1398,8 @@
       <footer class="src">
         <span
           >Sources: <code>ARCHITECTURE.md</code> ·
-          <code>.working-docs/6ra.5-redesign-decisions.md</code> (locked 2026-09-01, amended 09-03)
-          · <code>.working-docs/graph-comms-loop-discovery.md</code> (6ra.6) ·
+          <code>.working-docs/6ra.5-redesign-decisions.md</code> (locked 2026-09-01, amended 09-03 &
+          09-06) · <code>.working-docs/graph-comms-loop-discovery.md</code> (6ra.6) ·
           <code>.working-docs/6ra.5.2.1-staging-contracts-plan.md</code> ·
           <code>.working-docs/6ra.6.1-token-management-plan.md</code> · beads <code>6ra</code> /
           <code>6ra.5</code> / <code>6ra.6</code> + children</span
@@ -1440,6 +1472,10 @@
         p.innerHTML = text;
         if (cls) p.className = cls;
         panel.appendChild(p);
+      }
+      function hidePanel(g) {
+        g.panel.classList.remove("show");
+        g.panel.innerHTML = "";
       }
 
       // Generic annotated-node renderer (redesigned + legacy + reset targets).
@@ -1525,10 +1561,10 @@
         const world = svg.append("g").attr("class", "world");
         const statusMap = cfg.statusMap;
 
-        // graph nodes (clones of defs) with radius + initial positions
+        // graph nodes (clones of defs) — collapsed by default, expand on select
         const nodes = cfg.nodes.map((def) => {
-          const w = Math.max(def.label.length * 6.6 + 40, 150);
-          return { ...def, r: w / 2 + 8 };
+          const w = Math.max(def.label.length * 6.7 + 30, 136);
+          return { ...def, expanded: false, w };
         });
         const startPos = new Map(nodes.map((n) => [n.id, { x: n.x, y: n.y }]));
         const links = cfg.links.map((l) => ({ ...l, id: l.s + "→" + l.t }));
@@ -1545,6 +1581,25 @@
 
         const stColor = (d) => (statusMap[d.status] || statusMap.planned).color;
 
+        // node draw box (local coords)
+        function nodeBox(d) {
+          const ew = Math.max(d.w, d.label.length * 6.6 + 40);
+          const w = d.expanded ? ew : d.w;
+          const h = d.expanded ? 68 : 38;
+          return { w, h };
+        }
+        // point where the ray node-centre -> (tx,ty) crosses the node's rect edge
+        function rectEdgePoint(d, tx, ty) {
+          const b = nodeBox(d);
+          const dx = tx - d.x,
+            dy = ty - d.y;
+          const len = Math.max(1e-6, Math.hypot(dx, dy));
+          const ux = dx / len,
+            uy = dy / len;
+          const t = Math.min((b.w / 2 + 1) / Math.abs(ux), (b.h / 2 + 1) / Math.abs(uy));
+          return { x: d.x + ux * t, y: d.y + uy * t };
+        }
+
         // markers
         const uid = cfg.svgId.replace(/[^a-z0-9]/gi, "");
         const defs = svg.append("defs");
@@ -1553,10 +1608,10 @@
             .append("marker")
             .attr("id", id)
             .attr("viewBox", "0 0 10 10")
-            .attr("refX", 8)
+            .attr("refX", 10)
             .attr("refY", 5)
-            .attr("markerWidth", 6.5)
-            .attr("markerHeight", 6.5)
+            .attr("markerWidth", 7)
+            .attr("markerHeight", 7)
             .attr("orient", "auto-start-reverse")
             .append("path")
             .attr("d", "M0,0 L10,5 L0,10 z")
@@ -1641,15 +1696,15 @@
             d3
               .forceLink(links)
               .id((d) => d.id)
-              .distance((l) => (l.type === "flow" ? 175 : 130))
-              .strength((l) => (l.type === "flow" ? 0.06 : 0.035)),
+              .distance((l) => (l.type === "flow" ? 180 : 130))
+              .strength((l) => (l.type === "flow" ? 0.07 : 0.035)),
           )
           .force("x", d3.forceX((d) => startPos.get(d.id).x).strength(0.2))
           .force("y", d3.forceY((d) => startPos.get(d.id).y).strength(0.2))
-          .force("charge", d3.forceManyBody().strength(-170).distanceMax(520))
+          .force("charge", d3.forceManyBody().strength(-170).distanceMax(560))
           .force(
             "collide",
-            d3.forceCollide((d) => d.r + 14),
+            d3.forceCollide((d) => d.w / 2 + 14),
           )
           .alphaDecay(0.05)
           .on("tick", ticked);
@@ -1660,23 +1715,31 @@
         function linkVec(l) {
           const s = l.source,
             t = l.target;
-          const dx = t.x - s.x,
-            dy = t.y - s.y;
+          const p0 = rectEdgePoint(s, t.x, t.y);
+          const p1 = rectEdgePoint(t, s.x, s.y);
+          const dx = p1.x - p0.x,
+            dy = p1.y - p0.y;
           const len = Math.max(1, Math.hypot(dx, dy));
-          const ux = dx / len,
-            uy = dy / len;
-          const sx = s.x + ux * (s.r + 4);
-          const sy = s.y + uy * (s.r + 4);
-          const tx = t.x - ux * (t.r + 5);
-          const ty = t.y - uy * (t.r + 5);
-          const px = -uy,
-            py = ux;
+          const px = -dy / len,
+            py = dx / len;
           const bend = l.bend || 16;
-          return { sx, sy, tx, ty, mx: (sx + tx) / 2 + px * bend, my: (sy + ty) / 2 + py * bend };
+          return {
+            sx: p0.x,
+            sy: p0.y,
+            tx: p1.x,
+            ty: p1.y,
+            mx: (p0.x + p1.x) / 2 + px * bend,
+            my: (p0.y + p1.y) / 2 + py * bend,
+          };
         }
         function linkPath(l) {
           const v = linkVec(l);
           return `M ${v.sx},${v.sy} Q ${v.mx},${v.my} ${v.tx},${v.ty}`;
+        }
+
+        function clipText(s, n) {
+          if (!s) return "";
+          return s.length > n ? s.slice(0, Math.max(1, n - 1)) + "…" : s;
         }
 
         function ticked() {
@@ -1698,52 +1761,56 @@
           nodeSel.attr("transform", (d) => `translate(${d.x},${d.y})`);
           nodeSel.each(function (d) {
             const g = d3.select(this);
-            const w = d.r * 2 - 16;
+            const b = nodeBox(d);
+            const hw = b.w / 2,
+              hh = b.h / 2;
             g.select(".node-rect")
-              .attr("x", -w / 2 - 8)
-              .attr("y", -31)
-              .attr("width", w + 16)
-              .attr("height", 62)
+              .attr("x", -hw)
+              .attr("y", -hh)
+              .attr("width", b.w)
+              .attr("height", b.h)
               .attr("rx", 10)
               .attr("stroke", stColor(d));
             g.select(".node-dot")
-              .attr("cx", -w / 2 - 1)
-              .attr("cy", -18)
+              .attr("cx", -hw + 8)
+              .attr("cy", -14)
               .attr("fill", stColor(d));
+            const maxTitle = d.expanded ? 26 : 21;
             g.select(".node-title")
-              .attr("x", -w / 2 + 12)
-              .attr("y", -13)
-              .text(d.label.length > 26 ? d.label.slice(0, 25) + "…" : d.label);
+              .attr("x", d.expanded ? -hw + 12 : 0)
+              .attr("y", d.expanded ? -16 : 4.5)
+              .attr("text-anchor", d.expanded ? "start" : "middle")
+              .text(d.label.length > maxTitle ? d.label.slice(0, maxTitle - 1) + "…" : d.label);
             g.select(".node-badge")
-              .attr("x", -w / 2 + 12)
+              .attr("x", -hw + 12)
               .attr("y", 4)
-              .text(d.badge);
+              .text(clipText(d.badge, Math.floor((b.w - 28) / 5.6)));
             g.select(".node-desc")
-              .attr("x", -w / 2 + 12)
-              .attr("y", 22)
-              .text(d.desc ? d.desc.slice(0, 30) : "");
+              .attr("x", -hw + 12)
+              .attr("y", 21)
+              .text(clipText(d.desc, Math.floor((b.w - 28) / 5.4)));
           });
           domainG.selectAll("g").each(function () {
             const k = d3.select(this).attr("data-domain");
             const band = cfg.bands[k];
             const members = nodes.filter((n) => n.domain === k);
             if (!members.length || !band) return;
-            const minY = d3.min(members, (n) => n.y - 40);
-            const maxY = d3.max(members, (n) => n.y + 40);
+            const minY = d3.min(members, (n) => n.y - 34);
+            const maxY = d3.max(members, (n) => n.y + 34);
             const dm = cfg.domains[k];
             d3.select(this)
               .select(".domain-region")
               .attr("x", band[0])
-              .attr("y", minY - 46)
+              .attr("y", minY - 42)
               .attr("width", band[1] - band[0])
-              .attr("height", maxY - minY + 92)
+              .attr("height", maxY - minY + 84)
               .style("--dc", dm.color);
             d3.select(this)
               .select("g")
-              .attr("transform", `translate(${band[0] + 18},${minY - 30})`);
+              .attr("transform", `translate(${band[0] + 18},${minY - 26})`);
             d3.select(this)
               .select(".domain-region-h")
-              .attr("width", (dm.label + "  ·  " + dm.sub).length * 6.8 + 26)
+              .attr("width", Math.max(120, (dm.label + "  ·  " + dm.sub).length * 6.4 + 24))
               .attr("height", 19)
               .style("--dc", dm.color);
             d3.select(this)
@@ -1771,23 +1838,47 @@
           d.fy = d.y;
         }
 
-        nodeSel
-          .on("mouseover", function (event, d) {
-            const adj = deg.get(d.id) || new Set();
-            adj.add(d.id);
-            nodeSel.classed("dim", (n) => n.id !== d.id && !adj.has(n.id));
-            linkSel.classed("dim", (l) => !(adj.has(l.source.id) && adj.has(l.target.id)));
-          })
-          .on("mouseout", () => {
-            nodeSel.classed("dim", false);
-            linkSel.classed("dim", false);
+        function dimTo(d) {
+          const adj = deg.get(d.id) || new Set();
+          adj.add(d.id);
+          nodeSel.classed("dim", (n) => n.id !== d.id && !adj.has(n.id));
+          linkSel.classed("dim", (l) => !(adj.has(l.source.id) && adj.has(l.target.id)));
+        }
+        function undim() {
+          nodeSel.classed("dim", false);
+          linkSel.classed("dim", false);
+        }
+
+        nodeSel.on("mouseover", (event, d) => dimTo(d)).on("mouseout", undim);
+
+        function selectNode(d) {
+          clearSelection();
+          d.selected = true;
+          d.expanded = true;
+          nodeSel.filter((n) => n.id === d.id).classed("selected", true);
+          dimTo(d);
+          ticked();
+          cfg.panelNode(d);
+          panel.classList.add("show");
+        }
+        function clearSelection() {
+          nodeSel.classed("selected", false);
+          nodes.forEach((n) => {
+            n.selected = false;
+            n.expanded = false;
           });
+          undim();
+          ticked();
+        }
 
         nodeSel.on("click", (event, d) => {
           if (dragMoved) return;
-          clearSelection();
-          d3.select(event.currentTarget).classed("selected", true);
-          cfg.panelNode(d);
+          if (d.selected) {
+            hidePanel(graph);
+            clearSelection();
+            return;
+          }
+          selectNode(d);
         });
 
         const zoom = d3
@@ -1797,15 +1888,11 @@
           .on("zoom", (event) => world.attr("transform", event.transform));
         svg.call(zoom);
         world.on("click", function (event) {
-          if (event.target.classList && event.target.classList.contains("world-backdrop")) {
-            clearSelection();
-            overview();
-          }
+          const t = event.target;
+          if (!(t.classList && t.classList.contains("world-backdrop"))) return;
+          hidePanel(graph);
+          clearSelection();
         });
-
-        function clearSelection() {
-          nodeSel.classed("selected", false);
-        }
 
         function fitView() {
           const vb = svg.node().getBoundingClientRect();
@@ -1821,7 +1908,7 @@
             maxX = Math.max(maxX, cfg.bands[k][1] - 8);
             minY = Math.min(
               minY,
-              d3.min(members, (n) => n.y - 46 - 90),
+              d3.min(members, (n) => n.y - 40 - 80),
             );
             maxY = Math.max(
               maxY,
@@ -1831,7 +1918,7 @@
           if (minX === Infinity) return;
           const bw = maxX - minX,
             bh = maxY - minY;
-          const s = Math.max(0.95, Math.min((vb.width - 40) / bw, (vb.height - 40) / bh, 1.35));
+          const s = Math.max(0.95, Math.min((vb.width - 48) / bw, (vb.height - 48) / bh, 1.35));
           const tx = vb.width / 2 - (minX + bw / 2) * s;
           const ty = vb.height / 2 - (minY + bh / 2) * s;
           svg
@@ -1865,8 +1952,8 @@
         }
 
         function overview() {
-          panel._graph = graph;
-          cfg.overview(graph);
+          hidePanel(graph);
+          clearSelection();
         }
 
         const graph = {
@@ -1880,6 +1967,9 @@
           ensureFitted,
           overview,
           statusMap,
+          selectNode,
+          hidePanel,
+          render: ticked,
         };
 
         // controls
@@ -1920,10 +2010,6 @@
         research: { label: "research complete", color: "var(--st-research)" },
         deferred: { label: "deferred", color: "var(--st-deferred)" },
       };
-
-      // ============================================================
-      // Graph 1 — Redisigned target (Tab 1)
-      // ============================================================
 
       const DOMAINS = {
         ext: { label: "Source side", sub: "external", color: "var(--accent-src)" },
@@ -2002,7 +2088,7 @@
           label: "Account & tokens",
           badge: "6.6.1",
           domain: "adapter",
-          status: "discuss",
+          status: "locked",
           x: 560,
           y: 190,
           desc: "Single home for OAuth · per-profile lifecycle",
@@ -2010,25 +2096,23 @@
             "Kills the 3 duplicate token copies (api/onedrive-middleware, sync-worker, processor).",
           resp: [
             "Auth URL + PKCE exchange (redirect flow).",
-            "Refresh-token rotation on every refresh; &lt;10 min expiry threshold.",
-            "Per-profile token store with CAS (compare-and-swap) writes.",
-            "Bearer injection into every Graph call; 401 → re-resolve → retry once.",
+            "Refresh-token rotation on every refresh; async resolve never returns an expired token (expired-guard).",
+            "Per-profile token store with CAS (compare-and-swap) writes; DDB vault keyed (userId, provider) = the connection.",
+            "Bearer injection into every Graph call; 401 → re-resolve → retry once (401 only).",
+            "reconnectRequired sticky until /connect rewrites tokens.",
             "Provides 6.6.2 · 6.6.3 · 6.6.5 · 5.1.1.",
           ],
-          infra: [
-            "DDB refresh-tokens · re-key tokenHash→profileId OPEN",
-            "SSM onedrive client id/secret",
+          infra: ["DDB vault keyed (userId, provider)", "SSM onedrive client id/secret"],
+          beads: [{ id: "6ra.6.1", st: "locked" }],
+          decided: [
+            "Q1 token capability in @petroglyph/core (not a service) — generic OAuth machinery; DDB impl stays adapter-local.",
+            "Q2 vault keyed (userId, provider) = the connection; composes with the clean-slate wipe.",
+            "Q3 reconnectRequired sticky until /connect rewrites.",
+            "Q4 old token copies die-with-owner; DEPRECATED banners shipped in 6.6.1.",
+            "Q5 graph client 401-retry once, 401-only — no backoff/429 policy (delta walk owns that).",
+            "Q6 expired-guard only — resolve never returns an expired token; no threshold const, no timer.",
           ],
-          beads: [{ id: "6ra.6.1", st: "discuss" }],
-          opens: [
-            "Q1 token types/resolver in @petroglyph/core (rec) vs adapter-local",
-            "Q2 DDB re-key tokenHash:userId → profileId: in place / new table / defer",
-            "Q3 reconnectRequired stickiness: sticky fast-fail (rec) vs timed retry",
-            "Q4 old token copies: die-with-owner (rec) vs die-now",
-            "Q5 Graph client 401-retry: once, 401 only",
-            "Q6 shared 10-min refresh-threshold const",
-          ],
-          note: "Plan ready (.working-docs/6ra.6.1-token-management-plan.md) — awaiting user reaction.",
+          note: "Plan complete — all six questions resolved 2026-09-06. Implementation gated on the Unit 1 test-plan bead 6.5.1.2.",
         },
         sub: {
           label: "Subscription mgmt",
@@ -2124,48 +2208,53 @@
           purpose:
             "The adapter's ONLY touchpoint with staging. Owns the land routine and owns nothing else.",
           resp: [
-            "created/updated: GET Graph /content (token via 6.6.1) → PDF gate (mimeType application/pdf OR .pdf) → staging-lib land() (staging/v1 keys) → emit FileStagedEvent.",
+            "created/updated: GET Graph /content (token via 6.6.1) → PDF gate (mimeType application/pdf OR .pdf — pre-download filter input only) → land() with detectType() magic-byte (L0 %PDF-) → staging/v1 keys → emit FileStagedEvent (mimeType REQUIRED).",
             "deleted: emit FileDeletedEvent { itemId, relativePath, s3Key: null | removed key } — no fetch.",
             "Idempotent: same event → same s3Key.",
             "No layout logic (lib does), no index logic (Unit 2 does), no subscription/webhook/delta logic.",
           ],
-          beads: [{ id: "6ra.5.1.1", st: "planned" }],
-          blocked: "Blocked by 6.6.1 (tokens) · 6.6.3 (delta) · 5.2.1 (staging-lib).",
+          beads: [
+            { id: "6ra.5.1.1", st: "planned" },
+            { id: "6ra.5.1.2", st: "planned" },
+          ],
+          blocked:
+            "Blocked by 6.6.1 (tokens) · 6.6.3 (delta) · 5.2.1 (staging-lib) · Unit 1 test-plan bead 6.5.1.2.",
         },
         reg: {
           label: "Business-event registry",
           badge: "shared seam",
           domain: "registry",
-          status: "discuss",
+          status: "locked",
           x: 940,
           y: 430,
-          desc: "Schema-versioned · CloudEvents 1.0.2",
+          desc: "DDB event log · CloudEvents 1.0.2",
           purpose:
             "The acknowledged cost of domain events / consumer-forwarded: producers emit facts; the consuming domain forwards them onto its OWN queue.",
           resp: [
-            "FileStagedEvent { profileId, source, changeType, itemId, name, relativePath, s3Key, mimeType? } — registered.",
+            "FileStagedEvent { profileId, source, changeType, itemId, name, relativePath, s3Key, mimeType } — mimeType REQUIRED, magic-byte verified at land.",
             "FileDeletedEvent { …, s3Key: string|null } — registered.",
             "FileChangeEvent stays adapter-internal (delta walk), never registered.",
+            "Transport: DDB event log — one CE document per row, source+id record key, put-if-absent ⇒ dedupe at write; 6.5.2.2 forwarder via DDB Streams → Lambda.",
+            "Envelope machinery lives in @petroglyph/events (not core): zod CE-1.0.2 schema, parse/validate, JSON formatter, z.toJSONSchema() artifacts.",
             "Additive schema versions, like the S3 key layout.",
-            "The registry is NOT in core — core stays vocabulary-free.",
           ],
           decided: [
             "CloudEvents 1.0.2 structured mode, JSON — envelope format resolved (2026-09-03).",
+            "Event type namespace: petroglyph.file.staged / petroglyph.file.deleted — brand-anchored, type names forever (2026-09-03/06).",
+            "dataschema host = dedicated schemas.petroglyph.dev (petroglyph.dev owned; .page dropped).",
+            "Q8 registry transport RESOLVED: DDB event log (2026-09-06) — replay/lag/query native; SQS/SNS/EventBridge rejected.",
+            "Q9 events package RESOLVED: dedicated @petroglyph/events registry package (2026-09-06).",
+            "Q10 envelope impl RESOLVED: hand-rolled zod CE envelope in events pkg — official SDK dropped.",
             "A queue is a delayed void call INTO a domain — never a conversation mediator between domains.",
           ],
-          beads: [{ id: "5.2.1 · Q8 Q9", st: "discuss" }],
-          opens: [
-            "Q8 registry transport: DDB event log (consumer-pull) vs SNS/EventBridge (one-hop push to forwarders) vs code-level only — the 5.2.2 forwarder shape follows from it.",
-            "Q9 events package location: dedicated events package vs inside staging-contracts.",
-            "Q10 CloudEvents impl: core CE schema vs official SDK.",
-          ],
-          note: "Decide during 5.2.1 planning — user reaction needed.",
+          beads: [{ id: "5.2.1 Q8 Q9 Q10", st: "locked" }],
+          note: "Transport, namespace, package location and envelope impl all resolved (2026-09-06).",
         },
         contract: {
           label: "Contracts + staging-lib",
           badge: "5.2.1",
           domain: "staging",
-          status: "discuss",
+          status: "locked",
           x: 1320,
           y: 190,
           desc: "Neutral seam · deriveStagingKey · stage()",
@@ -2175,18 +2264,18 @@
             "Zod contract schemas: FileChangeEvent / FileStagedEvent / FileDeletedEvent.",
             "deriveStagingKey → staging/v1/<profileId>/<relPath>/<name>.pdf — layout version in the key; additive v2, never coordinated deploys.",
             "stage(store, …) = derive + put only — no fetch/gate/events (adapter-owned glue).",
+            "detectType() on the landed body (L0 = %PDF-) — mimeType + S3 ContentType from the same detected value.",
             "Rejects ../, leading /, empty segments; name verbatim.",
             "No-Microsoft-vocabulary guard (rejects parentReference etc.).",
           ],
-          beads: [{ id: "6ra.5.2.1", st: "discuss" }],
-          opens: [
-            "Q8 registry transport (see registry node)",
-            "Q9 events package location",
-            "Q5 old handwritten/ keys + pending records: leave for 5.2.2 reindex (rec) vs cleanup script now",
-            "Q6 contentType required from the adapter gate (rec) vs default application/pdf",
-            "Q10 CloudEvents implementation choice",
+          beads: [{ id: "6ra.5.2.1", st: "locked" }],
+          decided: [
+            "Q5 clean slate (2026-09-06): all current data is test/setup — wipe DDB records + handwritten/ keys at reset; no migration code.",
+            "Q6 contentType REQUIRED in stage(), from detectType() — never defaulted.",
+            "Q4 mimeType REQUIRED in data: magic-byte detection of the landed body; (claim, extension, detected) mismatch → no land, no event, lie telemetry.",
+            "Q8/Q9/Q10 — see the registry node (DDB event log · @petroglyph/events · zod envelope).",
           ],
-          note: "Plan ready (.working-docs/6ra.5.2.1-staging-contracts-plan.md) — awaiting user reaction.",
+          note: "Decision-complete (2026-09-06) — awaiting go/no-go; then 6.5.1.1 / 6.5.2.2 can start.",
         },
         idx: {
           label: "Index + lifecycle",
@@ -2204,8 +2293,12 @@
             "TTL/cleanup aligned with S3 lifecycle.",
             "Exposes the 'ready files' query surface — the delivery surface never derives keys.",
           ],
-          beads: [{ id: "6ra.5.2.2", st: "planned" }],
-          blocked: "Blocked by 5.2.1. Forwarder shape follows registry transport (Q8).",
+          beads: [
+            { id: "6ra.5.2.2", st: "planned" },
+            { id: "6ra.5.2.5", st: "planned" },
+          ],
+          blocked:
+            "Blocked by 5.2.1 (go/no-go). Forwarder = DDB Streams → Lambda (transport resolved). Unit 2 test-plan bead 6.5.2.5.",
         },
         queue: {
           label: "SQS staging queue",
@@ -2293,22 +2386,22 @@
           status: "planned",
           x: 940,
           y: 930,
-          desc: "Queue<Payload> · ObjectStore · CE Envelope",
+          desc: "Queue<Payload> · ObjectStore",
           purpose:
             "Generic, vocabulary-free platform abstractions — no domain vocabulary anywhere.",
           resp: [
             "Queue<Payload> — typed SQS mechanics; encode/decode injected by the domain.",
             "ObjectStore — S3 put/get/delete/presignGet; presign on the store, so delivery never touches the S3 SDK.",
-            "CloudEvents Envelope<Payload> — CE 1.0.2 schema + formatter.",
-            "(rec, pending 6.6.1 Q1) TokenRecord / TokenStore (CAS) / createTokenResolver — source-agnostic.",
+            "TokenRecord / TokenStore (CAS) / createTokenResolver — source-agnostic (6.6.1 Q1, resolved).",
           ],
           decided: [
             "Type parameters named by role/payload — never bare T.",
+            "CloudEvents envelope machinery lives in @petroglyph/events, NOT here (Q9, resolved).",
             "Domain contracts live in their owning domain's package, not here.",
           ],
           beads: [
-            { id: "5.2.1", st: "discuss" },
-            { id: "6.6.1 Q1", st: "discuss" },
+            { id: "5.2.1", st: "locked" },
+            { id: "6.6.1 Q1", st: "locked" },
             { id: "oru", st: "planned" },
           ],
           note: "Counter-precedent: core/src/sync-profile* holds profile-domain knowledge — tracked on epic oru (Profiles), not blocking.",
@@ -2358,7 +2451,10 @@
           purpose: "The cloud never writes to the vault — the plugin does.",
           resp: [],
           beads: [],
-          decided: ["GitHub App integration kept as-is."],
+          decided: [
+            "GitHub App integration kept as-is.",
+            "Vault keyed (userId, provider) = the connection — one vault per provider (6.6.1 Q2).",
+          ],
         },
         api_client: {
           label: "@petroglyph/api-client",
@@ -2384,7 +2480,7 @@
         { s: "delta", t: "fgl", label: "FileChangeEvent", type: "flow" },
         { s: "fgl", t: "s3", label: "PutObject staging/v1/…", type: "flow" },
         { s: "fgl", t: "reg", label: "FileStaged / FileDeleted (CE)", type: "flow" },
-        { s: "reg", t: "idx", label: "consume from registry", type: "flow", bend: 30 },
+        { s: "reg", t: "idx", label: "DDB Streams → forward", type: "flow", bend: 30 },
         { s: "idx", t: "queue", label: "forward onto own queue", type: "flow", bend: -26 },
         { s: "queue", t: "dispatch", label: "per-event dispatch", type: "flow" },
         { s: "dispatch", t: "idx", label: "apply via index consumer", type: "flow" },
@@ -2422,65 +2518,10 @@
         plugin: [1570, 2000],
       };
 
+      // Panels are hidden by default — details appear on node click.
       function redesignedOverview(g) {
-        const openNodes = g.nodes.filter((n) => n.status === "discuss");
-        const counts = {};
-        g.nodes.forEach((n) => {
-          counts[n.status] = (counts[n.status] || 0) + 1;
-        });
-        const panel = g.panel;
-        panel.innerHTML = "";
-        const h = document.createElement("h3");
-        h.innerHTML = `<span class="dot" style="background:var(--accent-reg)"></span> System map · overview`;
-        panel.appendChild(h);
-        const ov = document.createElement("div");
-        ov.className = "panel-overview";
-        ov.innerHTML =
-          `<div class="stat-row">` +
-          `${g.nodes.length} nodes · ${g.links.length} edges` +
-          ` &nbsp;·&nbsp; <span class="dot" style="background:var(--st-discuss)"></span> open: ${counts.discuss || 0}` +
-          ` &nbsp;·&nbsp; <span class="dot" style="background:var(--st-planned)"></span> planned: ${counts.planned || 0}` +
-          ` &nbsp;·&nbsp; <span class="dot" style="background:var(--st-locked)"></span> locked: ${counts.locked || 0}` +
-          `</div>` +
-          `<p><b style="color:var(--text)">Click any node</b> for its full annotation (responsibility, infrastructure, beads, status). ` +
-          `Hover highlights what a component talks to. Drag nodes, scroll to zoom, drag the canvas to pan.</p>` +
-          `<h5 style="color:var(--st-discuss);margin-top:14px">Open decisions — ${openNodes.length} components waiting on you</h5>`;
-        openNodes.forEach((n) => {
-          const b = document.createElement("div");
-          b.className = "opens-block";
-          b.innerHTML =
-            `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">` +
-            `<b style="color:var(--text);cursor:pointer">${n.label}</b> ${beadChip(n.beads[0] || { id: n.badge, st: n.status }, STATUS)}` +
-            `</div><ul style="margin:4px 0 0">` +
-            (n.opens || []).map((o) => `<li class="openq">${o}</li>`).join("") +
-            `</ul>`;
-          const labelEl = b.querySelector("b");
-          labelEl.addEventListener("click", () => {
-            g.clearSelection();
-            const sel = d3
-              .select("#graph")
-              .selectAll(".node-g")
-              .filter((x) => x === n);
-            sel.classed("selected", true);
-            g.panelNode(n);
-            g.fitToNode(n);
-          });
-          ov.appendChild(b);
-        });
-        ov.insertAdjacentHTML(
-          "beforeend",
-          `<h5 style="margin-top:14px">Broadly complete (locked or researched)</h5>` +
-            `<ul>` +
-            `<li>Option A — S3-mediated handoff; domain events, consumer-forwarded (2026-09-03)</li>` +
-            `<li>CloudEvents 1.0.2 envelope; schema-versioned registry</li>` +
-            `<li>S3 layout versioning: staging/v1/…, additive v2</li>` +
-            `<li>Two plugin surfaces — no standalone API service</li>` +
-            `<li>No third profile service; Sync Now = trigger, no job machine</li>` +
-            `<li>fetch+gate+land lives at the adapter boundary</li>` +
-            `<li>6ra.6 comms-loop ground truth documented</li>` +
-            `</ul>`,
-        );
-        panel.appendChild(ov);
+        g.hidePanel(g);
+        g.clearSelection();
       }
 
       TAB_GRAPH["tab-redesigned"] = makeGraph({
@@ -2749,7 +2790,8 @@
           y: 690,
           desc: "keyed tokenHash — 3 writers",
           why: ["3 independent refresh copies: api middleware · sync-worker · processor."],
-          lands: "6.6.1 single per-profile CAS store (open Q1–Q6).",
+          lands:
+            "6.6.1 single per-profile CAS store, vault keyed (userId, provider) — plan resolved 2026-09-06.",
           beads: [{ id: "6.6.1", st: "discuss" }],
         },
         {
@@ -2776,7 +2818,7 @@
           desc: "old key layout + pending records",
           why: [
             "Old <code>handwritten/…</code>-style prefix keys, no layout version.",
-            "Old keys + <code>pending</code> records stay readable until 5.2.2 reindexes (open Q5).",
+            "Old keys + <code>pending</code> records — Q5 resolved (2026-09-06): clean slate, wiped at reset, no migration code.",
           ],
           lands:
             "<code>staging/v1/&lt;profileId&gt;/…</code> keys; additive v2 (5.2.1). Lifecycle expire-staged-pdfs kept.",
@@ -2844,41 +2886,8 @@
       ];
 
       function legacyOverview(g) {
-        const counts = {};
-        g.nodes.forEach((n) => {
-          counts[n.status] = (counts[n.status] || 0) + 1;
-        });
-        const panel = g.panel;
-        panel.innerHTML = "";
-        const h = document.createElement("h3");
-        h.innerHTML = `<span class="dot" style="background:#f87171"></span> Legacy (pre-reset)`;
-        panel.appendChild(h);
-        const ov = document.createElement("div");
-        ov.className = "panel-overview";
-        ov.innerHTML =
-          `<div class="stat-row">` +
-          `${g.nodes.length} nodes · ${g.links.length} edges` +
-          ` &nbsp;·&nbsp; dies: ${counts.dies || 0} · superseded: ${counts.superseded || 0} · interim: ${counts.interim || 0}` +
-          ` · kept: ${counts.kept || 0} · deferred: ${counts.deferred || 0}` +
-          `</div>` +
-          `<p><b style="color:var(--text)">Click any node</b> for why it failed and what replaces it. ` +
-          `Hover highlights its neighbours; drag nodes, scroll to zoom, drag the canvas to pan.</p>` +
-          `<h5>Failure families (each drives a locked decision)</h5>` +
-          `<ul>` +
-          `<li><b>Webhook schema</b> — resourceData required ⇒ every real notification 400s.</li>` +
-          `<li><b>Enqueue</b> — fire-and-forget + immediate 200 ⇒ lost SQS sends.</li>` +
-          `<li><b>Tokens</b> — 3 independent refresh copies fighting over one DDB row.</li>` +
-          `<li><b>Producer-push</b> — adapters push work into consumer-owned queues.</li>` +
-          `<li><b>Job machine</b> — outbox → relay → worker + jobId polling UX.</li>` +
-          `<li><b>Double-write</b> — sync-worker writes pending, processor overwrites.</li>` +
-          `</ul>` +
-          `<h5>Interim survivors</h5>` +
-          `<ul>` +
-          `<li>Old S3 keys + <code>pending</code> records stay readable until 5.2.2 reindexes (open Q5).</li>` +
-          `<li>Delta tokens, DLQ fabric, CW alarms, SSM creds, lifecycle rule — carried over.</li>` +
-          `</ul>` +
-          `<p style="color:var(--st-locked)">Every legacy edge has a successor on Tab 1.</p>`;
-        panel.appendChild(ov);
+        g.hidePanel(g);
+        g.clearSelection();
       }
 
       TAB_GRAPH["tab-legacy"] = makeGraph({
@@ -2947,7 +2956,8 @@
           why: [
             "api/onedrive-middleware, sync-worker and the processor each refresh tokens independently.",
           ],
-          lands: "6.6.1 — single home, per-profile CAS store (open Q1–Q6).",
+          lands:
+            "6.6.1 — single home, per-profile CAS store; all six questions resolved (2026-09-06).",
           bead: "6.6.1",
         },
         {
@@ -3057,7 +3067,8 @@
           y: 1270,
           desc: "handwritten/ · no layout version",
           why: ["Old keys + pending records stay readable until reindexed."],
-          lands: "staging/v1/&lt;profileId&gt;/… keys; reindex by 5.2.2 (open Q5).",
+          lands:
+            "Clean slate (Q5 resolved): keys wiped at reset — staging/v1/&lt;profileId&gt;/… layout starts fresh.",
           bead: "5.2.1 · 5.2.2",
         },
         {
@@ -3204,37 +3215,8 @@
       );
 
       function resetOverview(g) {
-        const counts = {};
-        g.nodes
-          .filter((n) => n.kind === "legacy")
-          .forEach((n) => {
-            counts[n.status] = (counts[n.status] || 0) + 1;
-          });
-        const panel = g.panel;
-        panel.innerHTML = "";
-        const h = document.createElement("h3");
-        h.innerHTML = `<span class="dot" style="background:#f87171"></span> Reset map · the delta`;
-        panel.appendChild(h);
-        const ov = document.createElement("div");
-        ov.className = "panel-overview";
-        ov.innerHTML =
-          `<div class="stat-row">` +
-          `${g.nodes.filter((n) => n.kind === "legacy").length} legacy elements · ${g.links.length} mappings` +
-          ` &nbsp;·&nbsp; dies: ${counts.dies || 0} · superseded: ${counts.superseded || 0} · interim: ${counts.interim || 0}` +
-          ` · kept: ${counts.kept || 0} · deferred: ${counts.deferred || 0}` +
-          `</div>` +
-          `<p><b style="color:var(--text)">Left column</b> — every legacy element the reset touches, grouped by fate. ` +
-          `<b style="color:var(--text)">Right column</b> — where it lands in the redesign (same nodes as Tab 1).</p>` +
-          `<h5>How to read the fates</h5>` +
-          `<ul>` +
-          `<li><b>💀 dies</b> — removed outright; the redesign has no equivalent or a corrected one.</li>` +
-          `<li><b>♻ superseded</b> — replaced by a redesigned successor component.</li>` +
-          `<li><b>🕓 interim</b> — old data stays readable until reindexed (open Q5).</li>` +
-          `<li><b>✅ kept</b> — carried over unchanged or re-homed.</li>` +
-          `<li><b>⏸ deferred</b> — plugin-facing rework happens once the server stabilises (6ra.5.4).</li>` +
-          `</ul>` +
-          `<p style="color:var(--faint)">Click a legacy element for the “why”; click a redesign node for its full annotation. Hover a legacy element to highlight every lane it maps to.</p>`;
-        panel.appendChild(ov);
+        g.hidePanel(g);
+        g.clearSelection();
       }
 
       const gReset = makeGraph({
@@ -3268,6 +3250,8 @@
         },
         overview: resetOverview,
       });
+
+      TAB_GRAPH["tab-reset"] = gReset;
 
       // ---------- boot ----------
       window.setTimeout(() => {
