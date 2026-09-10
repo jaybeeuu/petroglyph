@@ -168,6 +168,12 @@ importers:
       '@petroglyph/core':
         specifier: workspace:*
         version: link:../core
+      '@petroglyph/events':
+        specifier: workspace:*
+        version: link:../events
+      '@petroglyph/staging-contracts':
+        specifier: workspace:*
+        version: link:../staging-contracts
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -175,6 +181,9 @@ importers:
       '@aws-sdk/client-dynamodb':
         specifier: ^3.1024.0
         version: 3.1024.0
+      '@aws-sdk/client-s3':
+        specifier: ^3.1024.0
+        version: 3.1029.0
       '@types/aws-lambda':
         specifier: ^8.10.145
         version: 8.10.161
