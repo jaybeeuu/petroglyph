@@ -8,3 +8,12 @@ export type {
   PendingFileRecord,
   StagedFileRecord,
 } from "./file-record.js";
+export { createSqsQueue } from "./aws/queue.js";
+export type { Queue, QueueSendOptions } from "./aws/queue.js";
+export { createS3ObjectStore } from "./aws/object-store.js";
+export type {
+  ObjectStore,
+  ObjectStoreGetResult,
+  ObjectStorePresignGetOptions,
+  ObjectStorePutResult,
+} from "./aws/object-store.js";
