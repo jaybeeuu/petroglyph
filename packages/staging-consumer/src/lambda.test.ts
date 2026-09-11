@@ -56,7 +56,7 @@ function streamEvent(): DynamoDBStreamEvent {
 
 function queueSpy(): Queue<CloudEvent<unknown>> & { send: ReturnType<typeof vi.fn> } {
   return {
-    send: vi.fn(async () => undefined),
+    send: vi.fn().mockResolvedValue(undefined),
   };
 }
 

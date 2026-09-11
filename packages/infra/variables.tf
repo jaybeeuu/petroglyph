@@ -60,6 +60,30 @@ variable "sync_relay_zip_s3_key" {
   default     = ""
 }
 
+variable "forwarder_zip_s3_bucket" {
+  description = "S3 bucket containing the staging forwarder Lambda deployment zip. Empty string disables the Lambda."
+  type        = string
+  default     = ""
+}
+
+variable "forwarder_zip_s3_key" {
+  description = "S3 key of the staging forwarder Lambda deployment zip. Empty string disables the Lambda."
+  type        = string
+  default     = ""
+}
+
+variable "staging_delivery_zip_s3_bucket" {
+  description = "S3 bucket containing the staging delivery Lambda deployment zip. Empty string disables the Lambda."
+  type        = string
+  default     = ""
+}
+
+variable "staging_delivery_zip_s3_key" {
+  description = "S3 key of the staging delivery Lambda deployment zip. Empty string disables the Lambda."
+  type        = string
+  default     = ""
+}
+
 variable "api_custom_domain" {
   description = "Custom domain name for the API (e.g. api.petroglyph.page). Empty string disables custom domain resources."
   type        = string
