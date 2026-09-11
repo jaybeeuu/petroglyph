@@ -238,6 +238,37 @@ importers:
         specifier: ^0.28.0
         version: 0.28.0
 
+  packages/staging-consumer:
+    dependencies:
+      '@aws-sdk/lib-dynamodb':
+        specifier: ^3.1024.0
+        version: 3.1024.0(@aws-sdk/client-dynamodb@3.1024.0)
+      '@aws-sdk/util-dynamodb':
+        specifier: ^3.996.2
+        version: 3.996.2(@aws-sdk/client-dynamodb@3.1024.0)
+      '@petroglyph/core':
+        specifier: workspace:*
+        version: link:../core
+      '@petroglyph/events':
+        specifier: workspace:*
+        version: link:../events
+      '@petroglyph/staging-contracts':
+        specifier: workspace:*
+        version: link:../staging-contracts
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@aws-sdk/client-dynamodb':
+        specifier: ^3.1024.0
+        version: 3.1024.0
+      '@types/node':
+        specifier: ^25.5.2
+        version: 25.5.2
+      testcontainers:
+        specifier: ^10.17.0
+        version: 10.28.0
+
   packages/staging-contracts:
     dependencies:
       '@petroglyph/core':
