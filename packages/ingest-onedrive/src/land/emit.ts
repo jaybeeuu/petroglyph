@@ -32,7 +32,7 @@ export function emitFileStaged(
 export function emitFileDeleted(
   eventLog: EventLogWriter,
   options: {
-    change: Pick<FileChangeEvent, "profileId" | "itemId" | "relativePath">;
+    change: Pick<FileChangeEvent, "profileId" | "itemId" | "name" | "relativePath">;
     s3Key: string | null;
     emissionId: string;
   },
@@ -46,9 +46,21 @@ export function emitFileDeleted(
       source: "onedrive",
       changeType: "deleted",
       itemId: options.change.itemId,
-      relativePath: options.change.relativePath,
+      // The REMOVED item's own path (parent + name) — Unit 2 sweeps records
+      // under this path, so the path must be the thing itself, not its parent.
+      relativePath: deletedOwnPath(options.change),
       s3Key: options.s3Key,
     },
   });
   return eventLog.putIfAbsent(document);
+}
+
+/** The deleted thing's own normalized path — parent/name, or name at the root. */
+export function deletedOwnPath(change: {
+  name: string;
+  relativePath: string;
+}): string {
+  return change.relativePath === ""
+    ? change.name
+    : `${change.relativePath}/${change.name}`;
 }

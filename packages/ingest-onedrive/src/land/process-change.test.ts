@@ -185,7 +185,7 @@ describe("processChange", () => {
     expect(document.data).toMatchObject({
       changeType: "deleted",
       itemId: "item-1",
-      relativePath: "notes",
+      relativePath: "notes/a.pdf",
       s3Key: "staging/v1/p1/notes/a.pdf",
     });
   });
