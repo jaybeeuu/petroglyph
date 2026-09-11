@@ -446,6 +446,8 @@ resource "aws_iam_role_policy" "petroglyph_adapter_onedrive_policy" {
           "dynamodb:Query",
         ]
         Resource = [
+          aws_dynamodb_table.token_vaults.arn,
+          aws_dynamodb_table.delta_states.arn,
           aws_dynamodb_table.refresh_tokens.arn,
           aws_dynamodb_table.delta_tokens.arn,
           aws_dynamodb_table.event_log.arn,

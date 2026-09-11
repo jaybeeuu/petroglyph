@@ -33,6 +33,33 @@ resource "aws_dynamodb_table" "refresh_tokens" {
   }
 }
 
+# Connection-keyed token vault (6.5.1.1 adapter): the delta adapter stores and
+# refreshes OneDrive OAuth tokens keyed {userId, provider}. Distinct from the
+# legacy refresh_tokens table (tokenHash key) which the old processor and API
+# lambdas still write — this table matches the adapter's Get/Put/UpdateCommand
+# key shape so prod DDB no longer rejects its calls.
+
+resource "aws_dynamodb_table" "token_vaults" {
+  name         = "petroglyph-token-vaults-${terraform.workspace}"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "userId"
+  range_key    = "provider"
+
+  attribute {
+    name = "userId"
+    type = "S"
+  }
+
+  attribute {
+    name = "provider"
+    type = "S"
+  }
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
 resource "aws_dynamodb_table" "sync_profiles" {
   name         = "petroglyph-sync-profiles-${terraform.workspace}"
   billing_mode = "PAY_PER_REQUEST"
@@ -82,6 +109,32 @@ resource "aws_dynamodb_table" "delta_tokens" {
 
   attribute {
     name = "profileId"
+    type = "S"
+  }
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+# Connection-keyed delta-state store (6.5.1.1 adapter): the adapter persists
+# per-connection Graph delta links keyed {userId, provider}. Distinct from the
+# legacy profileId-keyed delta_tokens table which the old sync worker still
+# writes — this table matches the adapter's read/write/clear key shape.
+
+resource "aws_dynamodb_table" "delta_states" {
+  name         = "petroglyph-delta-states-${terraform.workspace}"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "userId"
+  range_key    = "provider"
+
+  attribute {
+    name = "userId"
+    type = "S"
+  }
+
+  attribute {
+    name = "provider"
     type = "S"
   }
 
