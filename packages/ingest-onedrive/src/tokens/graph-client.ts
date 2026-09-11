@@ -67,9 +67,18 @@ export function createGraphClient(options: GraphClientOptions): GraphClient {
     init: GraphRequestInit | undefined,
     token: string,
   ): Promise<Response> {
-    return fetchFn(`${options.baseUrl}${path}`, {
+    return fetchFn(resolveUrl(options.baseUrl, path), {
       ...init,
       headers: { ...init?.headers, Authorization: `Bearer ${token}` },
     });
   }
+}
+
+/**
+ * Graph's deltaLink/nextLink values are absolute URLs; the walker hands
+ * them back to the client verbatim, so an absolute path must never be
+ * re-prefixed with baseUrl.
+ */
+function resolveUrl(baseUrl: string, path: string): string {
+  return /^https?:\/\//.test(path) ? path : `${baseUrl}${path}`;
 }

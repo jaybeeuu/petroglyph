@@ -80,6 +80,25 @@ describe("createGraphClient", () => {
     expect(calls().filter((call) => call.force === true)).toHaveLength(1);
   });
 
+  it("uses an absolute URL verbatim (deltaLink/nextLink from Graph are absolute)", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(response(200));
+    const { resolveAccessToken } = scriptedResolver([{ kind: "success", accessToken: "tok-1" }]);
+
+    const client = createGraphClient({
+      baseUrl: "https://graph.microsoft.com/v1.0",
+      fetchFn,
+      resolveAccessToken,
+    });
+
+    const absolute = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=opaque-abc";
+    const result = await client.request(absolute);
+
+    expect(result.status).toBe(200);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    const [url] = fetchFn.mock.calls[0] as [string];
+    expect(url).toBe(absolute);
+  });
+
   it("returns an immediate 401 and never calls Graph when the resolver fast-fails at entry", async () => {
     const fetchFn = vi.fn();
     const { resolveAccessToken } = scriptedResolver([{ kind: "reconnect-required" }]);

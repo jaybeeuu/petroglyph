@@ -182,7 +182,7 @@ importers:
         specifier: ^3.1024.0
         version: 3.1024.0
       '@aws-sdk/client-s3':
-        specifier: ^3.1024.0
+        specifier: ^3.1029.0
         version: 3.1029.0
       '@types/aws-lambda':
         specifier: ^8.10.145
@@ -240,6 +240,9 @@ importers:
 
   packages/staging-consumer:
     dependencies:
+      '@aws-sdk/client-sqs':
+        specifier: ^3.1029.0
+        version: 3.1029.0
       '@aws-sdk/lib-dynamodb':
         specifier: ^3.1024.0
         version: 3.1024.0(@aws-sdk/client-dynamodb@3.1024.0)
@@ -262,9 +265,15 @@ importers:
       '@aws-sdk/client-dynamodb':
         specifier: ^3.1024.0
         version: 3.1024.0
+      '@types/aws-lambda':
+        specifier: ^8.10.145
+        version: 8.10.161
       '@types/node':
         specifier: ^25.5.2
         version: 25.5.2
+      esbuild:
+        specifier: ^0.28.0
+        version: 0.28.0
       testcontainers:
         specifier: ^10.17.0
         version: 10.28.0

@@ -56,11 +56,6 @@ export function emitFileDeleted(
 }
 
 /** The deleted thing's own normalized path — parent/name, or name at the root. */
-export function deletedOwnPath(change: {
-  name: string;
-  relativePath: string;
-}): string {
-  return change.relativePath === ""
-    ? change.name
-    : `${change.relativePath}/${change.name}`;
+export function deletedOwnPath(change: { name: string; relativePath: string }): string {
+  return change.relativePath === "" ? change.name : `${change.relativePath}/${change.name}`;
 }
