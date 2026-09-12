@@ -26,7 +26,7 @@ const stale: TokenRecord = {
   reconnectRequired: false,
 };
 
-const persistenceDeadline = new Date(Date.now() + 1000 * 3600).valueOf() / 1000;
+const persistenceDeadline = Math.floor(Date.now() / 1000) + 3600;
 
 describe.skipIf(!canRun)("token store CAS + resolver concurrency against LocalStack DDB", () => {
   let container: StartedTestContainer;
