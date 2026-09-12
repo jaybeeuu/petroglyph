@@ -129,7 +129,14 @@ describe.skipIf(!canRun)("delivery surface /files against LocalStack S3 + DDB", 
 
     const url = body.files[0]?.s3PresignedUrl ?? "";
     // The presign target is the STORED key, verbatim — never derived.
-    expect(new URL(url).pathname).toBe(`/${S3_KEY}`);
+    const parsed = new URL(url);
+    if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
+      // LocalStack addresses buckets path-style: bucket and key sit in the path.
+      expect(parsed.pathname).toBe(`/${BUCKET}/${S3_KEY}`);
+    } else {
+      // Real AWS virtual-hosts the bucket: the bucket root is the host.
+      expect(parsed.pathname).toBe(`/${S3_KEY}`);
+    }
 
     const downloaded = await fetch(url);
     expect(downloaded.status).toBe(200);
