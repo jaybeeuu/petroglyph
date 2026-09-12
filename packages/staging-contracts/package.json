@@ -1,0 +1,30 @@
+{
+  "name": "@petroglyph/staging-contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "lint": "eslint .",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@petroglyph/core": "workspace:*",
+    "@petroglyph/events": "workspace:*",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1",
+    "@types/node": "^25.5.2",
+    "testcontainers": "^10.17.0",
+    "@aws-sdk/client-s3": "^3.1024.0"
+  }
+}

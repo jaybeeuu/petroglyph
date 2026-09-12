@@ -37,3 +37,33 @@ output "sync_jobs_stream_arn" {
   description = "ARN of the DynamoDB stream on the sync-jobs table"
   value       = aws_dynamodb_table.sync_jobs.stream_arn
 }
+
+output "staged_events_queue_url" {
+  description = "URL of the staging internal FIFO queue (forwarder → dispatch)"
+  value       = aws_sqs_queue.staged_events.url
+}
+
+output "staged_events_queue_arn" {
+  description = "ARN of the staging internal FIFO queue"
+  value       = aws_sqs_queue.staged_events.arn
+}
+
+output "delta_trigger_queue_url" {
+  description = "URL of the delta-trigger FIFO queue (bell → adapter)"
+  value       = aws_sqs_queue.delta_trigger.url
+}
+
+output "delta_trigger_queue_arn" {
+  description = "ARN of the delta-trigger FIFO queue"
+  value       = aws_sqs_queue.delta_trigger.arn
+}
+
+output "event_log_stream_arn" {
+  description = "ARN of the DynamoDB stream on the event-log table"
+  value       = aws_dynamodb_table.event_log.stream_arn
+}
+
+output "files_feed_url" {
+  description = "The /files delivery surface URL"
+  value       = "${aws_apigatewayv2_api.petroglyph_api.api_endpoint}/files"
+}

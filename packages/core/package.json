@@ -17,10 +17,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1024.0",
+    "@aws-sdk/client-sqs": "^3.1024.0",
     "@aws-sdk/lib-dynamodb": "^3.1024.0",
+    "@aws-sdk/s3-request-presigner": "^3.1024.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@aws-sdk/client-dynamodb": "^3.1024.0"
+    "@aws-sdk/client-dynamodb": "^3.1024.0",
+    "@types/node": "^25.5.2",
+    "testcontainers": "^10.17.0"
   }
 }

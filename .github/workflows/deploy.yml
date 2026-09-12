@@ -83,6 +83,14 @@ jobs:
         with:
           name: processor-zip
           path: packages/processor/lambda.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forwarder-zip
+          path: packages/staging-consumer/lambda.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: staging-delivery-zip
+          path: packages/staging-delivery/lambda.zip
 
   deploy:
     needs: [package]
@@ -125,6 +133,14 @@ jobs:
         with:
           name: processor-zip
           path: packages/processor
+      - uses: actions/download-artifact@v4
+        with:
+          name: forwarder-zip
+          path: packages/staging-consumer
+      - uses: actions/download-artifact@v4
+        with:
+          name: staging-delivery-zip
+          path: packages/staging-delivery
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -153,6 +169,16 @@ jobs:
         id: processor-artifact-hash
         run: |
           HASH=$(sha256sum packages/processor/lambda.zip | cut -d' ' -f1)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+      - name: Compute forwarder lambda content hash
+        id: forwarder-artifact-hash
+        run: |
+          HASH=$(sha256sum packages/staging-consumer/lambda.zip | cut -d' ' -f1)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+      - name: Compute staging-delivery lambda content hash
+        id: delivery-artifact-hash
+        run: |
+          HASH=$(sha256sum packages/staging-delivery/lambda.zip | cut -d' ' -f1)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
       - name: Upload lambda zip to S3
         run: |
@@ -194,6 +220,22 @@ jobs:
           else
             aws s3 cp packages/processor/lambda.zip s3://${{ secrets.LAMBDA_ARTIFACT_BUCKET }}/$KEY
           fi
+      - name: Upload forwarder lambda zip to S3
+        run: |
+          KEY="forwarder-${{ steps.forwarder-artifact-hash.outputs.hash }}.zip"
+          if aws s3api head-object --bucket ${{ secrets.LAMBDA_ARTIFACT_BUCKET }} --key "$KEY" 2>/dev/null; then
+            echo "Artifact already exists at $KEY — skipping upload"
+          else
+            aws s3 cp packages/staging-consumer/lambda.zip s3://${{ secrets.LAMBDA_ARTIFACT_BUCKET }}/$KEY
+          fi
+      - name: Upload staging-delivery lambda zip to S3
+        run: |
+          KEY="staging-delivery-${{ steps.delivery-artifact-hash.outputs.hash }}.zip"
+          if aws s3api head-object --bucket ${{ secrets.LAMBDA_ARTIFACT_BUCKET }} --key "$KEY" 2>/dev/null; then
+            echo "Artifact already exists at $KEY — skipping upload"
+          else
+            aws s3 cp packages/staging-delivery/lambda.zip s3://${{ secrets.LAMBDA_ARTIFACT_BUCKET }}/$KEY
+          fi
       - uses: hashicorp/setup-terraform@v4
       - name: Terraform init
         working-directory: packages/infra
@@ -222,6 +264,10 @@ jobs:
             -var="sync_relay_zip_s3_key=sync-relay-${{ steps.relay-artifact-hash.outputs.hash }}.zip" \
             -var="processor_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
             -var="processor_zip_s3_key=processor-${{ steps.processor-artifact-hash.outputs.hash }}.zip" \
+            -var="forwarder_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
+            -var="forwarder_zip_s3_key=forwarder-${{ steps.forwarder-artifact-hash.outputs.hash }}.zip" \
+            -var="staging_delivery_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
+            -var="staging_delivery_zip_s3_key=staging-delivery-${{ steps.delivery-artifact-hash.outputs.hash }}.zip" \
             -var="api_custom_domain=api.petroglyph.page"
       - name: Capture API function URL
         id: api-function-url

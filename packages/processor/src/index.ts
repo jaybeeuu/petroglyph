@@ -49,6 +49,8 @@ const driveItemSchema = z.object({
   folder: driveFolderSchema.optional(),
 });
 
+// DEPRECATED (6ra.6.1) — token lifecycle now lives in @petroglyph/core (token-resolver).
+// Do not modify. Dies with the processor at 5.2.3.
 const tokenResponseSchema = z.object({
   access_token: z.string().min(1),
   refresh_token: z.string().min(1),

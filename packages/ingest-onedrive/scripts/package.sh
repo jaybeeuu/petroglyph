@@ -16,6 +16,7 @@ package_dir = sys.argv[1]
 output = sys.argv[2]
 with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zf:
     zf.write(os.path.join(package_dir, 'dist', 'index.js'), 'dist/index.js')
+    zf.write(os.path.join(package_dir, 'dist', 'lambda.js'), 'dist/lambda.js')
     zf.write(os.path.join(package_dir, 'package.json'), 'package.json')
 " "$PACKAGE_DIR" "$OUTPUT"
 

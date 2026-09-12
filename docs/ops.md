@@ -108,7 +108,7 @@ Configure the `production` environment so only `main` can deploy, and require de
 
 Petroglyph Lambdas are deployed from zipped artifacts stored in S3. Any Lambda package must include its runtime dependencies in the zip — bare `node_modules` are **not** deployed.
 
-- **Bundled Lambdas (ESM)**: The API, ingest-onedrive, sync-worker and sync-relay Lambdas are bundled with esbuild to **ESM** output so runtime dependencies (for example `zod`) are included.
+- **Bundled Lambdas (ESM)**: The API, ingest-onedrive, sync-worker, sync-relay, processor, staging-consumer (staging forwarder) and staging-delivery Lambdas are bundled with esbuild to **ESM** output so runtime dependencies (for example `zod`) are included. The ingest-onedrive zip carries **two esbuild entries** — the webhook receiver (`dist/index.handler`) and the OneDrive adapter (`dist/lambda.handler`) — from a single `pnpm package` run.
 - **Non-Lambda packages (ESM)**: Keep these as bare **ESM** modules to preserve tree-shaking. Do not emit CommonJS builds.
 - **Packaging entrypoint**: `pnpm package` runs each package’s `package` script (via `--if-present`) before deploy.
 

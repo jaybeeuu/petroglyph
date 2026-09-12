@@ -251,6 +251,16 @@ flowchart TD
     E -- No: error --> W[Log error\nInject stale access token\ncontinue to handler]
 ```
 
+### Token Vault (connection-keyed)
+
+The Delivery 1 data path (OneDrive adapter) keeps OneDrive tokens in a **connection-keyed vault** instead of the per-user `refresh_tokens` storage above: the credentialed unit is the user×provider grant, shared by every sync profile on a connection, so records are keyed `(userId, provider)` in the `token_vaults` table (schema in §4). Key lifecycle rules (see `@petroglyph/core` `token-resolver`):
+
+- Concurrent resolves on one connection coalesce into **one in-flight MS refresh**; writes use **compare-and-set** on `updatedAt` + `expirySeconds`, so a rotated-in copy never overwrites the winner while Microsoft rotates refresh tokens.
+- A dead grant (`invalid_grant`) persists `reconnectRequired: true` — subsequent resolves fast-fail until `POST /onedrive/connect` rewrites the record.
+- **No record for the connection ⇒ reconnect required** (treated the same as a dead grant).
+
+The legacy components' `refresh_tokens` storage is **DEPRECATED** (kept for rollback, not deleted) and dies with the api at 6.6.5. The adapter's Graph delta link is a connection-keyed row in `delta_states`, superseding the per-profile `delta_tokens` table used by the legacy sync path.
+
 ### Reconnection
 
 If the refresh token expires or is revoked (e.g. user hasn't synced in 90 days, or revokes access in their Microsoft account settings):
@@ -369,6 +379,31 @@ This table is dual-purpose: it holds both long-lived refresh tokens (issued afte
 | `ttl`        | Number      | Unix timestamp used as DynamoDB TTL (10 minutes for state tokens, ~90 days for sessions)       |
 | `superseded` | Boolean?    | `true` once the token has been rotated; used for atomic reuse detection — `refresh_token` only |
 | `replacedBy` | String?     | Hash of the token that replaced this one — `refresh_token` only (rotation audit)               |
+
+### `token_vaults`
+
+The adapter's connection-keyed token vault (Delivery 1). One record per (user, provider) OAuth grant; written with compare-and-set so concurrent refreshes never lose the winner.
+
+| Attribute           | Type        | Description                                                         |
+| ------------------- | ----------- | ------------------------------------------------------------------- |
+| `userId`            | String (PK) | Owner of the grant                                                  |
+| `provider`          | String (SK) | `onedrive`                                                          |
+| `accessToken`       | String      | Current access token                                                |
+| `refreshToken`      | String      | Current refresh token (rotated on every refresh)                    |
+| `expirySeconds`     | Number      | Epoch seconds when the access token expires                         |
+| `updatedAt`         | String      | ISO 8601; part of the CAS write condition                           |
+| `reconnectRequired` | Boolean     | `true` once the grant is invalid, until `/connect` rewrites the row |
+
+### `delta_states`
+
+The adapter's per-connection Graph delta state (Delivery 1), superseding the per-profile `delta_tokens` table used by the legacy sync path (deprecated, kept for rollback).
+
+| Attribute   | Type        | Description                                   |
+| ----------- | ----------- | --------------------------------------------- |
+| `userId`    | String (PK) | Connection owner                              |
+| `provider`  | String (SK) | `onedrive`                                    |
+| `deltaLink` | String      | The Graph delta link the adapter resumes from |
+| `updatedAt` | String      | ISO 8601                                      |
 
 ### `sync_profiles`
 
