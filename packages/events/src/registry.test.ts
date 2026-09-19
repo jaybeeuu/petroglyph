@@ -25,6 +25,7 @@ describe("registerEvent", () => {
   it("binds the registered type and dataschema into every emitted document", () => {
     const registration = stagedRegistration();
     const document = registration.buildDocument({
+      id: "emission-1",
       source: "onedrive://profiles/p1",
       subject: "files/item-1",
       data: { profileId: "p1", s3Key: "staging/v1/p1/a/b.pdf" },
@@ -38,28 +39,44 @@ describe("registerEvent", () => {
     expect(document.time).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/);
   });
 
-  it("generates distinct ids per emission and preserves an explicit id for re-emission", () => {
+  it("no longer generates distinct ids per emission — the producer-supplied id is the dedupe anchor and identical source+id is a re-send", () => {
     const registration = stagedRegistration();
     const data = { profileId: "p1", s3Key: "staging/v1/p1/a/b.pdf" };
 
-    const first = registration.buildDocument({ source: "onedrive://profiles/p1", data });
-    const second = registration.buildDocument({ source: "onedrive://profiles/p1", data });
-
-    expect(second.id).not.toBe(first.id);
-
-    const replayed = registration.buildDocument({
+    const first = registration.buildDocument({
       source: "onedrive://profiles/p1",
-      id: first.id,
-      time: first.time,
+      id: "emission-1",
+      time: "2026-09-03T12:00:00Z",
       data,
     });
-    expect(replayed.id).toBe(first.id);
-    expect(replayed.time).toBe(first.time);
+    const resend = registration.buildDocument({
+      source: "onedrive://profiles/p1",
+      id: "emission-1",
+      time: "2026-09-03T12:00:00Z",
+      data,
+    });
+
+    expect(first.id).toBe("emission-1");
+    expect(resend.id).toBe(first.id);
+    expect(resend.time).toBe(first.time);
+  });
+
+  it("rejects a buildDocument call that omits the required producer-supplied id", () => {
+    const registration = stagedRegistration();
+
+    expect(() =>
+      // @ts-expect-error id is required — the randomUUID default was removed
+      registration.buildDocument({
+        source: "onedrive://profiles/p1",
+        data: { profileId: "p1", s3Key: "staging/v1/p1/a/b.pdf" },
+      }),
+    ).toThrow();
   });
 
   it("parse accepts a document built by the same registration", () => {
     const registration = stagedRegistration();
     const document = registration.buildDocument({
+      id: "emission-1",
       source: "onedrive://profiles/p1",
       data: { profileId: "p1", s3Key: "staging/v1/p1/a/b.pdf" },
     });
@@ -80,6 +97,7 @@ describe("registerEvent", () => {
         .strict(),
     });
     const document = deletedRegistration.buildDocument({
+      id: "emission-1",
       source: "onedrive://profiles/p1",
       data: { profileId: "p1", s3Key: null },
     });
@@ -90,6 +108,7 @@ describe("registerEvent", () => {
   it("parse rejects payload data that fails the data schema", () => {
     const registration = stagedRegistration();
     const document = registration.buildDocument({
+      id: "emission-1",
       source: "onedrive://profiles/p1",
       data: { profileId: "p1", s3Key: "staging/v1/p1/a/b.pdf" },
     });
@@ -102,6 +121,7 @@ describe("registerEvent", () => {
   it("emits a JSON-format document whose string form re-parses under the same registration", () => {
     const registration = stagedRegistration();
     const document = registration.buildDocument({
+      id: "emission-1",
       source: "onedrive://profiles/p1",
       data: { profileId: "p1", s3Key: "staging/v1/p1/a/b.pdf" },
     });

@@ -91,6 +91,7 @@ describe("registered events", () => {
 
   it("emits a conformant CE document that round-trips through parse", () => {
     const document = fileStagedEvent.buildDocument({
+      id: "emission-1",
       source: "onedrive://profiles/p1",
       subject: "files/item-1",
       data: stagedData,
@@ -109,10 +110,12 @@ describe("registered events", () => {
 
   it("a staged document never parses as deleted and vice versa", () => {
     const staged = fileStagedEvent.buildDocument({
+      id: "emission-1",
       source: "onedrive://profiles/p1",
       data: stagedData,
     });
     const deleted = fileDeletedEvent.buildDocument({
+      id: "emission-2",
       source: "onedrive://profiles/p1",
       data: deletedData,
     });
@@ -123,6 +126,7 @@ describe("registered events", () => {
 
   it("rejects bad envelopes (missing id, non-RFC3339 time)", () => {
     const { id: _id, ...withoutId } = fileStagedEvent.buildDocument({
+      id: "emission-1",
       source: "onedrive://profiles/p1",
       data: stagedData,
     });
