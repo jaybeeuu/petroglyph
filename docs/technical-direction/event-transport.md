@@ -104,4 +104,6 @@ Run move 2 alone first, as the cheapest experiment. Extract the port, re-point t
 - [DynamoDB Streams: change data capture](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Streams.html) — 24-hour retention.
 - [Sending and receiving CloudEvents with Amazon EventBridge](https://aws.amazon.com/blogs/compute/sending-and-receiving-cloudevents-with-amazon-eventbridge/) — EventBridge CE support.
 - [SNS message grouping for FIFO topics](https://docs.aws.amazon.com/sns/latest/dg/fifo-message-grouping.html) — `MessageGroupId` propagation to SQS FIFO.
-- `.working-docs/6ra.5-redesign-decisions.md` §3 (domain events, consumer-forwarded), §4 (CE envelope), §8 (Q8 registry transport).
+- [ARCHITECTURE.md — Events Registry & Staging Contracts](../../ARCHITECTURE.md#events-registry--staging-contracts) — domain events and the consumer-forwarded principle (redesign §3).
+- [`packages/events/README.md`](../../packages/events/README.md) — CloudEvents envelope and attribute mapping (redesign §4).
+- Redesign note §8 (Q8 registry transport) has no tracked home yet; it remains untranslated scratch in `.working-docs/6ra.5-redesign-decisions.md`.
