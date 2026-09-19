@@ -1,17 +1,9 @@
 import type { Queue } from "@petroglyph/core";
-import type { CloudEvent } from "@petroglyph/events";
+import type { CloudEvent, EventSource } from "@petroglyph/events";
 import { fileDeletedEvent, fileStagedEvent } from "@petroglyph/staging-contracts";
 
-export type StreamRecordType = "INSERT" | "MODIFY" | "REMOVE";
-
-export interface StreamRecordShape {
-  eventName?: unknown;
-  dynamodb?: {
-    NewImage?: { [key: string]: { S?: string } };
-  };
-}
-
-export interface ForwardDependencies {
+export interface ForwardDependencies<WireRecord> {
+  source: EventSource<WireRecord>;
   queue: Queue<CloudEvent<unknown>>;
   log?: (message: string) => void;
 }
@@ -23,16 +15,17 @@ export interface ForwardResult {
 }
 
 /**
- * 6.5.2.2 forwarder: DDB Streams rows on the immutable event log → the
- * staging domain's INTERNAL FIFO queue (MessageGroupId = profileId). Each row
- * is a CE document (Q8); rows are parsed through the registered events, so
- * only validated business events ever reach the queue. MODIFY/REMOVE on an
- * immutable log are ignored; malformed rows are skipped with a loud log and
- * the batch continues (Streams redelivers on batch failure, not per row).
+ * 6.5.2.2 forwarder: event-log rows → the staging domain's INTERNAL FIFO queue
+ * (MessageGroupId = profileId). Each row is a CE document (Q8); rows are parsed
+ * through the registered events, so only validated business events ever reach
+ * the queue. Rows the transport reports as carrying no event are ignored;
+ * malformed rows are skipped with a loud log and the batch continues (Streams
+ * redelivers on batch failure, not per row). The transport's wire shape lives
+ * behind the EventSource port, not here.
  */
-export async function forwardStreamRecords(
-  records: StreamRecordShape[],
-  deps: ForwardDependencies,
+export async function forwardStreamRecords<WireRecord>(
+  records: WireRecord[],
+  deps: ForwardDependencies<WireRecord>,
 ): Promise<ForwardResult> {
   const log = deps.log ?? console.error;
   let forwarded = 0;
@@ -40,17 +33,12 @@ export async function forwardStreamRecords(
   let failed = 0;
 
   for (const record of records) {
-    if (record.eventName !== "INSERT") {
-      ignored += 1;
-      continue;
-    }
-    const rawDoc = record.dynamodb?.NewImage?.["doc"]?.["S"];
+    const rawDoc = deps.source.readDocument(record);
     if (rawDoc === undefined) {
       ignored += 1;
       continue;
     }
 
-    let parsed: CloudEvent<unknown>;
     let document: unknown;
     try {
       document = JSON.parse(rawDoc);
@@ -60,6 +48,7 @@ export async function forwardStreamRecords(
       continue;
     }
 
+    let parsed: CloudEvent<unknown>;
     try {
       parsed = fileStagedEvent.parse(document) as CloudEvent<unknown>;
     } catch {

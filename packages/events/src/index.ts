@@ -9,3 +9,4 @@ export { registerEvent } from "./registry.js";
 export type { RegisteredEvent, RegisteredEventInput } from "./registry.js";
 export { createEventLogWriter } from "./event-log.js";
 export type { EventLogWriter } from "./event-log.js";
+export type { EventSource } from "./event-source.js";
