@@ -39,9 +39,7 @@ const MS_DRIVE_ID = "drive-123";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function makeStateItem(
-  overrides: Partial<{ ttl: number; type: string; verifier: string }> = {},
-): object {
+function makeStateItem(overrides: { [key: string]: unknown } = {}): object {
   return {
     tokenHash: VALID_STATE,
     type: "onedrive_state",
@@ -71,9 +69,19 @@ function setupDynamoMock(stateItem: object | undefined): void {
 }
 
 function setupFetchMock(
-  options: { msTokenOk?: boolean; graphOk?: boolean; graphDriveOk?: boolean } = {},
+  options: {
+    msTokenOk?: boolean;
+    msTokenBody?: object;
+    graphOk?: boolean;
+    graphDriveOk?: boolean;
+  } = {},
 ): void {
-  const { msTokenOk = true, graphOk = true, graphDriveOk = true } = options;
+  const {
+    msTokenOk = true,
+    msTokenBody = makeMsTokenResponse(),
+    graphOk = true,
+    graphDriveOk = true,
+  } = options;
 
   mockFetch.mockImplementation((url: string) => {
     if (url === "https://login.microsoftonline.com/common/oauth2/v2.0/token") {
@@ -87,7 +95,7 @@ function setupFetchMock(
       }
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve(makeMsTokenResponse()),
+        json: () => Promise.resolve(msTokenBody),
       } as Response);
     }
     if (url === "https://graph.microsoft.com/v1.0/me/drive") {
@@ -222,6 +230,15 @@ describe("POST /onedrive/connect", () => {
 
       expect(res.status).toBe(401);
     });
+
+    it("returns 401 when the stored state item fails shape validation", async () => {
+      setupDynamoMock(makeStateItem({ ttl: "not-a-number" }));
+      setupFetchMock();
+
+      const res = await postConnect({ code: VALID_CODE, state: VALID_STATE });
+
+      expect(res.status).toBe(401);
+    });
   });
 
   // ── Behaviour 3: state token deleted after use ───────────────────────────
@@ -288,6 +305,15 @@ describe("POST /onedrive/connect", () => {
   it("returns 502 when Microsoft token exchange returns a non-ok response", async () => {
     setupDynamoMock(makeStateItem());
     setupFetchMock({ msTokenOk: false });
+
+    const res = await postConnect({ code: VALID_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(502);
+  });
+
+  it("returns 502 when Microsoft returns an ok response with a malformed token body", async () => {
+    setupDynamoMock(makeStateItem());
+    setupFetchMock({ msTokenBody: { access_token: MS_ACCESS_TOKEN } });
 
     const res = await postConnect({ code: VALID_CODE, state: VALID_STATE });
 
