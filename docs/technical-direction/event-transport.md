@@ -4,7 +4,7 @@
 
 **Decision in one line:** keep the DynamoDB event log as both the record and the near-term transport, but make the log an _owned component_ with a narrow read contract and a swappable transport seam — so the bus decision becomes a later, local change instead of a rewrite.
 
-**Implementation note (2026-09-19):** move 2's transport seam has landed — `EventSource<WireRecord>` in `packages/events`, with `createDdbStreamEventSource` owning the stream record shape (`petroglyph-y5bm.1.1`, port-only). The vocabulary half and the `listRegistered()` introspection proposed below are superseded by a build-time event catalogue (`petroglyph-j1gn.19`, `petroglyph-j1gn.35`); the current-state bullet describing the forwarder as parsing the stream shape is history as of this doc's date.
+> **Implementation + supersede note (2026-09-19):** move 2's transport seam has landed — `EventSource<WireRecord>` in `packages/events`, with `createDdbStreamEventSource` owning the stream record shape (`petroglyph-y5bm.1.1`, port-only); the transport-seam half of move 2, and the rest of the recommendation, stand. The runtime-registry-introspection half is void (`petroglyph-j1gn.19`): the recommendation to add `listRegistered()` (the vocabulary half of move 2 and the validation plan below) is superseded by a **build-time** catalogue — `@petroglyph/event-catalogue` generates the dispatch table from the declaring packages, because a runtime registry inside a Lambda bundle can never guarantee completeness. The current-state bullet describing the forwarder as parsing the stream shape is history as of this doc's date.
 
 ## Problem and target outcome
 
@@ -32,7 +32,7 @@ Gathered from the code, not assumed.
 
 ### Option A — The log stream stays the transport, hardened
 
-Keep the log as record and transport. Add (1) registry introspection and a transport seam, (2) a reconciliation pass that converges a lagging consumer from the log, (3) an explicit, documented trust boundary.
+Keep the log as record and transport. Add (1) a transport seam and event enumeration — originally runtime registry introspection, since superseded by the build-time catalogue (see the note above) — (2) a reconciliation pass that converges a lagging consumer from the log, (3) an explicit, documented trust boundary.
 
 **Pros** — Nothing new to operate. Dedupe-at-write stays central. Ordering per profile is already provided by DDB Streams shards + the FIFO queue. Replay is a table read, which is native and unlimited.
 
@@ -65,7 +65,7 @@ Events go to EventBridge first; archive provides replay and the schema registry 
 **Option A, hardened — with the log treated as an owned component rather than a shared table.**
 
 1. **Ownership boundary (the load-bearing move).** The service that owns `event_log` exposes reads as an operation — a "read events since checkpoint" call — and no other context reads the table directly. Consumers call the operation; the table's shape becomes an implementation detail. This upgrades A: a consumer's reach is bounded by what the operation returns (addressing the over-broad-access concern) and the record/transport fusion becomes private to the owning component (addressing the mixed-roles concern). Both of those were previously "only a bus fixes this."
-2. **Registry introspection + a transport seam.** Add `listRegistered()` and an `EventSource`/`EventTransport` port; move the `NewImage.doc.S` parsing into a `DdbStreamEventSource` adapter. This removes the hard-coded vocabulary and the stream wire shape from domain code, and makes Option B a swap of one adapter rather than a migration.
+2. **Transport seam (the registry-introspection half is superseded — see the note above).** An `EventSource`/`EventTransport` port; move the `NewImage.doc.S` parsing into a `DdbStreamEventSource` adapter. Consumers needing "all event types" read the build-time catalogue table rather than introspecting a runtime registry. This removes the hard-coded vocabulary and the stream wire shape from domain code, and makes Option B a swap of one adapter rather than a migration.
 3. **Reconciliation from the log.** A consumer that finds itself behind converges by reading events since its checkpoint through the owned operation and reprocessing them. Consumers already dedupe on `source` + `id`, so replays are safe. This turns the 24-hour window into a latency bound and gives the currently-unused `putIfAbsent` boolean a purpose: reconciliation hits are redelivery telemetry.
 
 **Why not B now.** Its benefits (per-consumer scoping, durable buffers, filter policies) are only realised at more than one consumer, and today there is one, owned by the same domain. Building it now is speculative machinery. The ownership boundary in move 1 captures the least-privilege benefit without the extra component.
@@ -80,7 +80,7 @@ Events go to EventBridge first; archive provides replay and the schema registry 
 
 ## Validation plan
 
-Run move 2 alone first, as the cheapest experiment. Extract the port and `listRegistered()`, and re-point the forwarder at a `DdbStreamEventSource` adapter.
+Run move 2 alone first, as the cheapest experiment. Extract the port, re-point the forwarder at a `DdbStreamEventSource` adapter, and drive its vocabulary from the build-time catalogue table.
 
 - **Success signal:** the forwarder no longer references any event type by name and no longer parses the stream record shape; adding a hypothetical third event type requires no forwarder change. That confirms B/C collapse to an adapter swap.
 - **Failure signal:** the stream shape or the event vocabulary leaks in more places than `forwarder.ts`. That would mean the fusion runs deeper than believed and Option B deserves a fresh evaluation rather than deferral.
