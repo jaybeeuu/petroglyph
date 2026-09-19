@@ -23,7 +23,9 @@ is not mandated — the standard is the contract, not the function.
   `petroglyph.file.staged`.
 - **`dataschema` is a versioned URI**, e.g. `https://schemas.petroglyph.dev/file-staged/v1.json`.
   An incompatible payload change is a **new URI**; evolution is additive.
-- **`source` + `id` is the idempotency anchor.** Event ids are deterministic
+- **`source` + `id` is the idempotency anchor.** `id` is required and producer-supplied —
+  `registerEvent` deliberately does not generate one, because a random default would silently
+  defeat the anchor rather than fail. Event ids are deterministic
   (`<profileId>:<itemId>:<changeType>`), so redeliveries and restages dedupe at the log write.
 - **`time` is an RFC3339 UTC timestamp.**
 - **The envelope `source` attribute is not the business `source` tag.** The former identifies the
