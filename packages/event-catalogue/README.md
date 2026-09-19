@@ -30,9 +30,15 @@ duplicate `dataschema`, or a duplicate `{ type, version }`.
 ## Declaring events
 
 Registered events are declared with `registerEvent` in the package that owns the domain vocabulary
-(today `@petroglyph/staging-contracts`). `declaringModules` in `src/generate.ts` lists the packages
-the generator walks, and each is imported through its public surface — a package publishes its
-events by exporting them.
+(today `@petroglyph/staging-contracts`). Each is imported through that package's public surface — a
+package publishes its events by exporting them.
+
+`declaringModules` in `src/generate.ts` lists the packages the generator walks, and it is
+**hand-maintained**. Adding a package that declares events is a two-part change: export the events
+from its public surface, and add the package to `declaringModules`. A package that is not listed is
+never walked, so its events are silently absent from the catalogue and the schemas — the gate
+cannot fail on an event it never sees. (`petroglyph-j1gn.19` deliverable 2 replaces this list with a
+first-class publishing step.)
 
 **Do not edit `src/catalogue.ts` or anything under `packages/events/schemas/` by hand.** Declare the
 event in its owning package and regenerate.

@@ -162,6 +162,8 @@ The key local commands that align with CI jobs:
 
 If all five pass locally, they should pass in CI.
 
+Two CI jobs additionally guard **generated artifacts** that are committed to the repo. The `build` job regenerates the OpenAPI types and fails on any diff; the `event-catalogue` job regenerates the committed JSON Schema artifacts and the event dispatch table and fails the same way. If a change touches a schema source — an API route or a registered event — regenerate and commit the result rather than editing the artifacts by hand. See [`packages/event-catalogue/README.md`](packages/event-catalogue/README.md) for the event commands.
+
 Branch protection on `main` requires all five checks to pass before a pull request can be merged.
 
 ## Code Style
