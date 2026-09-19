@@ -1,5 +1,5 @@
 import { markConnected, registerGraphSubscription } from "./onedrive-lifecycle.js";
-import { is, isObject } from "@jaybeeuu/is";
+import { z } from "zod";
 import { DeleteCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import type { AppVariables } from "./auth-middleware.js";
@@ -13,23 +13,27 @@ function syncProfilesTable(): string {
   return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
 }
 
-interface ConnectRequestBody {
-  code: string;
-  state: string;
-}
+const onedriveStateItemSchema = z.object({
+  tokenHash: z.string(),
+  type: z.string(),
+  verifier: z.string(),
+  ttl: z.number(),
+});
 
-interface OnedriveStateItem {
-  tokenHash: string;
-  type: string;
-  verifier: string;
-  ttl: number;
-}
+const microsoftTokenResponseSchema = z.object({
+  access_token: z.string(),
+  refresh_token: z.string(),
+  expires_in: z.number(),
+});
 
-interface MicrosoftTokenResponse {
-  access_token: string;
-  refresh_token: string;
-  expires_in: number;
-}
+const connectBodySchema = z.object({
+  code: z.string().min(1),
+  state: z.string().min(1),
+});
+
+type ConnectRequestBody = z.infer<typeof connectBodySchema>;
+type OnedriveStateItem = z.infer<typeof onedriveStateItemSchema>;
+type MicrosoftTokenResponse = z.infer<typeof microsoftTokenResponseSchema>;
 
 class UpstreamError extends Error {
   constructor(message: string) {
@@ -39,31 +43,16 @@ class UpstreamError extends Error {
 }
 
 function parseConnectBody(body: unknown): ConnectRequestBody | null {
-  if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
-  const b = body as { [key: string]: unknown };
-  if (typeof b["code"] !== "string" || b["code"].length === 0) return null;
-  if (typeof b["state"] !== "string" || b["state"].length === 0) return null;
-  return { code: b["code"], state: b["state"] };
+  const parsed = connectBodySchema.safeParse(body);
+  return parsed.success ? parsed.data : null;
 }
 
-const isOnedriveStateItem = isObject<OnedriveStateItem>({
-  tokenHash: is("string"),
-  type: is("string"),
-  verifier: is("string"),
-  ttl: is("number"),
-});
-
-const isMicrosoftTokenResponse = isObject<MicrosoftTokenResponse>({
-  access_token: is("string"),
-  refresh_token: is("string"),
-  expires_in: is("number"),
-});
-
 function parseMicrosoftTokenResponse(data: unknown): MicrosoftTokenResponse {
-  if (!isMicrosoftTokenResponse(data)) {
+  const parsed = microsoftTokenResponseSchema.safeParse(data);
+  if (!parsed.success) {
     throw new UpstreamError("Invalid Microsoft token response shape");
   }
-  return data;
+  return parsed.data;
 }
 
 async function lookupStateItem(state: string): Promise<OnedriveStateItem | null> {
@@ -73,7 +62,8 @@ async function lookupStateItem(state: string): Promise<OnedriveStateItem | null>
       Key: { tokenHash: state },
     }),
   );
-  return isOnedriveStateItem(result.Item) ? result.Item : null;
+  const parsed = onedriveStateItemSchema.safeParse(result.Item);
+  return parsed.success ? parsed.data : null;
 }
 
 async function deleteStateItem(state: string): Promise<void> {
