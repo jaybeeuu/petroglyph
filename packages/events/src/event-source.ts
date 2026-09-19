@@ -6,9 +6,11 @@
  */
 export interface EventSource<WireRecord> {
   /**
-   * The serialized CloudEvent document a wire record carries, or `undefined`
-   * when the record carries no event (a non-INSERT on the immutable log, or a
-   * row without a string `doc`). The caller owns parsing and validation.
+   * The serialized event document a wire record carries, or `undefined` when
+   * the record carries no event. Which records carry an event is the adapter's
+   * concern — the port only distinguishes a document from nothing to read, so
+   * it stays agnostic to the transport's payload shape. The caller owns
+   * parsing and validating the returned document.
    */
   readDocument(record: WireRecord): string | undefined;
 }
