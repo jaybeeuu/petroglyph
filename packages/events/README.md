@@ -26,23 +26,24 @@ schemas cannot drift from the declarations.
 
 ## Conventions
 
-A **tier-1 (registered domain) event** must conform to the CloudEvents 1.0.2 structured envelope
-and the rules below. Using `registerEvent` is the recommended way to guarantee that conformance; it
-is not mandated — the standard is the contract, not the function.
+A **tier-1 (registered domain) event** must conform to the CloudEvents 1.0.2 structured envelope.
+Name events after facts, in the past tense — an event says what happened, never what to do. The
+envelope is one JSON object as the message body, with these attributes:
 
-- **Name facts, in the past tense.** An event says what happened, never what to do.
-- **`type` is `petroglyph.<domain>.<fact>`.** Brand-anchored and permanent, e.g.
-  `petroglyph.file.staged`.
-- **`dataschema` is a versioned URI**, e.g. `https://schemas.petroglyph.dev/file-staged/v1.json`.
-  An incompatible payload change is a **new URI**; evolution is additive.
-- **`source` + `id` is the idempotency anchor.** `id` is required and producer-supplied —
-  `registerEvent` deliberately does not generate one, because a random default would silently
-  defeat the anchor rather than fail. Event ids are deterministic
-  (`<profileId>:<itemId>:<changeType>`), so redeliveries and restages dedupe at the log write.
-- **`time` is an RFC3339 UTC timestamp.**
-- **The envelope `source` attribute is not the business `source` tag.** The former identifies the
-  producing context (`onedrive://profiles/<profileId>`); the latter (`onedrive`) lives inside
-  `data`, where it is unambiguous.
+| Attribute         | Value                                                                    | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `specversion`     | `"1.0"`                                                                  | CloudEvents 1.0.2, structured content mode, JSON format.                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `type`            | `petroglyph.<domain>.<fact>`                                             | Brand-anchored and permanent, e.g. `petroglyph.file.staged`.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `source`          | The producing context, e.g. `onedrive://profiles/<profileId>`            | The envelope `source` is not the business `source` tag — the latter (`onedrive`) lives inside `data`, where it is unambiguous.                                                                                                                                                                                                                                                                                                                                            |
+| `id`              | Unique within `source`                                                   | `source` + `id` is the idempotency anchor. `id` is required and producer-supplied — `registerEvent` deliberately does not generate one, because a random default would silently defeat the anchor rather than fail. Producers use deterministic ids (`<profileId>:<itemId>:<changeType>`), so a re-send for the same logical event may repeat `source` + `id`: the log's put-if-absent condition suppresses the duplicate write, and consumers dedupe on the same anchor. |
+| `subject`         | The object the event is about, e.g. `files/<itemId>`                     | Optional.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `time`            | RFC3339 UTC timestamp, e.g. `2026-09-03T12:00:00Z`                       | Producers must be consistent per `source`.                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `datacontenttype` | `application/json`                                                       | Defaulted by the envelope schema.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `dataschema`      | Versioned URI, e.g. `https://schemas.petroglyph.dev/file-staged/v1.json` | An incompatible payload change is a **new URI**; evolution is additive.                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `data`            | The business payload                                                     | The payload schema is registered with the event and lives with its domain.                                                                                                                                                                                                                                                                                                                                                                                                |
+
+Using `registerEvent` is the recommended way to guarantee conformance; it is not mandated — the
+standard is the contract, not the function.
 
 Only tier-1 events are registered. Adapter-internal facts and queue-internal messages are never
 registered — see the three-tier taxonomy in ARCHITECTURE.md.
