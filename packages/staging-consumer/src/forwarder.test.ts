@@ -1,16 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
+import type { DynamoDBRecord } from "aws-lambda";
 import type { Queue } from "@petroglyph/core";
 import { fileDeletedEvent, fileStagedEvent } from "@petroglyph/staging-contracts";
+import { createDdbStreamEventSource } from "./ddb-stream-event-source.js";
 import { forwardStreamRecords } from "./forwarder.js";
-import type { CloudEvent } from "@petroglyph/events";
+import type { CloudEvent, EventSource } from "@petroglyph/events";
 
-function streamRecord(
-  recordType: "INSERT" | "MODIFY" | "REMOVE",
-  doc: string,
-): {
-  eventName: string;
-  dynamodb: { NewImage?: { doc: { S: string } } };
-} {
+const ddbStreamEventSource = createDdbStreamEventSource();
+
+function streamRecord(recordType: "INSERT" | "MODIFY" | "REMOVE", doc: string): DynamoDBRecord {
   return {
     eventName: recordType,
     dynamodb: { NewImage: { doc: { S: doc } } },
@@ -89,8 +87,12 @@ describe("forwardStreamRecords", () => {
   it("forwards a validated staged event onto the internal queue under its profile group", async () => {
     const { queue, sends } = queueSpy();
 
-    await forwardStreamRecords([streamRecord("INSERT", json(stagedDoc))], { queue });
+    const result = await forwardStreamRecords([streamRecord("INSERT", json(stagedDoc))], {
+      source: ddbStreamEventSource,
+      queue,
+    });
 
+    expect(result).toEqual({ forwarded: 1, ignored: 0, failed: 0 });
     expect(sends).toHaveLength(1);
     expect(sends[0]?.messageGroupId).toBe("p1");
     const message = sends[0]?.message as CloudEvent<{ profileId: string; changeType: string }>;
@@ -105,7 +107,10 @@ describe("forwardStreamRecords", () => {
   it("forwards deleted item events (s3Key string) as validated business events", async () => {
     const { queue, sends } = queueSpy();
 
-    await forwardStreamRecords([streamRecord("INSERT", json(deletedDoc))], { queue });
+    await forwardStreamRecords([streamRecord("INSERT", json(deletedDoc))], {
+      source: ddbStreamEventSource,
+      queue,
+    });
 
     const message = sends[0]?.message as CloudEvent<{ s3Key: string | null }>;
     expect(message.type).toBe("petroglyph.file.deleted");
@@ -115,7 +120,10 @@ describe("forwardStreamRecords", () => {
   it("preserves folder semantics for path-level deletes (s3Key null)", async () => {
     const { queue, sends } = queueSpy();
 
-    await forwardStreamRecords([streamRecord("INSERT", json(folderDeletedDoc))], { queue });
+    await forwardStreamRecords([streamRecord("INSERT", json(folderDeletedDoc))], {
+      source: ddbStreamEventSource,
+      queue,
+    });
 
     const message = sends[0]?.message as CloudEvent<{ s3Key: string | null; relativePath: string }>;
     expect(message.type).toBe("petroglyph.file.deleted");
@@ -126,11 +134,12 @@ describe("forwardStreamRecords", () => {
   it("ignores and counts MODIFY/REMOVE rows on the immutable log", async () => {
     const { queue, sends } = queueSpy();
 
-    await forwardStreamRecords(
+    const result = await forwardStreamRecords(
       [streamRecord("MODIFY", json(stagedDoc)), streamRecord("REMOVE", json(stagedDoc))],
-      { queue },
+      { source: ddbStreamEventSource, queue },
     );
 
+    expect(result).toEqual({ forwarded: 0, ignored: 2, failed: 0 });
     expect(sends).toHaveLength(0);
   });
 
@@ -138,13 +147,28 @@ describe("forwardStreamRecords", () => {
     const { queue, sends } = queueSpy();
     const log = vi.fn();
 
-    await forwardStreamRecords(
+    const result = await forwardStreamRecords(
       [streamRecord("INSERT", "not-json-{{{"), streamRecord("INSERT", json(stagedDoc))],
-      { queue, log },
+      { source: ddbStreamEventSource, queue, log },
     );
 
+    expect(result).toEqual({ forwarded: 1, ignored: 0, failed: 1 });
     expect(sends).toHaveLength(1);
     expect(log).toHaveBeenCalledTimes(1);
     expect(log.mock.calls[0]?.[0]).toContain("forward"); // loud log names the offender
+  });
+
+  it("reads through the EventSource port, so a non-DynamoDB transport needs no forwarder change", async () => {
+    const { queue, sends } = queueSpy();
+    const records: { payload?: string }[] = [{ payload: json(stagedDoc) }, {}];
+    const busSource: EventSource<{ payload?: string }> = {
+      readDocument: (record) => record.payload,
+    };
+
+    const result = await forwardStreamRecords(records, { source: busSource, queue });
+
+    expect(result).toEqual({ forwarded: 1, ignored: 1, failed: 0 });
+    expect(sends).toHaveLength(1);
+    expect(sends[0]?.messageGroupId).toBe("p1");
   });
 });

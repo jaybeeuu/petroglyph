@@ -11,6 +11,8 @@ with their domain (today, `packages/staging-contracts`). For the taxonomy and wh
   envelope; returns `buildDocument`, `parse`, `format`, and `jsonSchema`.
 - `cloudEventSchema`, `parseCloudEvent`, `formatCloudEvent` — the raw envelope.
 - `createEventLogWriter` — the event-log transport (put-if-absent on `source` + `id`).
+- `EventSource<WireRecord>` — the transport port a consumer reads log rows through; each transport
+  supplies the wire shape in its own adapter.
 
 ## Conventions
 
@@ -37,7 +39,9 @@ registered — see the three-tier taxonomy in ARCHITECTURE.md.
 
 ## Reading the log
 
-Consumers receive events through their own queue, fed from the log's stream. **Historical reads —
+Consumers receive events through their own queue, fed from the log's stream. The consumer reads rows
+through the `EventSource` port, so the stream's wire shape stays in its adapter
+(`createDdbStreamEventSource`) rather than leaking into consuming domain code. **Historical reads —
 bootstrap and reconciliation — go through the operation owned by the service that owns `event_log`,
 not a direct table scan.** That keeps the table's shape free to change without changing the
 consumer contract. See the ownership boundary in

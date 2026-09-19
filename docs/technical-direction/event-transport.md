@@ -4,6 +4,8 @@
 
 **Decision in one line:** keep the DynamoDB event log as both the record and the near-term transport, but make the log an _owned component_ with a narrow read contract and a swappable transport seam — so the bus decision becomes a later, local change instead of a rewrite.
 
+**Implementation note (2026-09-19):** move 2's transport seam has landed — `EventSource<WireRecord>` in `packages/events`, with `createDdbStreamEventSource` owning the stream record shape (`petroglyph-y5bm.1.1`, port-only). The vocabulary half and the `listRegistered()` introspection proposed below are superseded by a build-time event catalogue (`petroglyph-j1gn.19`, `petroglyph-j1gn.35`); the current-state bullet describing the forwarder as parsing the stream shape is history as of this doc's date.
+
 ## Problem and target outcome
 
 Producers currently emit business events by writing a CloudEvent to the `event_log` table with a put-if-absent condition; the table's stream is the fan-out mechanism that carries events to consuming domains. The log is therefore two things at once: the system of record (the dedupe anchor) and the inter-context transport. The stop-1 review flagged that fusion as uncomfortable, with four concrete concerns (mixed roles, over-broad read access, 24-hour stream retention, and DDB stream shape leaking into domain code).
