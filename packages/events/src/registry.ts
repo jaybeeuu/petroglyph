@@ -1,12 +1,14 @@
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { cloudEventSchema, formatCloudEvent, type CloudEvent } from "./cloud-event.js";
 
 export interface RegisteredEventInput<Data> {
   source: string;
   data: Data;
-  /** Reuse an id to re-emit the same logical event (the dedupe anchor with source). */
-  id?: string;
+  /**
+   * Producer-supplied id, unique per distinct event. With `source` it is the
+   * dedupe anchor, so reuse it to re-send the same logical event.
+   */
+  id: string;
   subject?: string;
   time?: string;
 }
@@ -42,7 +44,7 @@ export function registerEvent<Data>(options: {
     buildDocument(input) {
       return envelopeSchema.parse({
         specversion: "1.0",
-        id: input.id ?? randomUUID(),
+        id: input.id,
         source: input.source,
         type: options.type,
         dataschema: options.dataschema,
