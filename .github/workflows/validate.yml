@@ -60,6 +60,36 @@ jobs:
           pnpm exec prettier --write packages/api/src/openapi-types.ts packages/api-client/src/openapi-types.ts
           git diff --exit-code
 
+  event-catalogue:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v5
+        with:
+          version: "10.4.1"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/pnpm/store
+            node_modules
+            packages/*/node_modules
+          key: deps-${{ hashFiles('pnpm-lock.yaml') }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            packages/*/dist
+            packages/*/*.tsbuildinfo
+          key: dist-${{ github.sha }}
+      - name: Verify the event catalogue is up to date
+        run: |
+          pnpm --filter @petroglyph/event-catalogue generate-catalogue
+          pnpm exec prettier --write packages/events/schemas packages/event-catalogue/src/catalogue.ts
+          git diff --exit-code
+
   lint:
     needs: [build]
     runs-on: ubuntu-latest

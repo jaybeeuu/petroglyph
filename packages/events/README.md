@@ -14,6 +14,16 @@ with their domain (today, `packages/staging-contracts`). For the taxonomy and wh
 - `EventSource<WireRecord>` — the transport port a consumer reads log rows through; each transport
   supplies the wire shape in its own adapter.
 
+## Committed schema artifacts
+
+`schemas/` is the generated record of the registered event contracts: one draft-2020-12 JSON Schema
+per event, payload-only, with `$id` set to the event's `dataschema` URI and the file path mirroring
+that URI (`https://schemas.petroglyph.dev/file-staged/v1.json` -> `schemas/file-staged/v1.json`).
+They are generated — never hand-edited — by
+[`@petroglyph/event-catalogue`](../event-catalogue/README.md), which also generates the dispatch
+table consumers use. The `event-catalogue` CI job regenerates and diffs them, so the committed
+schemas cannot drift from the declarations.
+
 ## Conventions
 
 A **tier-1 (registered domain) event** must conform to the CloudEvents 1.0.2 structured envelope
