@@ -120,25 +120,6 @@ importers:
         specifier: ^10.17.0
         version: 10.28.0
 
-  packages/event-catalogue:
-    dependencies:
-      '@petroglyph/events':
-        specifier: workspace:*
-        version: link:../events
-      '@petroglyph/staging-contracts':
-        specifier: workspace:*
-        version: link:../staging-contracts
-      zod:
-        specifier: ^4.3.6
-        version: 4.3.6
-    devDependencies:
-      '@types/node':
-        specifier: ^25.5.2
-        version: 25.5.2
-      tsx:
-        specifier: ^4.21.0
-        version: 4.21.0
-
   packages/events:
     dependencies:
       '@aws-sdk/lib-dynamodb':
