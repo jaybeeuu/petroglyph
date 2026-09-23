@@ -5,7 +5,7 @@ import type { TokenRecord, TokenStore } from "./token-store.js";
 
 const CONNECTION = { userId: "github|12345", provider: "onedrive" };
 
-const validRecord: TokenRecord = {
+const BASE_RECORD: TokenRecord = {
   accessToken: "access-1",
   refreshToken: "refresh-1",
   expirySeconds: 1_000_000,
@@ -13,18 +13,23 @@ const validRecord: TokenRecord = {
   reconnectRequired: false,
 };
 
-const expiredRecord: TokenRecord = {
-  ...validRecord,
-  accessToken: "access-stale",
-  expirySeconds: 100,
-};
+function makeTokenRecord(overrides: Partial<TokenRecord> = {}): TokenRecord {
+  return { ...BASE_RECORD, ...overrides };
+}
 
-function successOutcome(
-  accessToken = "access-fresh",
-  refreshToken = "refresh-rotated",
-  expiresIn = 3600,
+function makeTokenResponseOutcome(
+  overrides: Partial<TokenRequestOutcome> = {},
 ): TokenRequestOutcome {
-  return { kind: "success", accessToken, refreshToken, expiresIn };
+  if (overrides.kind === "grant-invalid") {
+    return { kind: "grant-invalid" };
+  }
+  return {
+    kind: "success",
+    accessToken: "access-fresh",
+    refreshToken: "refresh-rotated",
+    expiresIn: 3600,
+    ...overrides,
+  };
 }
 
 interface MemStoreOptions {
@@ -62,7 +67,9 @@ function makeMemStore(options: MemStoreOptions = {}): TokenStore & {
 
 describe("createTokenResolver", () => {
   it("returns the stored token when not expired — requestTokens never called", async () => {
-    const store = makeMemStore({ records: new Map([["github|12345:onedrive", validRecord]]) });
+    const store = makeMemStore({
+      records: new Map([["github|12345:onedrive", makeTokenRecord()]]),
+    });
     const requestTokens = vi.fn();
     const resolver = createTokenResolver({ store, now: () => 500_000, requestTokens });
 
@@ -73,8 +80,10 @@ describe("createTokenResolver", () => {
   });
 
   it("refreshes before returning an expired token; access+refresh persist together; never returns expired", async () => {
-    const store = makeMemStore({ records: new Map([["github|12345:onedrive", expiredRecord]]) });
-    const requestTokens = vi.fn().mockResolvedValue(successOutcome());
+    const store = makeMemStore({
+      records: new Map([["github|12345:onedrive", makeTokenRecord({ expirySeconds: 100 })]]),
+    });
+    const requestTokens = vi.fn().mockResolvedValue(makeTokenResponseOutcome());
     const now = vi.fn().mockReturnValue(200);
     const resolver = createTokenResolver({ store, now, requestTokens });
 
@@ -91,11 +100,18 @@ describe("createTokenResolver", () => {
       expirySeconds: 200 + 3600,
       reconnectRequired: false,
     });
-    expect(write.expected).toEqual(expiredRecord);
+    expect(write.expected).toEqual(makeTokenRecord({ expirySeconds: 100 }));
   });
 
   it("grant-invalid persists reconnectRequired and returns reconnect-required — no stale fallback", async () => {
-    const store = makeMemStore({ records: new Map([["github|12345:onedrive", expiredRecord]]) });
+    const store = makeMemStore({
+      records: new Map([
+        [
+          "github|12345:onedrive",
+          makeTokenRecord({ accessToken: "access-stale", expirySeconds: 100 }),
+        ],
+      ]),
+    });
     const requestTokens = vi.fn().mockResolvedValue({ kind: "grant-invalid" });
     const resolver = createTokenResolver({ store, now: () => 200, requestTokens });
 
@@ -109,7 +125,7 @@ describe("createTokenResolver", () => {
 
   it("fast-fails a record already marked reconnectRequired with zero MS calls", async () => {
     const store = makeMemStore({
-      records: new Map([["github|12345:onedrive", { ...validRecord, reconnectRequired: true }]]),
+      records: new Map([["github|12345:onedrive", makeTokenRecord({ reconnectRequired: true })]]),
     });
     const requestTokens = vi.fn();
     const resolver = createTokenResolver({ store, now: () => 500_000, requestTokens });
@@ -132,7 +148,9 @@ describe("createTokenResolver", () => {
   });
 
   it("serializes concurrent refreshes for the same connection — one MS call, both get the winner token", async () => {
-    const store = makeMemStore({ records: new Map([["github|12345:onedrive", expiredRecord]]) });
+    const store = makeMemStore({
+      records: new Map([["github|12345:onedrive", makeTokenRecord({ expirySeconds: 100 })]]),
+    });
     let release!: (outcome: TokenRequestOutcome) => void;
     const parked = new Promise<TokenRequestOutcome>((resolve) => {
       release = resolve;
@@ -143,7 +161,7 @@ describe("createTokenResolver", () => {
     const first = resolver.resolveAccessToken(CONNECTION.userId, CONNECTION.provider);
     const second = resolver.resolveAccessToken(CONNECTION.userId, CONNECTION.provider);
 
-    release(successOutcome());
+    release(makeTokenResponseOutcome());
     const [firstOutcome, secondOutcome] = await Promise.all([first, second]);
 
     expect(requestTokens).toHaveBeenCalledTimes(1);
@@ -154,11 +172,15 @@ describe("createTokenResolver", () => {
   it("keeps refreshes for different connections independent", async () => {
     const store = makeMemStore({
       records: new Map([
-        ["github|12345:onedrive", expiredRecord],
-        ["github|99999:onedrive", expiredRecord],
+        ["github|12345:onedrive", makeTokenRecord({ expirySeconds: 100 })],
+        ["github|99999:onedrive", makeTokenRecord({ expirySeconds: 100 })],
       ]),
     });
-    const requestTokens = vi.fn().mockResolvedValue(successOutcome("access-x", "refresh-x"));
+    const requestTokens = vi
+      .fn()
+      .mockResolvedValue(
+        makeTokenResponseOutcome({ accessToken: "access-x", refreshToken: "refresh-x" }),
+      );
     const resolver = createTokenResolver({ store, now: () => 200, requestTokens });
 
     const [a, b] = await Promise.all([
@@ -172,15 +194,16 @@ describe("createTokenResolver", () => {
   });
 
   it("on CAS conflict the loser refetches and returns the winner's token; the loser's rotation never persists", async () => {
-    const STALE_UPDATED_AT = expiredRecord.updatedAt;
-    const winnerRecord: TokenRecord = {
+    const STALE_UPDATED_AT = BASE_RECORD.updatedAt;
+    const winnerRecord = makeTokenRecord({
       accessToken: "winner-token",
       refreshToken: "winner-refresh",
       expirySeconds: 200 + 3600,
       updatedAt: "2026-09-01T00:00:01.000Z",
-      reconnectRequired: false,
-    };
-    const records = new Map([[`${CONNECTION.userId}:${CONNECTION.provider}`, expiredRecord]]);
+    });
+    const records = new Map([
+      [`${CONNECTION.userId}:${CONNECTION.provider}`, makeTokenRecord({ expirySeconds: 100 })],
+    ]);
     const writes: { record: TokenRecord; expected: TokenRecord | undefined }[] = [];
     const store: TokenStore = {
       read(userId, provider) {
@@ -198,7 +221,11 @@ describe("createTokenResolver", () => {
         return Promise.resolve(true);
       },
     };
-    const requestTokens = vi.fn().mockResolvedValue(successOutcome("loser-token", "loser-refresh"));
+    const requestTokens = vi
+      .fn()
+      .mockResolvedValue(
+        makeTokenResponseOutcome({ accessToken: "loser-token", refreshToken: "loser-refresh" }),
+      );
     const resolver = createTokenResolver({ store, now: () => 200, requestTokens });
 
     const outcome = await resolver.resolveAccessToken(CONNECTION.userId, CONNECTION.provider);
@@ -211,8 +238,10 @@ describe("createTokenResolver", () => {
   });
 
   it("force mode refreshes even when the stored token is still valid", async () => {
-    const store = makeMemStore({ records: new Map([["github|12345:onedrive", validRecord]]) });
-    const requestTokens = vi.fn().mockResolvedValue(successOutcome());
+    const store = makeMemStore({
+      records: new Map([["github|12345:onedrive", makeTokenRecord()]]),
+    });
+    const requestTokens = vi.fn().mockResolvedValue(makeTokenResponseOutcome());
     const resolver = createTokenResolver({ store, now: () => 500_000, requestTokens });
 
     const outcome = await resolver.resolveAccessToken(CONNECTION.userId, CONNECTION.provider, {
