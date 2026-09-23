@@ -10,6 +10,5 @@ export type {
 } from "./file-record.js";
 export { createTokenResolver } from "./token-resolver.js";
 export type { TokenResolver, TokenResolveOptions } from "./token-resolver.js";
-export type { TokenRequestOutcome, ResolveOutcome } from "./token-request.js";
-export type { TokenRecord } from "./token-record.js";
-export type { TokenStore } from "./token-store.js";
+export type { TokenRequestOutcome, ResolveOutcome } from "./token-resolver.js";
+export type { TokenRecord, TokenStore } from "./token-store.js";

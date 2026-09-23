@@ -1,6 +1,12 @@
-import type { TokenRecord } from "./token-record.js";
-import type { TokenStore } from "./token-store.js";
-import type { ResolveOutcome, TokenRequestOutcome } from "./token-request.js";
+import type { TokenRecord, TokenStore } from "./token-store.js";
+
+export type TokenRequestOutcome =
+  | { kind: "success"; accessToken: string; refreshToken: string; expiresIn: number }
+  | { kind: "grant-invalid" };
+
+export type ResolveOutcome =
+  | { kind: "success"; accessToken: string }
+  | { kind: "reconnect-required" };
 
 export interface TokenResolveOptions {
   /**
