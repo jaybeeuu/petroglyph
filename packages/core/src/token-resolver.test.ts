@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTokenResolver } from "./token-resolver.js";
-import type { TokenRecord } from "./token-record.js";
-import type { TokenStore } from "./token-store.js";
-import type { TokenRequestOutcome } from "./token-request.js";
+import type { TokenRequestOutcome } from "./token-resolver.js";
+import type { TokenRecord, TokenStore } from "./token-store.js";
 
 const CONNECTION = { userId: "github|12345", provider: "onedrive" };
 
