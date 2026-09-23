@@ -10,8 +10,8 @@ Never put working documents in `docs/` or any other tracked directory.
 
 - **zod is the single validation library.** Validate ALL data arriving from external systems with
   zod where the shape could be incorrect — SQS messages, DynamoDB records, webhook payloads,
-  OAuth responses. Do not add other shape-validation libraries; `@jaybeeuu/is` is being removed
-  and must not be reintroduced.
+  OAuth responses. Do not add other shape-validation libraries; `@jaybeeuu/is` has been removed
+  from every package and must not be reintroduced.
 
 ## Generic type naming
 
