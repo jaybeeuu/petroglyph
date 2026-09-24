@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { walkDelta } from "./delta-walk.js";
+import { normalizeRelativePath, walkDelta } from "./delta-walk.js";
 import type { DeltaState, DeltaStateStore } from "./delta-state-store.js";
 import type { GraphClient } from "../tokens/graph-client.js";
 import type { FileChangeEvent } from "./delta-walk.js";
@@ -82,6 +82,16 @@ const fileItem = (overrides: { [key: string]: unknown }): { [key: string]: unkno
   parentReference: { driveId: "drive-1", path: "/drive/root:/notes" },
   file: { mimeType: "application/pdf" },
   ...overrides,
+});
+
+describe("normalizeRelativePath", () => {
+  it("distinguishes a drive-root path from an unknown path", () => {
+    expect(normalizeRelativePath("/drive/root:")).toBe("");
+    expect(normalizeRelativePath("/drive/root:/")).toBe("");
+    expect(normalizeRelativePath("/drive/root:/notes")).toBe("notes");
+    expect(normalizeRelativePath(undefined)).toBeUndefined();
+    expect(normalizeRelativePath("not-a-drive-root-path")).toBeUndefined();
+  });
 });
 
 describe("walkDelta", () => {
@@ -394,6 +404,108 @@ describe("walkDelta", () => {
       ["p1", "inside"],
       ["p2", "outside"],
     ]);
+  });
+
+  it("tolerates a parentReference without path: the page parses and the unresolved item is surfaced, not dropped", async () => {
+    const store = memStateStore(state);
+    const { client } = scriptedClient([
+      () =>
+        page(
+          [
+            {
+              id: "no-path-1",
+              name: "a.pdf",
+              parentReference: { driveId: "drive-1" },
+              file: { mimeType: "application/pdf" },
+            },
+          ],
+          { deltaLink: state.deltaLink },
+        ),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [profile],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.unresolvedPathCount).toBe(1);
+    expect(result.events).toHaveLength(0);
+    expect(result.outcome).toBe("failed");
+    expect(store.writes).toBe(0);
+  });
+
+  it("tolerates an absent parentReference: the page parses and the unresolved item is surfaced, not dropped", async () => {
+    const store = memStateStore(state);
+    const { client } = scriptedClient([
+      () =>
+        page([{ id: "no-parent-1", name: "a.pdf", file: { mimeType: "application/pdf" } }], {
+          deltaLink: state.deltaLink,
+        }),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [profile],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.unresolvedPathCount).toBe(1);
+    expect(result.events).toHaveLength(0);
+    expect(result.outcome).toBe("failed");
+    expect(store.writes).toBe(0);
+  });
+
+  it("routes changes to a '/'-rooted profile instead of silently dropping every item", async () => {
+    const store = memStateStore(state);
+    const { client } = scriptedClient([
+      () =>
+        page(
+          [fileItem({ id: "i1", name: "a.pdf", parentReference: { path: "/drive/root:/notes" } })],
+          { deltaLink: state.deltaLink },
+        ),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [{ profileId: "root", rootPath: "/" }],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.outcome).toBe("continued");
+    expect(result.events).toMatchObject([
+      { profileId: "root", itemId: "i1", relativePath: "notes" },
+    ]);
+  });
+
+  it("counts a drive-root item rather than emitting an empty relativePath or failing the walk", async () => {
+    const store = memStateStore(state);
+    const { client } = scriptedClient([
+      () =>
+        page(
+          [fileItem({ id: "root-1", name: "a.pdf", parentReference: { path: "/drive/root:" } })],
+          { deltaLink: state.deltaLink },
+        ),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [{ profileId: "root", rootPath: "/" }],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.outcome).toBe("continued");
+    expect(result.events).toHaveLength(0);
+    expect(result.driveRootItemCount).toBe(1);
+    expect(store.writes).toBe(1);
   });
 
   it("does not emit created/updated events for folder items (gate is file-only)", async () => {
