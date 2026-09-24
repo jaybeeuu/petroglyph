@@ -18,6 +18,11 @@ Never put working documents in `docs/` or any other tracked directory.
 - Name generic type parameters after their role/payload — `Envelope<Payload>`, `Queue<Message>` —
   never a bare `T`. A reader should know what the parameter is without reading the callsite.
 
+## Vocabulary
+
+Domain vocabulary — user, provider, connection, profile; identity vs delegation — is canonical in
+[docs/glossary.md](docs/glossary.md). Use those terms in plans, docs, code, and commit messages.
+
 ## Pull Request Hygiene
 
 Before asking the user to review or merge a PR, you **must** verify:
