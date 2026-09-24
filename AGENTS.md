@@ -13,8 +13,9 @@ Never put working documents in `docs/` or any other tracked directory.
   consistently in every plan, bead, doc, PR, and line of new code. When `.working-docs/` is absent
   (fresh worktrees), the definitions live on the bead notes of `petroglyph-6ra.6.1`,
   `petroglyph-oru`, `petroglyph-9jt`, and `6ra.5-redesign-decisions.md` §12.
- 
+
 ## Verification Gate
+
 - **Verification gate (2026-09-06)**: no component is signed off for AFK implementation until its
   service test-plan bead is satisfied — behaviour proven in tests **and** in production,
   integration points verified. Roll through Unit 1 (OneDrive adapter) → Unit 2 (S3 staging) →
