@@ -1,5 +1,5 @@
 import { Notice, Plugin, normalizePath } from "obsidian";
-import { is, isObject } from "@jaybeeuu/is";
+import { z } from "zod";
 import { PetroglyphSettingTab } from "./settings.js";
 import type { FileChange, PluginData, SyncProfile } from "./types.js";
 import { hasStringProp, isRecord } from "./validate.js";
@@ -14,8 +14,8 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const DEFAULT_PROFILE_ID = "default";
 const VAULT_ROOT = "handwritten";
 
-const isJwtPayload = isObject({
-  exp: is("number"),
+const jwtPayloadSchema = z.object({
+  exp: z.number(),
 });
 
 /** Delay between sync job status polls, growing by backoff up to SYNC_POLL_MAX_DELAY_MS. */
@@ -31,7 +31,7 @@ function decodeJwtExpiry(jwt: string): number {
     throw new TypeError(`Expected a JWT with three parts but found ${parts.length}.`);
   }
   const payloadBase64 = (parts[1] ?? "").replace(/-/g, "+").replace(/_/g, "/");
-  const payload = isJwtPayload.check(JSON.parse(atob(payloadBase64)));
+  const payload = jwtPayloadSchema.parse(JSON.parse(atob(payloadBase64)));
   return payload.exp;
 }
 
