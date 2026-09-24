@@ -91,6 +91,7 @@ This creates and verifies the following (bucket names embed your AWS account ID 
 - **Granular policy**: the deploy managed policy (`petroglyph-github-actions-deploy-production`) is explicit-actions-only. Never add `"Action": "*"` or wildcard resources — every required permission is named by hand in `packages/infra/scripts/bootstrap.sh` (e.g. `DynamoDbProjectTables`, `LambdaProjectFunctions`).
 - **Resource additions extend bootstrap.sh in the same change**: any work adding an AWS resource under `packages/infra/*.tf` must add the required ARNs/actions to `bootstrap.sh` in the same commit.
 - **Single source of truth**: `bootstrap.sh` is the source of truth for the deploy policy; the live policy converges to the checked-in document via the node drift-check (commit 4a888fb). Re-run `bootstrap.sh` after any policy change.
+- **Terraform contract checks run in CD, not at PR time**: no unit test executes terraform or asserts `.tf` resource contracts. The `validate` test job and the `deploy` build job do not install terraform; HCL validity and resource contracts (SQS attributes, IAM Sids/Actions, Lambda env wiring, outputs) are first checked by `terraform init`/`apply` in the CD `deploy` job, after merge. `apply` catches syntax and configuration errors but not semantic regressions — a dropped DLQ alarm or a widened IAM statement applies cleanly — so review `.tf` diffs with that in mind.
 
 Once applied, the following values are needed as GitHub Actions secrets on the `production` environment for CD:
 
