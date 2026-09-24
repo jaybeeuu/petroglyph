@@ -96,7 +96,7 @@ Run move 2 alone first, as the cheapest experiment. Extract the port and re-poin
 ## References
 
 - [`packages/events/src/event-log.ts`](https://github.com/jaybeeuu/petroglyph/blob/dd6def6/packages/events/src/event-log.ts) — put-if-absent dedupe contract.
-- [`packages/events/src/registry.ts`](https://github.com/jaybeeuu/petroglyph/blob/dd6def6/packages/events/src/registry.ts) — registration binds `type` + `dataschema`; no introspection today.
+- [`packages/events/src/cloud-event.ts`](https://github.com/jaybeeuu/petroglyph/blob/dd6def6/packages/events/src/cloud-event.ts) — the envelope schema binds a payload schema; producers add `type` + `dataschema` literals. No runtime enumeration.
 - [`packages/staging-consumer/src/forwarder.ts`](https://github.com/jaybeeuu/petroglyph/blob/dd6def6/packages/staging-consumer/src/forwarder.ts) — hard-coded vocabulary and stream-record parsing.
 - [`packages/infra/dynamodb.tf`](https://github.com/jaybeeuu/petroglyph/blob/dd6def6/packages/infra/dynamodb.tf) — `event_log` table, `NEW_IMAGE` stream, no TTL.
 - [`packages/infra/lambda_staging.tf`](https://github.com/jaybeeuu/petroglyph/blob/dd6def6/packages/infra/lambda_staging.tf) — forwarder event source mapping, `starting_position = "LATEST"`.
