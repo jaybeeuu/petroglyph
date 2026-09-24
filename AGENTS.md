@@ -6,13 +6,15 @@ Checklists, scratch pads, and other operational notes that should **not** be com
 
 Never put working documents in `docs/` or any other tracked directory.
 
-## Vocabulary & Verification Gate
+## Vocabulary
 
 - **Glossary**: domain terms — user, provider, connection, profile; identity vs delegation — are
   defined canonically in `.working-docs/glossary.md` (gitignored like all working docs). Use them
   consistently in every plan, bead, doc, PR, and line of new code. When `.working-docs/` is absent
   (fresh worktrees), the definitions live on the bead notes of `petroglyph-6ra.6.1`,
   `petroglyph-oru`, `petroglyph-9jt`, and `6ra.5-redesign-decisions.md` §12.
+ 
+## Verification Gate
 - **Verification gate (2026-09-06)**: no component is signed off for AFK implementation until its
   service test-plan bead is satisfied — behaviour proven in tests **and** in production,
   integration points verified. Roll through Unit 1 (OneDrive adapter) → Unit 2 (S3 staging) →
@@ -20,6 +22,18 @@ Never put working documents in `docs/` or any other tracked directory.
   `petroglyph-6ra.5.1.2` (Unit 1), `petroglyph-6ra.5.2.5` (Unit 2), `petroglyph-6ra.7`
   (E2E roll-through — blocks `petroglyph-6ra.4`). The implementation beads under units 1/2 are
   blocked by their plan beads, so they stay out of `bd ready` until the plans are satisfied.
+
+## Validation
+
+- **zod is the single validation library.** Validate ALL data arriving from external systems with
+  zod where the shape could be incorrect — SQS messages, DynamoDB records, webhook payloads,
+  OAuth responses. Do not add other shape-validation libraries; `@jaybeeuu/is` is being removed
+  and must not be reintroduced.
+
+## Generic type naming
+
+- Name generic type parameters after their role/payload — `Envelope<Payload>`, `Queue<Message>` —
+  never a bare `T`. A reader should know what the parameter is without reading the callsite.
 
 ## Pull Request Hygiene
 
