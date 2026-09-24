@@ -184,6 +184,23 @@ describe("walkDelta", () => {
     );
   });
 
+  it("fails when a page carries neither deltaLink nor nextLink — reporting success would leave the token unadvanced", async () => {
+    const store = memStateStore(state);
+    const { client } = scriptedClient([() => page([])]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [profile],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(store.writes).toBe(0);
+    expect(store.current?.deltaLink).toBe(state.deltaLink);
+  });
+
   it("mid-run failure persists nothing — the last complete token stays authoritative", async () => {
     const store = memStateStore(state);
     const { client } = scriptedClient([
@@ -363,6 +380,83 @@ describe("walkDelta", () => {
     });
     expect(errResult.outcome).toBe("failed");
     expect(errStore.clears).toBe(0);
+  });
+
+  it("surfaces the reset to the caller with didReset on the result", async () => {
+    const store = memStateStore(state);
+    const { client } = scriptedClient([
+      () => jsonResponse({ error: { code: "itemNotFound" } }, 410),
+      () =>
+        page([], { deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=fresh" }),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [profile],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.outcome).toBe("reset");
+    expect(result.didReset).toBe(true);
+  });
+
+  it("a reset that immediately resets again returns failed — the reset rule is applied once", async () => {
+    const store = memStateStore(state);
+    const { client, paths } = scriptedClient([
+      () => jsonResponse({ error: { code: "itemNotFound" } }, 410),
+      () => jsonResponse({ error: { code: "syncStateNotFound" } }, 410),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [profile],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(store.clears).toBe(1);
+    expect(store.writes).toBe(0);
+    expect(paths).toEqual([state.deltaLink, INITIAL_URL]);
+  });
+
+  it("a reset on a continuation page clears the token and re-enumerates from initialUrl, keeping pre-reset events", async () => {
+    const store = memStateStore(state);
+    const { client, paths } = scriptedClient([
+      () =>
+        page([fileItem({ id: "before", name: "before.pdf" })], {
+          nextLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=p1",
+        }),
+      () => jsonResponse({ error: { code: "syncStateNotFound" } }, 410),
+      () =>
+        page([fileItem({ id: "after", name: "after.pdf" })], {
+          deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=fresh",
+        }),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [profile],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.outcome).toBe("reset");
+    expect(result.didReset).toBe(true);
+    expect(store.clears).toBe(1);
+    expect(paths).toEqual([
+      state.deltaLink,
+      "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=p1",
+      INITIAL_URL,
+    ]);
+    expect(store.current?.deltaLink).toBe(
+      "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=fresh",
+    );
+    expect(result.events.map((event) => event.itemId)).toEqual(["before", "after"]);
   });
 
   it("normalizes OneDrive parentReference paths — the format never leaks past the walk", async () => {
