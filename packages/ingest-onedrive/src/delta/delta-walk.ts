@@ -2,17 +2,100 @@ import { z } from "zod";
 import type { GraphClient } from "../tokens/graph-client.js";
 import type { DeltaStateStore } from "./delta-state-store.js";
 
-const driveItemSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1).optional(),
-  changeType: z.enum(["created", "updated", "deleted"]).optional(),
-  // Delta omits `path` on parentReference ("always track items by id"), so a
-  // present parentReference without path must not fail the whole page.
-  parentReference: z.object({ path: z.string().optional() }).optional(),
-  file: z.object({ mimeType: z.string().min(1) }).optional(),
-  folder: z.record(z.string(), z.unknown()).optional(),
-  deleted: z.record(z.string(), z.unknown()).optional(),
-});
+/**
+ * A parsed driveItem carrying the `file` facet. `name` and `mimeType` are
+ * optional because the wire may omit them; absence is never substituted.
+ */
+interface FileItem {
+  kind: "file";
+  itemId: string;
+  name?: string;
+  parentPath?: string;
+  mimeType?: string;
+  eTag?: string;
+}
+
+/** A parsed driveItem carrying only the `folder` facet. Never emitted. */
+interface FolderItem {
+  kind: "folder";
+  itemId: string;
+  name?: string;
+  parentPath?: string;
+}
+
+/**
+ * A parsed driveItem carrying the `deleted` facet. A deleted folder carries
+ * BOTH `folder` and `deleted`, so deletion is the discriminator that wins.
+ */
+interface DeletedItem {
+  kind: "deleted";
+  itemId: string;
+  name?: string;
+  parentPath?: string;
+  isFolder: boolean;
+}
+
+type DriveItem = FileItem | FolderItem | DeletedItem;
+
+/**
+ * Tolerant wire schema for a delta page item. Graph may return facets this
+ * adapter does not model, so unknown keys are stripped rather than rejected.
+ * The `file` facet is loose for the same reason and carries `eTag` — the
+ * version dimension (`cTag` is not returned for folders, is unchanged by
+ * metadata-only edits, and is omitted by delta on Create/Modify).
+ */
+const driveItemSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().min(1).optional(),
+    // Delta omits `path` on parentReference ("always track items by id"), so a
+    // present parentReference without path must not fail the whole page.
+    parentReference: z.object({ path: z.string().optional() }).optional(),
+    file: z
+      .object({
+        mimeType: z.string().min(1).optional(),
+        eTag: z.string().min(1).optional(),
+      })
+      .loose()
+      .optional(),
+    folder: z.record(z.string(), z.unknown()).optional(),
+    deleted: z.record(z.string(), z.unknown()).optional(),
+  })
+  .transform((item): DriveItem => {
+    // A deleted folder carries BOTH `folder` and `deleted`, so `deleted` is
+    // tested first; otherwise a folder delete would be mis-tagged as a folder.
+    if (item.deleted !== undefined) {
+      return {
+        kind: "deleted",
+        itemId: item.id,
+        ...(item.name === undefined ? {} : { name: item.name }),
+        ...(item.parentReference?.path === undefined
+          ? {}
+          : { parentPath: item.parentReference.path }),
+        isFolder: item.folder !== undefined,
+      };
+    }
+    if (item.file !== undefined) {
+      return {
+        kind: "file",
+        itemId: item.id,
+        ...(item.name === undefined ? {} : { name: item.name }),
+        ...(item.parentReference?.path === undefined
+          ? {}
+          : { parentPath: item.parentReference.path }),
+        ...(item.file.mimeType === undefined ? {} : { mimeType: item.file.mimeType }),
+        ...(item.file.eTag === undefined ? {} : { eTag: item.file.eTag }),
+      };
+    }
+    return {
+      kind: "folder",
+      itemId: item.id,
+      ...(item.name === undefined ? {} : { name: item.name }),
+      ...(item.parentReference?.path === undefined
+        ? {}
+        : { parentPath: item.parentReference.path }),
+    };
+  });
 
 const deltaPageSchema = z.object({
   value: z.array(driveItemSchema),
@@ -20,20 +103,34 @@ const deltaPageSchema = z.object({
   "@odata.deltaLink": z.string().min(1).optional(),
 });
 
-type DriveItem = z.infer<typeof driveItemSchema>;
-
-/** Adapter-internal change fact (6.5.2.1 contract). Never registered. */
-export interface FileChangeEvent {
-  profileId: string;
-  changeType: "created" | "updated" | "deleted";
-  itemId: string;
-  name: string;
-  /** NORMALIZED here — the OneDrive parentReference.path format never leaks. */
-  relativePath: string;
-  /** Pre-download filter input only; never persisted, never in the event. */
-  mimeType?: string;
-  isFolder: boolean;
-}
+/**
+ * Adapter-internal change fact (6.5.2.1 contract). Never registered.
+ * The `kind` facet replaces the phantom change-type property; created-vs-updated
+ * is deliberately absent and is left to the version dimension (petroglyph-j1gn.17).
+ */
+export type FileChangeEvent =
+  | {
+      kind: "file";
+      profileId: string;
+      itemId: string;
+      /** Absent when delta omitted it; never substituted with `itemId`. */
+      name?: string;
+      /** NORMALIZED here — the OneDrive parentReference.path format never leaks. */
+      relativePath: string;
+      /** Pre-download filter input only; never persisted, never in the event. */
+      mimeType?: string;
+      /** Version dimension consumed by petroglyph-j1gn.17. */
+      eTag?: string;
+    }
+  | {
+      kind: "deleted";
+      profileId: string;
+      itemId: string;
+      /** Absent when delta omitted it; never substituted with `itemId`. */
+      name?: string;
+      relativePath: string;
+      isFolder: boolean;
+    };
 
 export type DeltaWalkOutcome = "continued" | "reset" | "failed";
 
@@ -108,7 +205,10 @@ function isResetResponse(status: number, body: unknown): boolean {
  */
 export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkResult> {
   const stored = await options.store.read(options.connection.userId, options.connection.provider);
-  const events: FileChangeEvent[] = [];
+  // Delta shows the latest state per item and may repeat an item within a walk,
+  // so the last occurrence seen wins.
+  const eventsByItemId = new Map<string, FileChangeEvent>();
+  const collectEvents = (): FileChangeEvent[] => [...eventsByItemId.values()];
 
   let outcome: DeltaWalkOutcome = "continued";
   let unresolvedPathCount = 0;
@@ -122,7 +222,12 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
     body = await response.json().catch(() => null);
     outcome = "reset";
     if (isResetResponse(response.status, body)) {
-      return { events, outcome: "failed", unresolvedPathCount, driveRootItemCount };
+      return {
+        events: collectEvents(),
+        outcome: "failed",
+        unresolvedPathCount,
+        driveRootItemCount,
+      };
     }
   }
 
@@ -130,21 +235,38 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
 
   while (true) {
     if (response.status !== 200) {
-      return { events, outcome: "failed", unresolvedPathCount, driveRootItemCount };
+      return {
+        events: collectEvents(),
+        outcome: "failed",
+        unresolvedPathCount,
+        driveRootItemCount,
+      };
     }
     const parsed = deltaPageSchema.safeParse(body);
     if (!parsed.success) {
-      return { events, outcome: "failed", unresolvedPathCount, driveRootItemCount };
+      return {
+        events: collectEvents(),
+        outcome: "failed",
+        unresolvedPathCount,
+        driveRootItemCount,
+      };
     }
 
     const classified = classifyPage(parsed.data.value, options.profiles);
-    events.push(...classified.events);
+    for (const event of classified.events) {
+      eventsByItemId.set(event.itemId, event);
+    }
     unresolvedPathCount += classified.unresolvedPathCount;
     driveRootItemCount += classified.driveRootItemCount;
     if (unresolvedPathCount > 0) {
       // Delta returned items we cannot place. Fail rather than report a clean
       // walk that advanced the change token past changes we never routed.
-      return { events, outcome: "failed", unresolvedPathCount, driveRootItemCount };
+      return {
+        events: collectEvents(),
+        outcome: "failed",
+        unresolvedPathCount,
+        driveRootItemCount,
+      };
     }
 
     const deltaLink = parsed.data["@odata.deltaLink"];
@@ -167,7 +289,12 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
       body = await response.json().catch(() => null);
       outcome = "reset";
       if (isResetResponse(response.status, body)) {
-        return { events, outcome: "failed", unresolvedPathCount, driveRootItemCount };
+        return {
+          events: collectEvents(),
+          outcome: "failed",
+          unresolvedPathCount,
+          driveRootItemCount,
+        };
       }
       continue;
     }
@@ -183,7 +310,7 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
   }
 
   return {
-    events,
+    events: collectEvents(),
     ...(terminalDeltaLink === undefined ? {} : { deltaLink: terminalDeltaLink }),
     outcome,
     unresolvedPathCount,
@@ -202,7 +329,7 @@ function classifyPage(items: DriveItem[], profiles: DeltaWalkProfile[]): PageCla
   let unresolvedPathCount = 0;
   let driveRootItemCount = 0;
   for (const item of items) {
-    const relativePath = normalizeRelativePath(item.parentReference?.path);
+    const relativePath = normalizeRelativePath(item.parentPath);
     if (relativePath === undefined) {
       // Delta omitted the path — we cannot tell where the item lives.
       unresolvedPathCount += 1;
@@ -214,19 +341,29 @@ function classifyPage(items: DriveItem[], profiles: DeltaWalkProfile[]): PageCla
       driveRootItemCount += 1;
       continue;
     }
-    if (item.deleted !== undefined) {
-      const event = classifyDeleted(item, profiles, relativePath);
-      if (event !== null) {
-        events.push(event);
+    switch (item.kind) {
+      case "file": {
+        const event = classifyFile(item, profiles, relativePath);
+        if (event !== null) {
+          events.push(event);
+        }
+        break;
       }
-      continue;
-    }
-    if (item.file === undefined) {
-      continue; // created/updated folders are classified but never fetched
-    }
-    const event = classifyFile(item, profiles, relativePath);
-    if (event !== null) {
-      events.push(event);
+      case "deleted": {
+        const event = classifyDeleted(item, profiles, relativePath);
+        if (event !== null) {
+          events.push(event);
+        }
+        break;
+      }
+      case "folder":
+        // Folders are classified by the wire schema but never emitted — only
+        // file and delete changes carry content to stage or remove.
+        break;
+      default: {
+        const unhandled: never = item;
+        return unhandled;
+      }
     }
   }
   return { events, unresolvedPathCount, driveRootItemCount };
@@ -247,7 +384,7 @@ function routeToProfile(
 }
 
 function classifyFile(
-  item: DriveItem,
+  item: FileItem,
   profiles: DeltaWalkProfile[],
   relativePath: string,
 ): FileChangeEvent | null {
@@ -256,18 +393,18 @@ function classifyFile(
     return null;
   }
   return {
+    kind: "file",
     profileId: profile.profileId,
-    changeType: item.changeType === "updated" ? "updated" : "created",
-    itemId: item.id,
-    name: item.name ?? item.id,
+    itemId: item.itemId,
+    ...(item.name === undefined ? {} : { name: item.name }),
     relativePath,
-    ...(item.file === undefined ? {} : { mimeType: item.file.mimeType }),
-    isFolder: false,
+    ...(item.mimeType === undefined ? {} : { mimeType: item.mimeType }),
+    ...(item.eTag === undefined ? {} : { eTag: item.eTag }),
   };
 }
 
 function classifyDeleted(
-  item: DriveItem,
+  item: DeletedItem,
   profiles: DeltaWalkProfile[],
   relativePath: string,
 ): FileChangeEvent | null {
@@ -276,11 +413,11 @@ function classifyDeleted(
     return null;
   }
   return {
+    kind: "deleted",
     profileId: profile.profileId,
-    changeType: "deleted",
-    itemId: item.id,
-    name: item.name ?? item.id,
+    itemId: item.itemId,
+    ...(item.name === undefined ? {} : { name: item.name }),
     relativePath,
-    isFolder: item.folder !== undefined,
+    isFolder: item.isFolder,
   };
 }
