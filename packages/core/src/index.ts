@@ -8,3 +8,8 @@ export type {
   PendingFileRecord,
   StagedFileRecord,
 } from "./file-record.js";
+export { createTokenResolver } from "./tokens/token-resolver.js";
+export type { TokenResolver, TokenResolveOptions } from "./tokens/token-resolver.js";
+export type { TokenRequestOutcome, ResolveOutcome } from "./tokens/token-resolver.js";
+export { tokenRecordSchema } from "./tokens/token-store.js";
+export type { TokenRecord, TokenStore } from "./tokens/token-store.js";
