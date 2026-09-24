@@ -6,7 +6,9 @@ const driveItemSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).optional(),
   changeType: z.enum(["created", "updated", "deleted"]).optional(),
-  parentReference: z.object({ path: z.string() }).optional(),
+  // Delta omits `path` on parentReference ("always track items by id"), so a
+  // present parentReference without path must not fail the whole page.
+  parentReference: z.object({ path: z.string().optional() }).optional(),
   file: z.object({ mimeType: z.string().min(1) }).optional(),
   folder: z.record(z.string(), z.unknown()).optional(),
   deleted: z.record(z.string(), z.unknown()).optional(),
@@ -39,6 +41,22 @@ export interface DeltaWalkResult {
   events: FileChangeEvent[];
   deltaLink?: string;
   outcome: DeltaWalkOutcome;
+  /**
+   * Items the delta returned whose parent path could not be resolved into a
+   * usable relative path. Delta omits `parentReference.path`; a path that is
+   * absent or not a recognised drive-root form is "unknown", distinct from a
+   * drive-root item which normalises to "". A non-zero count fails the walk so
+   * unresolvable changes are visible, never silently dropped while the change
+   * token advances.
+   */
+  unresolvedPathCount: number;
+  /**
+   * Items that resolved to the drive root and so have no folder segment for a
+   * staging key. Distinct from `unresolvedPathCount` (path unknown). Counted so
+   * the drop is visible, but it does not fail the walk — root files are outside
+   * the folder-scoped staging layout and must not block every other change.
+   */
+  driveRootItemCount: number;
 }
 
 export interface DeltaWalkProfile {
@@ -56,14 +74,22 @@ export interface DeltaWalkOptions {
   initialUrl: string;
 }
 
-/** Strips up to the drive root: "/drive/root:/notes/sub" → "notes/sub". */
-export function normalizeRelativePath(parentPath: string): string {
-  const match = parentPath.match(/^(?:\/drive\/root|\/drives\/[^/]+\/root):?\/(.*)$/);
-  if (match === null) {
-    return "";
+/**
+ * Strips up to the drive root: "/drive/root:/notes/sub" → "notes/sub".
+ * Returns undefined when the path is absent or not in a recognised drive-root
+ * form — "path unknown", distinct from "" ("item is at the drive root").
+ * Delta omits `parentReference.path` entirely, so unknown is the expected
+ * shape there, not an error in itself.
+ */
+export function normalizeRelativePath(parentPath: string | undefined): string | undefined {
+  if (parentPath === undefined) {
+    return undefined;
   }
-  const remainder = (match[1] ?? "").replace(/\/+$/, "");
-  return remainder;
+  const match = parentPath.match(/^(?:\/drive\/root|\/drives\/[^/]+\/root):?(?:\/(.*))?$/);
+  if (match === null) {
+    return undefined;
+  }
+  return (match[1] ?? "").replace(/\/+$/, "");
 }
 
 function isResetResponse(status: number, body: unknown): boolean {
@@ -85,6 +111,8 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
   const events: FileChangeEvent[] = [];
 
   let outcome: DeltaWalkOutcome = "continued";
+  let unresolvedPathCount = 0;
+  let driveRootItemCount = 0;
   let response = await options.client.request(stored?.deltaLink ?? options.initialUrl);
   let body: unknown = await response.json().catch(() => null);
 
@@ -94,7 +122,7 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
     body = await response.json().catch(() => null);
     outcome = "reset";
     if (isResetResponse(response.status, body)) {
-      return { events, outcome: "failed" };
+      return { events, outcome: "failed", unresolvedPathCount, driveRootItemCount };
     }
   }
 
@@ -102,14 +130,22 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
 
   while (true) {
     if (response.status !== 200) {
-      return { events, outcome: "failed" };
+      return { events, outcome: "failed", unresolvedPathCount, driveRootItemCount };
     }
     const parsed = deltaPageSchema.safeParse(body);
     if (!parsed.success) {
-      return { events, outcome: "failed" };
+      return { events, outcome: "failed", unresolvedPathCount, driveRootItemCount };
     }
 
-    events.push(...classifyPage(parsed.data.value, options.profiles));
+    const classified = classifyPage(parsed.data.value, options.profiles);
+    events.push(...classified.events);
+    unresolvedPathCount += classified.unresolvedPathCount;
+    driveRootItemCount += classified.driveRootItemCount;
+    if (unresolvedPathCount > 0) {
+      // Delta returned items we cannot place. Fail rather than report a clean
+      // walk that advanced the change token past changes we never routed.
+      return { events, outcome: "failed", unresolvedPathCount, driveRootItemCount };
+    }
 
     const deltaLink = parsed.data["@odata.deltaLink"];
     if (deltaLink !== undefined) {
@@ -131,7 +167,7 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
       body = await response.json().catch(() => null);
       outcome = "reset";
       if (isResetResponse(response.status, body)) {
-        return { events, outcome: "failed" };
+        return { events, outcome: "failed", unresolvedPathCount, driveRootItemCount };
       }
       continue;
     }
@@ -150,14 +186,36 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
     events,
     ...(terminalDeltaLink === undefined ? {} : { deltaLink: terminalDeltaLink }),
     outcome,
+    unresolvedPathCount,
+    driveRootItemCount,
   };
 }
 
-function classifyPage(items: DriveItem[], profiles: DeltaWalkProfile[]): FileChangeEvent[] {
+interface PageClassification {
+  events: FileChangeEvent[];
+  unresolvedPathCount: number;
+  driveRootItemCount: number;
+}
+
+function classifyPage(items: DriveItem[], profiles: DeltaWalkProfile[]): PageClassification {
   const events: FileChangeEvent[] = [];
+  let unresolvedPathCount = 0;
+  let driveRootItemCount = 0;
   for (const item of items) {
+    const relativePath = normalizeRelativePath(item.parentReference?.path);
+    if (relativePath === undefined) {
+      // Delta omitted the path — we cannot tell where the item lives.
+      unresolvedPathCount += 1;
+      continue;
+    }
+    if (relativePath === "") {
+      // Drive root: no folder segment, so no safe staging key. Count and skip,
+      // never emit an empty relativePath into stage().
+      driveRootItemCount += 1;
+      continue;
+    }
     if (item.deleted !== undefined) {
-      const event = classifyDeleted(item, profiles);
+      const event = classifyDeleted(item, profiles, relativePath);
       if (event !== null) {
         events.push(event);
       }
@@ -166,12 +224,12 @@ function classifyPage(items: DriveItem[], profiles: DeltaWalkProfile[]): FileCha
     if (item.file === undefined) {
       continue; // created/updated folders are classified but never fetched
     }
-    const event = classifyFile(item, profiles);
+    const event = classifyFile(item, profiles, relativePath);
     if (event !== null) {
       events.push(event);
     }
   }
-  return events;
+  return { events, unresolvedPathCount, driveRootItemCount };
 }
 
 function routeToProfile(
@@ -181,13 +239,18 @@ function routeToProfile(
   return profiles.find(
     (profile) =>
       profile.rootPath === undefined ||
+      profile.rootPath === "" ||
+      profile.rootPath === "/" ||
       relativePath === profile.rootPath ||
       relativePath.startsWith(`${profile.rootPath}/`),
   );
 }
 
-function classifyFile(item: DriveItem, profiles: DeltaWalkProfile[]): FileChangeEvent | null {
-  const relativePath = normalizeRelativePath(item.parentReference?.path ?? "");
+function classifyFile(
+  item: DriveItem,
+  profiles: DeltaWalkProfile[],
+  relativePath: string,
+): FileChangeEvent | null {
   const profile = routeToProfile(profiles, relativePath);
   if (profile === undefined) {
     return null;
@@ -203,8 +266,11 @@ function classifyFile(item: DriveItem, profiles: DeltaWalkProfile[]): FileChange
   };
 }
 
-function classifyDeleted(item: DriveItem, profiles: DeltaWalkProfile[]): FileChangeEvent | null {
-  const relativePath = normalizeRelativePath(item.parentReference?.path ?? "");
+function classifyDeleted(
+  item: DriveItem,
+  profiles: DeltaWalkProfile[],
+  relativePath: string,
+): FileChangeEvent | null {
   const profile = routeToProfile(profiles, relativePath);
   if (profile === undefined) {
     return null;
