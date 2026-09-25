@@ -154,6 +154,12 @@ export interface DeltaWalkResult {
    * the folder-scoped staging layout and must not block every other change.
    */
   driveRootItemCount: number;
+  /**
+   * True when the walk cleared the stored token and re-enumerated from
+   * `initialUrl` because Graph rejected the token (410/syncStateNotFound). A
+   * full resync is otherwise invisible to a caller that only reads `outcome`.
+   */
+  didReset: boolean;
 }
 
 export interface DeltaWalkProfile {
@@ -198,10 +204,20 @@ function isResetResponse(status: number, body: unknown): boolean {
 }
 
 /**
+ * One delta request with the reset rule already applied. `didReset` records
+ * that the request recovered from a rejected token by clearing the stored
+ * token and re-enumerating from `initialUrl`; `unavailable` means the reset
+ * itself was rejected, so the walk cannot continue.
+ */
+type Page =
+  | { kind: "page"; status: number; body: unknown; didReset: boolean }
+  | { kind: "unavailable" };
+
+/**
  * Delta walk + change-token management. Full enumeration when no token is
  * stored; pages @odata.nextLink until the terminal @odata.deltaLink; writes
  * the state ONLY on successful completion; 410/syncStateNotFound clears the
- * token and re-enumerates from scratch (outcome reset).
+ * token and re-enumerates from scratch (outcome reset, didReset true).
  */
 export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkResult> {
   const stored = await options.store.read(options.connection.userId, options.connection.provider);
@@ -211,45 +227,56 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
   const collectEvents = (): FileChangeEvent[] => [...eventsByItemId.values()];
 
   let outcome: DeltaWalkOutcome = "continued";
+  let didReset = false;
   let unresolvedPathCount = 0;
   let driveRootItemCount = 0;
-  let response = await options.client.request(stored?.deltaLink ?? options.initialUrl);
-  let body: unknown = await response.json().catch(() => null);
 
-  if (isResetResponse(response.status, body)) {
-    await options.store.clear(options.connection.userId, options.connection.provider);
-    response = await options.client.request(options.initialUrl);
-    body = await response.json().catch(() => null);
-    outcome = "reset";
-    if (isResetResponse(response.status, body)) {
-      return {
-        events: collectEvents(),
-        outcome: "failed",
-        unresolvedPathCount,
-        driveRootItemCount,
-      };
+  /**
+   * Request a page and apply the reset rule once: a rejected token clears the
+   * stored token, re-enumerates from `initialUrl`, and reports `didReset`; a
+   * reset that immediately resets again is `unavailable`.
+   */
+  const requestPage = async (url: string): Promise<Page> => {
+    const response = await options.client.request(url);
+    const body: unknown = await response.json().catch(() => null);
+    if (!isResetResponse(response.status, body)) {
+      return { kind: "page", status: response.status, body, didReset: false };
     }
-  }
+    await options.store.clear(options.connection.userId, options.connection.provider);
+    const fresh = await options.client.request(options.initialUrl);
+    const freshBody: unknown = await fresh.json().catch(() => null);
+    if (isResetResponse(fresh.status, freshBody)) {
+      // A reset that immediately resets again cannot be recovered from.
+      return { kind: "unavailable" };
+    }
+    return { kind: "page", status: fresh.status, body: freshBody, didReset: true };
+  };
 
-  let terminalDeltaLink: string | undefined;
+  const failed = (): DeltaWalkResult => ({
+    events: collectEvents(),
+    outcome: "failed",
+    unresolvedPathCount,
+    driveRootItemCount,
+    didReset,
+  });
+
+  let page = await requestPage(stored?.deltaLink ?? options.initialUrl);
 
   while (true) {
-    if (response.status !== 200) {
-      return {
-        events: collectEvents(),
-        outcome: "failed",
-        unresolvedPathCount,
-        driveRootItemCount,
-      };
+    if (page.kind === "unavailable") {
+      return failed();
     }
-    const parsed = deltaPageSchema.safeParse(body);
+    if (page.didReset) {
+      // The token was cleared and the drive re-enumerated — surface the reset.
+      outcome = "reset";
+      didReset = true;
+    }
+    if (page.status !== 200) {
+      return failed();
+    }
+    const parsed = deltaPageSchema.safeParse(page.body);
     if (!parsed.success) {
-      return {
-        events: collectEvents(),
-        outcome: "failed",
-        unresolvedPathCount,
-        driveRootItemCount,
-      };
+      return failed();
     }
 
     const classified = classifyPage(parsed.data.value, options.profiles);
@@ -261,61 +288,33 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
     if (unresolvedPathCount > 0) {
       // Delta returned items we cannot place. Fail rather than report a clean
       // walk that advanced the change token past changes we never routed.
-      return {
-        events: collectEvents(),
-        outcome: "failed",
-        unresolvedPathCount,
-        driveRootItemCount,
-      };
+      return failed();
     }
 
     const deltaLink = parsed.data["@odata.deltaLink"];
     if (deltaLink !== undefined) {
-      terminalDeltaLink = deltaLink;
-      break;
+      await options.store.write(options.connection.userId, options.connection.provider, {
+        deltaLink,
+        updatedAt: new Date().toISOString(),
+      });
+      return {
+        events: collectEvents(),
+        deltaLink,
+        outcome,
+        unresolvedPathCount,
+        driveRootItemCount,
+        didReset,
+      };
     }
 
     const nextLink = parsed.data["@odata.nextLink"];
     if (nextLink === undefined) {
-      break;
+      // Neither link: the walk never reached a terminal change token, so it
+      // cannot claim success with the token left unadvanced.
+      return failed();
     }
-
-    const next = await options.client.request(nextLink);
-    const nextBody: unknown = await next.json().catch(() => null);
-    if (isResetResponse(next.status, nextBody)) {
-      // Token expired mid-walk — clear and full resync.
-      await options.store.clear(options.connection.userId, options.connection.provider);
-      response = await options.client.request(options.initialUrl);
-      body = await response.json().catch(() => null);
-      outcome = "reset";
-      if (isResetResponse(response.status, body)) {
-        return {
-          events: collectEvents(),
-          outcome: "failed",
-          unresolvedPathCount,
-          driveRootItemCount,
-        };
-      }
-      continue;
-    }
-    response = next;
-    body = nextBody;
+    page = await requestPage(nextLink);
   }
-
-  if (terminalDeltaLink !== undefined) {
-    await options.store.write(options.connection.userId, options.connection.provider, {
-      deltaLink: terminalDeltaLink,
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  return {
-    events: collectEvents(),
-    ...(terminalDeltaLink === undefined ? {} : { deltaLink: terminalDeltaLink }),
-    outcome,
-    unresolvedPathCount,
-    driveRootItemCount,
-  };
 }
 
 interface PageClassification {
