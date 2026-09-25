@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { DynamoDBClient, CreateTableCommand } from "@aws-sdk/client-dynamodb";
@@ -6,18 +5,7 @@ import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { createEventLogWriter } from "./event-log.js";
 import type { CloudEvent } from "./cloud-event.js";
 
-function dockerAvailable(): boolean {
-  try {
-    execSync("docker info", { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const canRun = dockerAvailable();
-
-describe.skipIf(!canRun)("event log writer against LocalStack DDB", () => {
+describe("event log writer against LocalStack DDB", () => {
   let container: StartedTestContainer;
   let writer: ReturnType<typeof createEventLogWriter>;
   const tableName = "event-log-int";
