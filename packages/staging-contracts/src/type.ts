@@ -1,9 +1,15 @@
 /**
+ * The content types staging accepts. Deliberately narrow: it names only what
+ * {@link detectType} can verify from the body's magic bytes.
+ */
+export type MimeType = "application/pdf";
+
+/**
  * Accepted-type detection for staged bodies: magic-byte signature table.
  * L0 today: PDF only. The detected value is ALWAYS the source of both
  * data.mimeType and the S3 ContentType — a default would store a lie.
  */
-export function detectType(body: Uint8Array): string | null {
+export function detectType(body: Uint8Array): MimeType | null {
   if (body.length < 5) {
     return null;
   }

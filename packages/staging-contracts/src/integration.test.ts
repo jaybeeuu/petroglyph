@@ -11,10 +11,10 @@ function requireStored(result: ObjectStoreGetResult | null): ObjectStoreGetResul
   return result;
 }
 import { stage } from "./stage.js";
-import { detectType } from "./type.js";
+import { detectType, type MimeType } from "./type.js";
 import { fileStagedDataSchema } from "./events.js";
 
-function pdfBodyType(body: Uint8Array): string {
+function pdfBodyType(body: Uint8Array): MimeType {
   const detected = detectType(body);
   if (detected === null) {
     throw new Error("expected a PDF body");
