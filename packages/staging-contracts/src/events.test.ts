@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { Ajv2020 } from "ajv/dist/2020.js";
+import type { CloudEvent } from "@petroglyph/events";
 import {
+  type FileDeletedData,
+  type FileStagedData,
   fileDeletedDataSchema,
   fileDeletedEvent,
   fileStagedDataSchema,
@@ -81,69 +83,87 @@ describe("fileDeletedDataSchema", () => {
   });
 });
 
-describe("registered events", () => {
-  it("registers the brand-anchored types with schemas.petroglyph.dev dataschemas", () => {
-    expect(fileStagedEvent.type).toBe("petroglyph.file.staged");
-    expect(fileStagedEvent.dataschema).toBe("https://schemas.petroglyph.dev/file-staged/v1.json");
-    expect(fileDeletedEvent.type).toBe("petroglyph.file.deleted");
-    expect(fileDeletedEvent.dataschema).toBe("https://schemas.petroglyph.dev/file-deleted/v1.json");
-  });
+const createStagedDocument = (
+  overrides: Partial<CloudEvent<FileStagedData>> = {},
+): CloudEvent<FileStagedData> => ({
+  specversion: "1.0",
+  id: "emission-1",
+  source: "onedrive://profiles/p1",
+  type: "petroglyph.file.staged",
+  time: "2026-09-03T12:00:00Z",
+  datacontenttype: "application/json",
+  dataschema: "https://schemas.petroglyph.dev/file-staged/v1.json",
+  subject: "files/item-1",
+  data: stagedData,
+  ...overrides,
+});
 
-  it("emits a conformant CE document that round-trips through parse", () => {
-    const document = fileStagedEvent.buildDocument({
-      id: "emission-1",
-      source: "onedrive://profiles/p1",
-      subject: "files/item-1",
+const createDeletedDocument = (
+  overrides: Partial<CloudEvent<FileDeletedData>> = {},
+): CloudEvent<FileDeletedData> => ({
+  specversion: "1.0",
+  id: "emission-2",
+  source: "onedrive://profiles/p1",
+  type: "petroglyph.file.deleted",
+  time: "2026-09-03T12:00:00Z",
+  datacontenttype: "application/json",
+  dataschema: "https://schemas.petroglyph.dev/file-deleted/v1.json",
+  subject: "files/item-1",
+  data: deletedData,
+  ...overrides,
+});
+
+describe("fileStagedEvent", () => {
+  it("parses a conformant CloudEvent document", () => {
+    expect(fileStagedEvent.parse(createStagedDocument())).toMatchObject({
+      specversion: "1.0",
+      type: "petroglyph.file.staged",
+      dataschema: "https://schemas.petroglyph.dev/file-staged/v1.json",
       data: stagedData,
     });
-
-    expect(document.specversion).toBe("1.0");
-    expect(document.type).toBe("petroglyph.file.staged");
-    expect(document.source).toBe("onedrive://profiles/p1");
-    expect(document.dataschema).toBe("https://schemas.petroglyph.dev/file-staged/v1.json");
-    expect(document.subject).toBe("files/item-1");
-    expect(document.time).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/);
-
-    const reparsed = fileStagedEvent.parse(JSON.parse(fileStagedEvent.format(document)));
-    expect(reparsed).toEqual(document);
   });
 
-  it("a staged document never parses as deleted and vice versa", () => {
-    const staged = fileStagedEvent.buildDocument({
-      id: "emission-1",
-      source: "onedrive://profiles/p1",
-      data: stagedData,
-    });
-    const deleted = fileDeletedEvent.buildDocument({
-      id: "emission-2",
-      source: "onedrive://profiles/p1",
-      data: deletedData,
-    });
+  it("rejects a document carrying a foreign type literal", () => {
+    expect(() =>
+      fileStagedEvent.parse(createStagedDocument({ type: "petroglyph.file.deleted" })),
+    ).toThrow();
+  });
 
-    expect(() => fileDeletedEvent.parse(staged)).toThrow();
-    expect(() => fileStagedEvent.parse(deleted)).toThrow();
+  it("rejects a document carrying a foreign dataschema literal", () => {
+    expect(() =>
+      fileStagedEvent.parse(
+        createStagedDocument({ dataschema: "https://schemas.petroglyph.dev/other/v1.json" }),
+      ),
+    ).toThrow();
   });
 
   it("rejects bad envelopes (missing id, non-RFC3339 time)", () => {
-    const { id: _id, ...withoutId } = fileStagedEvent.buildDocument({
-      id: "emission-1",
-      source: "onedrive://profiles/p1",
-      data: stagedData,
-    });
+    const { id: _id, ...withoutId } = createStagedDocument();
     expect(() => fileStagedEvent.parse(withoutId)).toThrow();
-    expect(() => fileStagedEvent.parse({ ...withoutId, id: "x", time: "yesterday" })).toThrow();
+    expect(() =>
+      fileStagedEvent.parse({ ...withoutId, id: "emission-1", time: "yesterday" }),
+    ).toThrow();
+  });
+});
+
+describe("fileDeletedEvent", () => {
+  it("parses a conformant CloudEvent document", () => {
+    expect(fileDeletedEvent.parse(createDeletedDocument())).toMatchObject({
+      specversion: "1.0",
+      type: "petroglyph.file.deleted",
+      dataschema: "https://schemas.petroglyph.dev/file-deleted/v1.json",
+      data: deletedData,
+    });
   });
 
-  it("produces JSON Schema artifacts that validate conformant data and reject missing s3Key", () => {
-    const ajv = new Ajv2020();
-    const validate = ajv.compile(fileStagedEvent.jsonSchema() as object);
-
-    expect(validate(stagedData)).toBe(true);
-    const { s3Key: _s3Key, ...withoutKey } = stagedData;
-    expect(validate(withoutKey)).toBe(false);
+  it("a staged document never parses as deleted and vice versa", () => {
+    expect(() => fileDeletedEvent.parse(createStagedDocument())).toThrow();
+    expect(() => fileStagedEvent.parse(createDeletedDocument())).toThrow();
   });
+});
 
-  it("the change-type schemas are the advertised literals", () => {
+describe("change-type schemas", () => {
+  it("are the advertised literals", () => {
     expect(stagedChangeTypeSchema.options).toEqual(["created", "updated"]);
     expect(deletedChangeTypeSchema.parse("deleted")).toBe("deleted");
   });

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { registerEvent } from "@petroglyph/events";
+import { cloudEventSchema } from "@petroglyph/events";
 
 export const stagedChangeTypeSchema = z.enum(["created", "updated"]);
 export const deletedChangeTypeSchema = z.literal("deleted");
@@ -42,14 +42,12 @@ export const fileDeletedDataSchema = z
 
 export type FileDeletedData = z.infer<typeof fileDeletedDataSchema>;
 
-export const fileStagedEvent = registerEvent({
-  type: "petroglyph.file.staged",
-  dataschema: "https://schemas.petroglyph.dev/file-staged/v1.json",
-  dataSchema: fileStagedDataSchema,
+export const fileStagedEvent = cloudEventSchema(fileStagedDataSchema).extend({
+  type: z.literal("petroglyph.file.staged"),
+  dataschema: z.literal("https://schemas.petroglyph.dev/file-staged/v1.json"),
 });
 
-export const fileDeletedEvent = registerEvent({
-  type: "petroglyph.file.deleted",
-  dataschema: "https://schemas.petroglyph.dev/file-deleted/v1.json",
-  dataSchema: fileDeletedDataSchema,
+export const fileDeletedEvent = cloudEventSchema(fileDeletedDataSchema).extend({
+  type: z.literal("petroglyph.file.deleted"),
+  dataschema: z.literal("https://schemas.petroglyph.dev/file-deleted/v1.json"),
 });
