@@ -84,12 +84,14 @@ const fileItem = (overrides: { [key: string]: unknown }): { [key: string]: unkno
 });
 
 describe("normalizeRelativePath", () => {
-  it("distinguishes a drive-root path from an unknown path", () => {
-    expect(normalizeRelativePath("/drive/root:")).toBe("");
-    expect(normalizeRelativePath("/drive/root:/")).toBe("");
-    expect(normalizeRelativePath("/drive/root:/notes")).toBe("notes");
-    expect(normalizeRelativePath(undefined)).toBeUndefined();
-    expect(normalizeRelativePath("not-a-drive-root-path")).toBeUndefined();
+  it.each([
+    ["/drive/root:", ""],
+    ["/drive/root:/", ""],
+    ["/drive/root:/notes", "notes"],
+    [undefined, undefined],
+    ["not-a-drive-root-path", undefined],
+  ])("normalizeRelativePath(%o) -> %o", (input, expected) => {
+    expect(normalizeRelativePath(input)).toBe(expected);
   });
 });
 
