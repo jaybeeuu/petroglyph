@@ -18,6 +18,7 @@
     "lint": "eslint .",
     "prebuild": "pnpm generate-types",
     "local-onedrive-flow": "tsx scripts/local-onedrive-flow.ts",
+    "probe-graph-delta": "tsx scripts/probe-graph-delta.ts",
     "smoke-test": "tsx scripts/smoke-test.ts",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
