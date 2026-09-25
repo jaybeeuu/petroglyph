@@ -75,10 +75,30 @@ function page(items: unknown[], links?: { nextLink?: string; deltaLink?: string 
   return jsonResponse(body);
 }
 
+// Shapes captured from a real personal-drive delta (probe, 2026-09-25): items
+// inside the drive carry driveType/driveId/id/path/siteId; the drive root is a
+// folder whose parentReference carries only driveType/driveId.
+const DRIVE_ID = "3ED2640302C59E0B";
+const DRIVE_ROOT_ID = `${DRIVE_ID}!sea8cc6beffdb43d7976fbc7da445c639`;
+const SITE_ID = "37d29b46-6d27-45d9-b8d5-5b1f72b36cfc";
+
+/** A real delta `parentReference` for an item inside the drive. */
+function parentRef(path: string): { [key: string]: unknown } {
+  return { driveType: "personal", driveId: DRIVE_ID, id: DRIVE_ROOT_ID, path, siteId: SITE_ID };
+}
+
+/** The drive-root item: a folder whose parentReference has no `path`. */
+const driveRootItem = {
+  id: DRIVE_ROOT_ID,
+  name: "root",
+  folder: { childCount: 2 },
+  parentReference: { driveType: "personal", driveId: DRIVE_ID },
+};
+
 const fileItem = (overrides: { [key: string]: unknown }): { [key: string]: unknown } => ({
   id: "item-1",
-  name: "notes/a.pdf",
-  parentReference: { driveId: "drive-1", path: "/drive/root:/notes" },
+  name: "a.pdf",
+  parentReference: parentRef("/drive/root:/notes"),
   file: { mimeType: "application/pdf" },
   ...overrides,
 });
@@ -236,7 +256,7 @@ describe("walkDelta", () => {
               id: "gone-1",
               deleted: {},
               name: "a.pdf",
-              parentReference: { path: "/drive/root:/notes" },
+              parentReference: parentRef("/drive/root:/notes"),
             },
           ],
           { deltaLink: state.deltaLink },
@@ -275,7 +295,7 @@ describe("walkDelta", () => {
               deleted: {},
               folder: {},
               name: "sub",
-              parentReference: { path: "/drive/root:/notes" },
+              parentReference: parentRef("/drive/root:/notes"),
             },
           ],
           { deltaLink: state.deltaLink },
@@ -306,7 +326,7 @@ describe("walkDelta", () => {
     const store = memStateStore(state);
     const { client } = scriptedClient([
       () =>
-        page([{ id: "gone-1", deleted: {}, parentReference: { path: "/drive/root:/notes" } }], {
+        page([{ id: "gone-1", deleted: {}, parentReference: parentRef("/drive/root:/notes") }], {
           deltaLink: state.deltaLink,
         }),
     ]);
@@ -470,7 +490,7 @@ describe("walkDelta", () => {
             fileItem({
               id: "i1",
               name: "a.pdf",
-              parentReference: { path: "/drive/root:/notes/sub/deep" },
+              parentReference: parentRef("/drive/root:/notes/sub/deep"),
             }),
           ],
           { deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=final" },
@@ -497,12 +517,12 @@ describe("walkDelta", () => {
             fileItem({
               id: "inside",
               name: "a.pdf",
-              parentReference: { path: "/drive/root:/notes" },
+              parentReference: parentRef("/drive/root:/notes"),
             }),
             fileItem({
               id: "outside",
               name: "x.pdf",
-              parentReference: { path: "/drive/root:/other" },
+              parentReference: parentRef("/drive/root:/other"),
             }),
           ],
           { deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=final" },
@@ -532,7 +552,7 @@ describe("walkDelta", () => {
             {
               id: "no-path-1",
               name: "a.pdf",
-              parentReference: { driveId: "drive-1" },
+              parentReference: { driveType: "personal", driveId: DRIVE_ID },
               file: { mimeType: "application/pdf" },
             },
           ],
@@ -582,7 +602,7 @@ describe("walkDelta", () => {
     const { client } = scriptedClient([
       () =>
         page(
-          [fileItem({ id: "i1", name: "a.pdf", parentReference: { path: "/drive/root:/notes" } })],
+          [fileItem({ id: "i1", name: "a.pdf", parentReference: parentRef("/drive/root:/notes") })],
           { deltaLink: state.deltaLink },
         ),
     ]);
@@ -606,7 +626,7 @@ describe("walkDelta", () => {
     const { client } = scriptedClient([
       () =>
         page(
-          [fileItem({ id: "root-1", name: "a.pdf", parentReference: { path: "/drive/root:" } })],
+          [fileItem({ id: "root-1", name: "a.pdf", parentReference: parentRef("/drive/root:") })],
           { deltaLink: state.deltaLink },
         ),
     ]);
@@ -625,6 +645,29 @@ describe("walkDelta", () => {
     expect(store.writes).toBe(1);
   });
 
+  it("ignores the path-less drive-root folder instead of failing the walk", async () => {
+    const store = memStateStore(state);
+    const { client } = scriptedClient([
+      () =>
+        page([driveRootItem, fileItem({ id: "i1", name: "a.pdf" })], {
+          deltaLink: state.deltaLink,
+        }),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [profile],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.outcome).toBe("continued");
+    expect(result.unresolvedPathCount).toBe(0);
+    expect(result.events).toMatchObject([{ kind: "file", itemId: "i1", relativePath: "notes" }]);
+    expect(store.writes).toBe(1);
+  });
+
   it("does not emit created/updated events for folder items (gate is file-only)", async () => {
     const store = memStateStore(null);
     const { client } = scriptedClient([
@@ -635,7 +678,7 @@ describe("walkDelta", () => {
               id: "folder-1",
               folder: {},
               name: "sub",
-              parentReference: { path: "/drive/root:/notes" },
+              parentReference: parentRef("/drive/root:/notes"),
             },
           ],
           { deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=final" },

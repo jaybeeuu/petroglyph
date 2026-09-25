@@ -48,8 +48,9 @@ const driveItemSchema = z
   .object({
     id: z.string().min(1),
     name: z.string().min(1).optional(),
-    // Delta omits `path` on parentReference ("always track items by id"), so a
-    // present parentReference without path must not fail the whole page.
+    // Graph delta supplies `parentReference.path` for items inside the drive;
+    // the drive-root folder omits it. A present parentReference without path
+    // must not fail the whole page (the root folder is always present).
     parentReference: z.object({ path: z.string().optional() }).optional(),
     file: z
       .object({
@@ -139,12 +140,12 @@ export interface DeltaWalkResult {
   deltaLink?: string;
   outcome: DeltaWalkOutcome;
   /**
-   * Items the delta returned whose parent path could not be resolved into a
-   * usable relative path. Delta omits `parentReference.path`; a path that is
-   * absent or not a recognised drive-root form is "unknown", distinct from a
-   * drive-root item which normalises to "". A non-zero count fails the walk so
-   * unresolvable changes are visible, never silently dropped while the change
-   * token advances.
+   * Emittable items (file/delete) whose parent path is absent or not a
+   * recognised drive-root form — "unknown", distinct from a drive-root item
+   * which normalises to "". Folders are never emitted, so a path-less folder
+   * (the drive root) is ignored rather than counted. A non-zero count fails the
+   * walk so unresolvable changes are visible, never silently dropped while the
+   * change token advances.
    */
   unresolvedPathCount: number;
   /**
@@ -181,8 +182,8 @@ export interface DeltaWalkOptions {
  * Strips up to the drive root: "/drive/root:/notes/sub" → "notes/sub".
  * Returns undefined when the path is absent or not in a recognised drive-root
  * form — "path unknown", distinct from "" ("item is at the drive root").
- * Delta omits `parentReference.path` entirely, so unknown is the expected
- * shape there, not an error in itself.
+ * Graph returns `parentReference.path` for normal delta items; the drive root
+ * omits it, so a path-less file/delete is the unexpected, fail-loud case.
  */
 export function normalizeRelativePath(parentPath: string | undefined): string | undefined {
   if (parentPath === undefined) {
@@ -330,8 +331,11 @@ function classifyPage(items: DriveItem[], profiles: DeltaWalkProfile[]): PageCla
   for (const item of items) {
     const relativePath = normalizeRelativePath(item.parentPath);
     if (relativePath === undefined) {
-      // Delta omitted the path — we cannot tell where the item lives.
-      unresolvedPathCount += 1;
+      // A path-less folder is the drive root; folders are never emitted, so it
+      // is not an unplaceable change. A path-less file/delete is — fail loudly.
+      if (item.kind !== "folder") {
+        unresolvedPathCount += 1;
+      }
       continue;
     }
     if (relativePath === "") {
