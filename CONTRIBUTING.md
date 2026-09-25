@@ -117,6 +117,13 @@ These checks run entirely locally with no network or cloud dependency.
 Integration tests that use in-process stubs for AWS services (S3, SQS, DynamoDB) run as part of `pnpm test`.
 No real AWS credentials or LocalStack are required.
 
+### Container-backed integration checks
+
+Some integration tests exercise real services through Testcontainers — for example, the LocalStack
+DynamoDB suite in `packages/events`. **Docker is a hard requirement** for these tests and the daemon
+must be running and reachable. If Docker is unavailable, fix the environment — start the daemon or
+provision it in CI — never skip the suite. A test that never runs proves nothing.
+
 ### Optional local-against-remote checks
 
 Tests or scripts that connect to real AWS, Entra, or OneDrive services are opt-in.
