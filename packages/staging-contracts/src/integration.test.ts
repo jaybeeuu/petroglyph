@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
-import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
+import { CreateBucketCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { createS3ObjectStore, type ObjectStoreGetResult } from "@petroglyph/core";
 
 function requireStored(result: ObjectStoreGetResult | null): ObjectStoreGetResult {
@@ -33,8 +33,11 @@ function dockerAvailable(): boolean {
 
 const canRun = dockerAvailable();
 
+const stagingBucket = "petroglyph-staged-pdfs";
+
 describe.skipIf(!canRun)("staging land against LocalStack S3", () => {
   let container: StartedTestContainer;
+  let client: S3Client;
   let store: ReturnType<typeof createS3ObjectStore>;
 
   beforeAll(async () => {
@@ -50,14 +53,14 @@ describe.skipIf(!canRun)("staging land against LocalStack S3", () => {
       .start();
 
     const endpoint = `http://${container.getHost()}:${container.getMappedPort(4566)}`;
-    const client = new S3Client({
+    client = new S3Client({
       region: "eu-west-2",
       endpoint,
       forcePathStyle: true,
       credentials: { accessKeyId: "test", secretAccessKey: "test" },
     });
-    await client.send(new CreateBucketCommand({ Bucket: "petroglyph-staged-pdfs" }));
-    store = createS3ObjectStore({ bucket: "petroglyph-staged-pdfs", region: "eu-west-2", client });
+    await client.send(new CreateBucketCommand({ Bucket: stagingBucket }));
+    store = createS3ObjectStore({ bucket: stagingBucket, region: "eu-west-2", client });
   }, 180_000);
 
   afterAll(async () => {
@@ -97,7 +100,10 @@ describe.skipIf(!canRun)("staging land against LocalStack S3", () => {
     });
 
     const stored = requireStored(await store.get(s3Key));
+    const head = await client.send(new HeadObjectCommand({ Bucket: stagingBucket, Key: s3Key }));
+
     expect(detectType(stored.body)).toBe(mimeType);
+    expect(head.ContentType).toBe(mimeType);
 
     const parsed = fileStagedDataSchema.parse({
       profileId: "p1",
