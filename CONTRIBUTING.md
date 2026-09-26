@@ -4,10 +4,11 @@ This guide covers how to bootstrap the repository on a new machine, run packages
 
 ## Prerequisites
 
-| Tool    | Version | Install                                                                |
-| ------- | ------- | ---------------------------------------------------------------------- |
-| Node.js | 24.x    | [nvm](https://github.com/nvm-sh/nvm): `nvm install` or `nvm use`       |
-| pnpm    | 10.x    | `npm install -g pnpm` or [official docs](https://pnpm.io/installation) |
+| Tool    | Version | Install                                                                           |
+| ------- | ------- | --------------------------------------------------------------------------------- |
+| Node.js | 24.x    | [nvm](https://github.com/nvm-sh/nvm): `nvm install` or `nvm use`                  |
+| pnpm    | 10.x    | `npm install -g pnpm` or [official docs](https://pnpm.io/installation)            |
+| Docker  | Current | [Docker Engine](https://docs.docker.com/engine/install/); required by `pnpm test` |
 
 The `.nvmrc` file pins Node.js 24.
 Run `nvm use` from the repository root to switch to the correct version automatically.
@@ -121,8 +122,9 @@ No real AWS credentials or LocalStack are required.
 
 Some integration tests exercise real services through Testcontainers — for example, the LocalStack
 DynamoDB suite in `packages/events`. **Docker is a hard requirement** for these tests and the daemon
-must be running and reachable. If Docker is unavailable, fix the environment — start the daemon or
-provision it in CI — never skip the suite. A test that never runs proves nothing.
+must be running and reachable. A missing or unreachable Docker fails the suite rather than skipping
+it, so a red run means fixing the environment — start the daemon or provision it in CI — not
+skipping the suite. A test that never runs proves nothing.
 
 ### Optional local-against-remote checks
 

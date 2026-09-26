@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { DynamoDBClient, CreateTableCommand } from "@aws-sdk/client-dynamodb";
@@ -6,16 +5,6 @@ import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { createTokenResolver, type TokenRecord, type TokenRequestOutcome } from "@petroglyph/core";
 import { createTokenStoreDdb } from "./token-store-ddb.js";
 
-function dockerAvailable(): boolean {
-  try {
-    execSync("docker info", { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const canRun = dockerAvailable();
 const TABLE_NAME = "refresh-tokens-int";
 
 const stale: TokenRecord = {
@@ -28,7 +17,7 @@ const stale: TokenRecord = {
 
 const persistenceDeadline = Math.floor(Date.now() / 1000) + 3600;
 
-describe.skipIf(!canRun)("token store CAS + resolver concurrency against LocalStack DDB", () => {
+describe("token store CAS + resolver concurrency against LocalStack DDB", () => {
   let container: StartedTestContainer;
   let store: ReturnType<typeof createTokenStoreDdb>;
 

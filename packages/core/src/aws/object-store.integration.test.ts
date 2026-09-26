@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { CreateBucketCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -11,18 +10,7 @@ function requireStored(result: ObjectStoreGetResult | null): ObjectStoreGetResul
   return result;
 }
 
-function dockerAvailable(): boolean {
-  try {
-    execSync("docker info", { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const canRun = dockerAvailable();
-
-describe.skipIf(!canRun)("S3 ObjectStore against LocalStack", () => {
+describe("S3 ObjectStore against LocalStack", () => {
   let container: StartedTestContainer;
   let client: S3Client;
   let endpoint: string;
