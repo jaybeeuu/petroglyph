@@ -1,5 +1,6 @@
 import type { ObjectStore } from "@petroglyph/core";
 import { deriveStagingKey } from "./keys.js";
+import type { MimeType } from "./type.js";
 
 export interface StageInput {
   profileId: string;
@@ -10,7 +11,7 @@ export interface StageInput {
    * REQUIRED — always from detectType(body) at land time, never defaulted
    * (a default would store a lie we can verify against the bytes).
    */
-  contentType: string;
+  contentType: MimeType;
 }
 
 /**
