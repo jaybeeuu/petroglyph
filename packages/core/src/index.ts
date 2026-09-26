@@ -13,3 +13,10 @@ export type { TokenResolver, TokenResolveOptions } from "./tokens/token-resolver
 export type { TokenRequestOutcome, ResolveOutcome } from "./tokens/token-resolver.js";
 export { tokenRecordSchema } from "./tokens/token-store.js";
 export type { TokenRecord, TokenStore } from "./tokens/token-store.js";
+export { createS3ObjectStore } from "./aws/object-store.js";
+export type {
+  ObjectStore,
+  ObjectStoreGetResult,
+  ObjectStorePresignGetOptions,
+  ObjectStorePutResult,
+} from "./aws/object-store.js";
