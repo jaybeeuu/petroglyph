@@ -1,17 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { normalizeRelativePath, walkDelta } from "./delta-walk.js";
+import { normalizeRelativePath, walkDelta, type DeltaWalkProfile } from "./delta-walk.js";
 import type { DeltaState, DeltaStateStore } from "./delta-state-store.js";
 import type { GraphClient } from "../tokens/graph-client.js";
 
 const INITIAL_URL =
   "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,parentReference,file,folder,deleted";
 
-const state: DeltaState = {
-  deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=opaque-abc",
-  updatedAt: "2026-09-01T00:00:00.000Z",
-};
+function makeState(overrides: Partial<DeltaState> = {}): DeltaState {
+  return {
+    deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=opaque-abc",
+    updatedAt: "2026-09-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
-const profile = { profileId: "p1", rootPath: "notes" };
+function makeProfile(overrides: Partial<DeltaWalkProfile> = {}): DeltaWalkProfile {
+  return { profileId: "p1", rootPath: "notes", ...overrides };
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -133,7 +138,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile({ profileId: "p1", rootPath: "notes" })],
       initialUrl: INITIAL_URL,
     });
 
@@ -166,6 +171,9 @@ describe("walkDelta", () => {
   });
 
   it("incremental walk uses the stored deltaLink URL verbatim — never re-appends query params", async () => {
+    const state = makeState({
+      deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=opaque-abc",
+    });
     const store = memStateStore(state);
     const { client, paths } = scriptedClient([() => page([], { deltaLink: state.deltaLink })]);
 
@@ -173,7 +181,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
 
@@ -196,7 +204,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
 
@@ -207,6 +215,9 @@ describe("walkDelta", () => {
   });
 
   it("fails when a page carries neither deltaLink nor nextLink — reporting success would leave the token unadvanced", async () => {
+    const state = makeState({
+      deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=opaque-abc",
+    });
     const store = memStateStore(state);
     const { client } = scriptedClient([() => page([])]);
 
@@ -214,7 +225,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
 
@@ -224,6 +235,9 @@ describe("walkDelta", () => {
   });
 
   it("mid-run failure persists nothing — the last complete token stays authoritative", async () => {
+    const state = makeState({
+      deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=opaque-abc",
+    });
     const store = memStateStore(state);
     const { client } = scriptedClient([
       () =>
@@ -237,7 +251,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
 
@@ -247,6 +261,7 @@ describe("walkDelta", () => {
   });
 
   it("maps deleted:{} file facets to deleted events with the normalized path", async () => {
+    const state = makeState();
     const store = memStateStore(state);
     const { client } = scriptedClient([
       () =>
@@ -267,7 +282,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile({ profileId: "p1", rootPath: "notes" })],
       initialUrl: INITIAL_URL,
     });
 
@@ -285,6 +300,7 @@ describe("walkDelta", () => {
   });
 
   it("a deleted folder carrying both folder and deleted facets classifies as deleted, not folder", async () => {
+    const state = makeState();
     const store = memStateStore(state);
     const { client } = scriptedClient([
       () =>
@@ -306,7 +322,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile({ profileId: "p1", rootPath: "notes" })],
       initialUrl: INITIAL_URL,
     });
 
@@ -323,6 +339,7 @@ describe("walkDelta", () => {
   });
 
   it("does not substitute the item id for a deleted item whose name is omitted", async () => {
+    const state = makeState();
     const store = memStateStore(state);
     const { client } = scriptedClient([
       () =>
@@ -335,7 +352,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile({ profileId: "p1", rootPath: "notes" })],
       initialUrl: INITIAL_URL,
     });
 
@@ -346,6 +363,9 @@ describe("walkDelta", () => {
   });
 
   it("410 Gone resets: clears the stored token, re-enumerates from scratch, outcome reset", async () => {
+    const state = makeState({
+      deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=opaque-abc",
+    });
     const store = memStateStore(state);
     const { client, paths } = scriptedClient([
       () => jsonResponse({ error: { code: "itemNotFound" } }, 410),
@@ -359,7 +379,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
 
@@ -373,7 +393,7 @@ describe("walkDelta", () => {
   });
 
   it("syncStateNotFound (40x) resets the same way, but other 5xx surfaces failed", async () => {
-    const syncStore = memStateStore(state);
+    const syncStore = memStateStore(makeState());
     const { client: syncClient } = scriptedClient([
       () => jsonResponse({ error: { code: "syncStateNotFound" } }, 400),
       () =>
@@ -383,13 +403,13 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client: syncClient,
       store: syncStore,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
     expect(syncResult.outcome).toBe("reset");
     expect(syncStore.clears).toBe(1);
 
-    const errStore = memStateStore(state);
+    const errStore = memStateStore(makeState());
     const { client: errClient } = scriptedClient([
       () => jsonResponse({ error: { code: "serviceUnavailable" } }, 503),
     ]);
@@ -397,7 +417,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client: errClient,
       store: errStore,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
     expect(errResult.outcome).toBe("failed");
@@ -405,7 +425,7 @@ describe("walkDelta", () => {
   });
 
   it("surfaces the reset to the caller with didReset on the result", async () => {
-    const store = memStateStore(state);
+    const store = memStateStore(makeState());
     const { client } = scriptedClient([
       () => jsonResponse({ error: { code: "itemNotFound" } }, 410),
       () =>
@@ -416,7 +436,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
 
@@ -425,6 +445,9 @@ describe("walkDelta", () => {
   });
 
   it("a reset that immediately resets again returns failed — the reset rule is applied once", async () => {
+    const state = makeState({
+      deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=opaque-abc",
+    });
     const store = memStateStore(state);
     const { client, paths } = scriptedClient([
       () => jsonResponse({ error: { code: "itemNotFound" } }, 410),
@@ -435,7 +458,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
 
@@ -446,6 +469,9 @@ describe("walkDelta", () => {
   });
 
   it("a reset on a continuation page clears the token and re-enumerates from initialUrl, keeping pre-reset events", async () => {
+    const state = makeState({
+      deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=opaque-abc",
+    });
     const store = memStateStore(state);
     const { client, paths } = scriptedClient([
       () =>
@@ -463,7 +489,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
 
@@ -501,7 +527,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile({ rootPath: "notes" })],
       initialUrl: INITIAL_URL,
     });
 
@@ -533,7 +559,10 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile, { profileId: "p2", rootPath: "other" }],
+      profiles: [
+        makeProfile({ profileId: "p1", rootPath: "notes" }),
+        makeProfile({ profileId: "p2", rootPath: "other" }),
+      ],
       initialUrl: INITIAL_URL,
     });
 
@@ -544,6 +573,7 @@ describe("walkDelta", () => {
   });
 
   it("tolerates a parentReference without path: the page parses and the unresolved item is surfaced, not dropped", async () => {
+    const state = makeState();
     const store = memStateStore(state);
     const { client } = scriptedClient([
       () =>
@@ -564,7 +594,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
 
@@ -575,6 +605,7 @@ describe("walkDelta", () => {
   });
 
   it("tolerates an absent parentReference: the page parses and the unresolved item is surfaced, not dropped", async () => {
+    const state = makeState();
     const store = memStateStore(state);
     const { client } = scriptedClient([
       () =>
@@ -587,7 +618,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
 
@@ -598,6 +629,7 @@ describe("walkDelta", () => {
   });
 
   it("routes changes to a '/'-rooted profile instead of silently dropping every item", async () => {
+    const state = makeState();
     const store = memStateStore(state);
     const { client } = scriptedClient([
       () =>
@@ -611,7 +643,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [{ profileId: "root", rootPath: "/" }],
+      profiles: [makeProfile({ profileId: "root", rootPath: "/" })],
       initialUrl: INITIAL_URL,
     });
 
@@ -622,6 +654,7 @@ describe("walkDelta", () => {
   });
 
   it("counts a drive-root item rather than emitting an empty relativePath or failing the walk", async () => {
+    const state = makeState();
     const store = memStateStore(state);
     const { client } = scriptedClient([
       () =>
@@ -635,7 +668,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [{ profileId: "root", rootPath: "/" }],
+      profiles: [makeProfile({ profileId: "root", rootPath: "/" })],
       initialUrl: INITIAL_URL,
     });
 
@@ -646,6 +679,7 @@ describe("walkDelta", () => {
   });
 
   it("ignores the path-less drive-root folder instead of failing the walk", async () => {
+    const state = makeState();
     const store = memStateStore(state);
     const { client } = scriptedClient([
       () =>
@@ -658,7 +692,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile({ rootPath: "notes" })],
       initialUrl: INITIAL_URL,
     });
 
@@ -689,7 +723,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
 
@@ -709,7 +743,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile({ rootPath: "notes" })],
       initialUrl: INITIAL_URL,
     });
 
@@ -740,7 +774,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
 
@@ -764,7 +798,7 @@ describe("walkDelta", () => {
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
-      profiles: [profile],
+      profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
     });
 
