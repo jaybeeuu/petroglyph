@@ -1,2 +1,5 @@
 .ralph-progress.md
 pnpm-lock.yaml
+
+# vendored minified libs (do not reformat)
+docs/system-design/d3.v7.min.js
