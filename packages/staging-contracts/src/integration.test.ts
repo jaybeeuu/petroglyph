@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { CreateBucketCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -22,20 +21,9 @@ function pdfBodyType(body: Uint8Array): MimeType {
   return detected;
 }
 
-function dockerAvailable(): boolean {
-  try {
-    execSync("docker info", { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const canRun = dockerAvailable();
-
 const stagingBucket = "petroglyph-staged-pdfs";
 
-describe.skipIf(!canRun)("staging land against LocalStack S3", () => {
+describe("staging land against LocalStack S3", () => {
   let container: StartedTestContainer;
   let client: S3Client;
   let store: ReturnType<typeof createS3ObjectStore>;
