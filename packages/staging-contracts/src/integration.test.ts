@@ -100,6 +100,8 @@ describe.skipIf(!canRun)("staging land against LocalStack S3", () => {
     });
 
     const stored = requireStored(await store.get(s3Key));
+    // The ObjectStore port is keys-and-bytes — get() returns body + etag, not
+    // ContentType — so the stored header is read from the client that owns the bucket.
     const head = await client.send(new HeadObjectCommand({ Bucket: stagingBucket, Key: s3Key }));
 
     expect(detectType(stored.body)).toBe(mimeType);
