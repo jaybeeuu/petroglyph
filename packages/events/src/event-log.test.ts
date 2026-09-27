@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { createEventLogWriter } from "./event-log.js";
+import { DynamoDBEventLogWriter } from "./event-log.js";
 import type { CloudEvent } from "./cloud-event.js";
 
 const stagedEvent: CloudEvent<{ profileId: string }> = {
@@ -14,12 +14,12 @@ const stagedEvent: CloudEvent<{ profileId: string }> = {
   data: { profileId: "p1" },
 };
 
-describe("createEventLogWriter", () => {
+describe("DynamoDBEventLogWriter", () => {
   it("stores the document keyed on source+id with a put-if-absent condition", async () => {
     const send = vi.fn().mockResolvedValue({});
     const client = { send } as unknown as DynamoDBDocumentClient;
 
-    const written = await createEventLogWriter({
+    const written = await new DynamoDBEventLogWriter({
       client,
       tableName: "petroglyph-event-log",
     }).putIfAbsent(stagedEvent);
@@ -46,7 +46,7 @@ describe("createEventLogWriter", () => {
     const send = vi.fn().mockRejectedValue(conditionalFailure);
     const client = { send } as unknown as DynamoDBDocumentClient;
 
-    const written = await createEventLogWriter({
+    const written = await new DynamoDBEventLogWriter({
       client,
       tableName: "petroglyph-event-log",
     }).putIfAbsent(stagedEvent);
@@ -59,7 +59,9 @@ describe("createEventLogWriter", () => {
     const client = { send } as unknown as DynamoDBDocumentClient;
 
     await expect(
-      createEventLogWriter({ client, tableName: "petroglyph-event-log" }).putIfAbsent(stagedEvent),
+      new DynamoDBEventLogWriter({ client, tableName: "petroglyph-event-log" }).putIfAbsent(
+        stagedEvent,
+      ),
     ).rejects.toThrow("boom");
   });
 });
