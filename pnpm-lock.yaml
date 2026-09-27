@@ -94,9 +94,15 @@ importers:
 
   packages/core:
     dependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.1024.0
+        version: 3.1029.0
       '@aws-sdk/lib-dynamodb':
         specifier: ^3.1024.0
         version: 3.1024.0(@aws-sdk/client-dynamodb@3.1024.0)
+      '@aws-sdk/s3-request-presigner':
+        specifier: ^3.1024.0
+        version: 3.1030.0
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -107,6 +113,9 @@ importers:
       '@types/node':
         specifier: ^25.5.2
         version: 25.5.2
+      testcontainers:
+        specifier: ^10.17.0
+        version: 10.28.0
 
   packages/events:
     dependencies:
@@ -213,6 +222,31 @@ importers:
       esbuild:
         specifier: ^0.28.0
         version: 0.28.0
+
+  packages/staging-contracts:
+    dependencies:
+      '@petroglyph/core':
+        specifier: workspace:*
+        version: link:../core
+      '@petroglyph/events':
+        specifier: workspace:*
+        version: link:../events
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.1024.0
+        version: 3.1029.0
+      '@types/node':
+        specifier: ^25.5.2
+        version: 25.5.2
+      ajv:
+        specifier: ^8.17.1
+        version: 8.20.0
+      testcontainers:
+        specifier: ^10.17.0
+        version: 10.28.0
 
   packages/sync-relay:
     dependencies:
@@ -5822,7 +5856,7 @@ snapshots:
   readable-stream@3.6.2:
     dependencies:
       inherits: 2.0.4
-      string_decoder: 1.1.1
+      string_decoder: 1.3.0
       util-deprecate: 1.0.2
 
   readable-stream@4.7.0:
