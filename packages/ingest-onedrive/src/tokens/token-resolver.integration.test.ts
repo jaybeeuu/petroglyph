@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { DynamoDBClient, CreateTableCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { createTokenResolver, type TokenRecord, type TokenRequestOutcome } from "@petroglyph/core";
+import { OAuthTokenResolver, type TokenRecord, type TokenRequestOutcome } from "@petroglyph/core";
 import { DynamoDBTokenStore } from "./token-store-ddb.js";
 
 const TABLE_NAME = "refresh-tokens-int";
@@ -98,7 +98,7 @@ describe("token store CAS + resolver concurrency against LocalStack DDB", () => 
       release = resolve;
     });
     const requestTokens = vi.fn().mockReturnValue(parked);
-    const resolver = createTokenResolver({ store, now: () => 200, requestTokens });
+    const resolver = new OAuthTokenResolver({ store, now: () => 200, requestTokens });
 
     const first = resolver.resolveAccessToken("github|race", "onedrive");
     const second = resolver.resolveAccessToken("github|race", "onedrive");
@@ -125,7 +125,7 @@ describe("token store CAS + resolver concurrency against LocalStack DDB", () => 
       release = resolve;
     });
     const requestTokens = vi.fn().mockReturnValue(parked);
-    const resolver = createTokenResolver({ store, now: () => 200, requestTokens });
+    const resolver = new OAuthTokenResolver({ store, now: () => 200, requestTokens });
 
     const resolving = resolver.resolveAccessToken("github|cfs", "onedrive");
 

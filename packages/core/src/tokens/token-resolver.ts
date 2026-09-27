@@ -36,79 +36,93 @@ export interface TokenResolver {
  *  6. different connections → independent calls;
  *  7. CAS conflict → refetch winner, never persist the loser's rotation;
  *  8. no record for the connection → reconnect-required.
+ *
+ * The class names the transport (OAuth); the `TokenResolver` interface stays
+ * the consumer-facing capability.
  */
-export function createTokenResolver(deps: {
-  store: TokenStore;
-  now: () => number;
-  requestTokens: (refreshToken: string) => Promise<TokenRequestOutcome>;
-}): TokenResolver {
-  const inFlight = new Map<string, Promise<ResolveOutcome>>();
+export class OAuthTokenResolver implements TokenResolver {
+  readonly #store: TokenStore;
+  readonly #now: () => number;
+  readonly #requestTokens: (refreshToken: string) => Promise<TokenRequestOutcome>;
+  readonly #inFlight = new Map<string, Promise<ResolveOutcome>>();
 
-  return {
-    resolveAccessToken(userId, provider, resolveOptions) {
-      const key = `${userId}\u0000${provider}`;
-      const existing = inFlight.get(key);
-      if (existing !== undefined) {
-        return existing;
-      }
-      const pending = resolveOnce(userId, provider, resolveOptions);
-      inFlight.set(key, pending);
-      void pending.finally(() => {
-        inFlight.delete(key);
-      });
-      return pending;
-    },
-  };
+  constructor(options: {
+    store: TokenStore;
+    now: () => number;
+    requestTokens: (refreshToken: string) => Promise<TokenRequestOutcome>;
+  }) {
+    this.#store = options.store;
+    this.#now = options.now;
+    this.#requestTokens = options.requestTokens;
+  }
 
-  async function resolveOnce(
+  resolveAccessToken(
+    userId: string,
+    provider: string,
+    resolveOptions?: TokenResolveOptions,
+  ): Promise<ResolveOutcome> {
+    const key = `${userId}\u0000${provider}`;
+    const existing = this.#inFlight.get(key);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const pending = this.#resolveOnce(userId, provider, resolveOptions);
+    this.#inFlight.set(key, pending);
+    void pending.finally(() => {
+      this.#inFlight.delete(key);
+    });
+    return pending;
+  }
+
+  async #resolveOnce(
     userId: string,
     provider: string,
     resolveOptions: TokenResolveOptions | undefined,
   ): Promise<ResolveOutcome> {
-    const record = await deps.store.read(userId, provider);
+    const record = await this.#store.read(userId, provider);
     if (record === null) {
       return { kind: "reconnect-required" };
     }
     if (record.reconnectRequired) {
       return { kind: "reconnect-required" };
     }
-    if (!resolveOptions?.force && deps.now() < record.expirySeconds) {
+    if (!resolveOptions?.force && this.#now() < record.expirySeconds) {
       return { kind: "success", accessToken: record.accessToken };
     }
 
-    const outcome = await deps.requestTokens(record.refreshToken);
+    const outcome = await this.#requestTokens(record.refreshToken);
     if (outcome.kind === "grant-invalid") {
-      await persistReconnectRequired(userId, provider, record);
+      await this.#persistReconnectRequired(userId, provider, record);
       return { kind: "reconnect-required" };
     }
 
     const rotated: TokenRecord = {
       accessToken: outcome.accessToken,
       refreshToken: outcome.refreshToken,
-      expirySeconds: Math.floor(deps.now()) + outcome.expiresIn,
+      expirySeconds: Math.floor(this.#now()) + outcome.expiresIn,
       updatedAt: new Date().toISOString(),
       reconnectRequired: false,
     };
 
-    const written = await deps.store.write(userId, provider, rotated, record);
+    const written = await this.#store.write(userId, provider, rotated, record);
     if (written) {
       return { kind: "success", accessToken: rotated.accessToken };
     }
 
     // CAS conflict: another writer rotated first — return the winner's token.
-    const winner = await deps.store.read(userId, provider);
+    const winner = await this.#store.read(userId, provider);
     if (winner === null || winner.reconnectRequired) {
       return { kind: "reconnect-required" };
     }
     return { kind: "success", accessToken: winner.accessToken };
   }
 
-  async function persistReconnectRequired(
+  async #persistReconnectRequired(
     userId: string,
     provider: string,
     record: TokenRecord,
   ): Promise<void> {
-    const written = await deps.store.write(
+    const written = await this.#store.write(
       userId,
       provider,
       { ...record, reconnectRequired: true },
