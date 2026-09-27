@@ -132,6 +132,15 @@ Tests or scripts that connect to real AWS, Entra, or OneDrive services are opt-i
 They are not part of `pnpm test` and must be run explicitly.
 Set the appropriate variables in your `.env` and follow the package-level instructions in each package's `LOCAL.md` (when present).
 
+### Recorded coverage gap: real-AWS presigned-URL signature enforcement
+
+The LocalStack suites cannot exercise presigned-URL signature enforcement: LocalStack 3.8.1 accepts a
+tampered signature even with `S3_SKIP_SIGNATURE_VALIDATION=0` (checksum / `UNSIGNED-PAYLOAD` quirks).
+The decision (petroglyph-f2ei) is to keep that case in
+`packages/core/src/aws/object-store.integration.test.ts` as a skipped canary that states its reason,
+rather than weaken the `403` assertion. The assertion runs whenever the endpoint enforces
+signatures, so pointing that test at a real bucket in an opt-in run is how the gap is closed.
+
 ## CD Secrets
 
 The Deploy workflow (`.github/workflows/deploy.yml`) requires three GitHub Actions secrets to be configured on the `production` environment. For full deployment and infrastructure setup instructions, see [docs/ops.md](docs/ops.md).
