@@ -10,3 +10,10 @@ export { detectType } from "./type.js";
 export type { MimeType } from "./type.js";
 export { stage } from "./stage.js";
 export type { StageInput } from "./stage.js";
+export { createS3StagedObjectStore } from "./object-store.js";
+export type {
+  StagedObjectStore,
+  StagedObjectStoreGetResult,
+  StagedObjectStorePresignGetOptions,
+  StagedObjectStorePutResult,
+} from "./object-store.js";

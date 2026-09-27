@@ -17,14 +17,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@petroglyph/core": "workspace:*",
+    "@aws-sdk/client-s3": "^3.1024.0",
+    "@aws-sdk/s3-request-presigner": "^3.1024.0",
     "@petroglyph/events": "workspace:*",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "ajv": "^8.17.1",
     "@types/node": "^25.5.2",
-    "testcontainers": "^10.17.0",
-    "@aws-sdk/client-s3": "^3.1024.0"
+    "testcontainers": "^10.17.0"
   }
 }

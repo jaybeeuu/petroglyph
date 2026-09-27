@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { S3Client } from "@aws-sdk/client-s3";
-import { createS3ObjectStore, type ObjectStoreGetResult } from "./object-store.js";
+import { createS3StagedObjectStore, type StagedObjectStoreGetResult } from "./object-store.js";
 
 const getSignedUrl =
   vi.fn<(client: unknown, command: unknown, options: unknown) => Promise<string>>();
@@ -26,18 +26,18 @@ type PutCall = [{ input: PutCommandInput }];
 type GetCall = [{ input: GetCommandInput }];
 
 /** Narrow a store get result — get returns null for absent; callers expect present. */
-function requireStored(result: ObjectStoreGetResult | null): ObjectStoreGetResult {
+function requireStored(result: StagedObjectStoreGetResult | null): StagedObjectStoreGetResult {
   if (result === null) {
     throw new Error("expected a stored object");
   }
   return result;
 }
 
-describe("createS3ObjectStore", () => {
+describe("createS3StagedObjectStore", () => {
   it("put stores bytes with the given key and content type, returning the version id", async () => {
     const send = vi.fn().mockResolvedValue({ VersionId: "v-1" });
     const client = { send } as unknown as S3Client;
-    const store = createS3ObjectStore({
+    const store = createS3StagedObjectStore({
       bucket: "petroglyph-staged-pdfs",
       region: "eu-west-2",
       client,
@@ -61,7 +61,7 @@ describe("createS3ObjectStore", () => {
   it("put reports no version id when the bucket is unversioned", async () => {
     const send = vi.fn().mockResolvedValue({});
     const client = { send } as unknown as S3Client;
-    const store = createS3ObjectStore({
+    const store = createS3StagedObjectStore({
       bucket: "petroglyph-staged-pdfs",
       region: "eu-west-2",
       client,
@@ -80,7 +80,7 @@ describe("createS3ObjectStore", () => {
     };
     const send = vi.fn().mockResolvedValue({ Body: body, ETag: '"abc123"' });
     const client = { send } as unknown as S3Client;
-    const store = createS3ObjectStore({
+    const store = createS3StagedObjectStore({
       bucket: "petroglyph-staged-pdfs",
       region: "eu-west-2",
       client,
@@ -100,7 +100,7 @@ describe("createS3ObjectStore", () => {
     const notFound = Object.assign(new Error("Not Found"), { name: "NotFound" });
     const send = vi.fn().mockRejectedValue(notFound);
     const client = { send } as unknown as S3Client;
-    const store = createS3ObjectStore({
+    const store = createS3StagedObjectStore({
       bucket: "petroglyph-staged-pdfs",
       region: "eu-west-2",
       client,
@@ -112,7 +112,7 @@ describe("createS3ObjectStore", () => {
   it("get rethrows errors that are not a missing object", async () => {
     const send = vi.fn().mockRejectedValue(new Error("boom"));
     const client = { send } as unknown as S3Client;
-    const store = createS3ObjectStore({
+    const store = createS3StagedObjectStore({
       bucket: "petroglyph-staged-pdfs",
       region: "eu-west-2",
       client,
@@ -124,7 +124,7 @@ describe("createS3ObjectStore", () => {
   it("delete issues a delete request and is idempotent for missing objects", async () => {
     const send = vi.fn().mockResolvedValue({});
     const client = { send } as unknown as S3Client;
-    const store = createS3ObjectStore({
+    const store = createS3StagedObjectStore({
       bucket: "petroglyph-staged-pdfs",
       region: "eu-west-2",
       client,
@@ -144,7 +144,7 @@ describe("createS3ObjectStore", () => {
   it("presignGet returns a bucket-rooted presigned URL with an expiry and content-disposition override", async () => {
     const send = vi.fn().mockResolvedValue({});
     const client = { send } as unknown as S3Client;
-    const store = createS3ObjectStore({
+    const store = createS3StagedObjectStore({
       bucket: "petroglyph-staged-pdfs",
       region: "eu-west-2",
       client,
@@ -180,7 +180,7 @@ describe("createS3ObjectStore", () => {
   it("presignGet defaults the expiry to an hour when not specified", async () => {
     const send = vi.fn().mockResolvedValue({});
     const client = { send } as unknown as S3Client;
-    const store = createS3ObjectStore({
+    const store = createS3StagedObjectStore({
       bucket: "petroglyph-staged-pdfs",
       region: "eu-west-2",
       client,
