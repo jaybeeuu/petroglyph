@@ -10,7 +10,7 @@ transport. It holds **no domain vocabulary** — events are declared with their 
 - `cloudEventSchema(dataSchema)` — binds a payload zod schema to the CE envelope. A producer
   declares its event by extending that envelope with literal `type` and `dataschema` values.
 - `cloudEventContextSchema`, `parseCloudEvent`, `formatCloudEvent` — context schema and helpers.
-- `createEventLogWriter` — the event-log transport (put-if-absent on `source` + `id`).
+- `DynamoDBEventLogWriter` — the event-log transport (put-if-absent on `source` + `id`).
 - `EventSource<WireRecord>` — the transport port a consumer reads log rows through; each transport
   supplies the wire shape in its own adapter.
 

@@ -2,12 +2,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { DynamoDBClient, CreateTableCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { createEventLogWriter } from "./event-log.js";
+import { DynamoDBEventLogWriter, type EventLogWriter } from "./event-log.js";
 import type { CloudEvent } from "./cloud-event.js";
 
 describe("event log writer against LocalStack DDB", () => {
   let container: StartedTestContainer;
-  let writer: ReturnType<typeof createEventLogWriter>;
+  let writer: EventLogWriter;
   const tableName = "event-log-int";
 
   beforeAll(async () => {
@@ -43,7 +43,7 @@ describe("event log writer against LocalStack DDB", () => {
       }),
     );
     const docClient = DynamoDBDocumentClient.from(dynamoClient);
-    writer = createEventLogWriter({ client: docClient, tableName });
+    writer = new DynamoDBEventLogWriter({ client: docClient, tableName });
   }, 180_000);
 
   afterAll(async () => {

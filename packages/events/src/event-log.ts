@@ -11,32 +11,35 @@ export interface EventLogWriter {
   putIfAbsent(document: CloudEvent<unknown>): Promise<boolean>;
 }
 
-export function createEventLogWriter(options: {
-  client: DynamoDBDocumentClient;
-  tableName: string;
-}): EventLogWriter {
-  return {
-    async putIfAbsent(document) {
-      try {
-        await options.client.send(
-          new PutCommand({
-            TableName: options.tableName,
-            Item: {
-              source: document.source,
-              id: document.id,
-              doc: JSON.stringify(document),
-            },
-            ConditionExpression: "attribute_not_exists(#source) AND attribute_not_exists(#id)",
-            ExpressionAttributeNames: { "#source": "source", "#id": "id" },
-          }),
-        );
-        return true;
-      } catch (error) {
-        if ((error as { name?: unknown }).name === "ConditionalCheckFailedException") {
-          return false;
-        }
-        throw error;
+export class DynamoDBEventLogWriter implements EventLogWriter {
+  readonly #client: DynamoDBDocumentClient;
+  readonly #tableName: string;
+
+  constructor(options: { client: DynamoDBDocumentClient; tableName: string }) {
+    this.#client = options.client;
+    this.#tableName = options.tableName;
+  }
+
+  async putIfAbsent(document: CloudEvent<unknown>): Promise<boolean> {
+    try {
+      await this.#client.send(
+        new PutCommand({
+          TableName: this.#tableName,
+          Item: {
+            source: document.source,
+            id: document.id,
+            doc: JSON.stringify(document),
+          },
+          ConditionExpression: "attribute_not_exists(#source) AND attribute_not_exists(#id)",
+          ExpressionAttributeNames: { "#source": "source", "#id": "id" },
+        }),
+      );
+      return true;
+    } catch (error) {
+      if ((error as { name?: unknown }).name === "ConditionalCheckFailedException") {
+        return false;
       }
-    },
-  };
+      throw error;
+    }
+  }
 }
