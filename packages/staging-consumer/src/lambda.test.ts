@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DynamoDBStreamEvent } from "aws-lambda";
+import type { DynamoDBRecord, DynamoDBStreamEvent } from "aws-lambda";
 import type { CloudEvent } from "@petroglyph/events";
 import type { FileStagedData } from "@petroglyph/staging-contracts";
 import { createForwarderHandler } from "./lambda.js";
@@ -26,36 +26,22 @@ const stagedDoc = {
   },
 } satisfies CloudEvent<FileStagedData>;
 
-function streamEvent(): DynamoDBStreamEvent {
+function createStreamEvent(overrides: Partial<DynamoDBRecord> = {}): DynamoDBRecord {
+  const { dynamodb: dynamodbOverrides, ...recordOverrides } = overrides;
   return {
-    Records: [
-      {
-        eventID: "shardId-000000000000:00000000000000000001",
-        eventName: "INSERT",
-        eventSource: "aws:dynamodb",
-        eventVersion: "1.1",
-        awsRegion: "eu-west-2",
-        dynamodb: {
-          SequenceNumber: "100001",
-          SizeBytes: 400,
-          StreamViewType: "NEW_IMAGE",
-          NewImage: { doc: { S: JSON.stringify(stagedDoc) } },
-        },
-      },
-      {
-        eventID: "shardId-000000000000:00000000000000000002",
-        eventName: "INSERT",
-        eventSource: "aws:dynamodb",
-        eventVersion: "1.1",
-        awsRegion: "eu-west-2",
-        dynamodb: {
-          SequenceNumber: "100002",
-          SizeBytes: 400,
-          StreamViewType: "NEW_IMAGE",
-          NewImage: { doc: { S: "not-json{" } },
-        },
-      },
-    ],
+    eventID: "shardId-000000000000:00000000000000000001",
+    eventName: "INSERT",
+    eventSource: "aws:dynamodb",
+    eventVersion: "1.1",
+    awsRegion: "eu-west-2",
+    ...recordOverrides,
+    dynamodb: {
+      SequenceNumber: "100001",
+      SizeBytes: 400,
+      StreamViewType: "NEW_IMAGE",
+      NewImage: { doc: { S: JSON.stringify(stagedDoc) } },
+      ...dynamodbOverrides,
+    },
   };
 }
 
@@ -70,7 +56,15 @@ describe("forwarder lambda handler", () => {
     const queue = queueSpy();
     const handler = createForwarderHandler({ queue });
 
-    const response = await handler(streamEvent());
+    const response = await handler({
+      Records: [
+        createStreamEvent(),
+        createStreamEvent({
+          eventID: "shardId-000000000000:00000000000000000002",
+          dynamodb: { SequenceNumber: "100002", NewImage: { doc: { S: "not-json{" } } },
+        }),
+      ],
+    });
 
     expect(queue.send).toHaveBeenCalledTimes(1);
     expect(response.batchItemFailures).toEqual([]);
@@ -82,7 +76,15 @@ describe("forwarder lambda handler", () => {
 
     const handler = createForwarderHandler({ queue });
 
-    const response = await handler(streamEvent());
+    const response = await handler({
+      Records: [
+        createStreamEvent(),
+        createStreamEvent({
+          eventID: "shardId-000000000000:00000000000000000002",
+          dynamodb: { SequenceNumber: "100002", NewImage: { doc: { S: "not-json{" } } },
+        }),
+      ],
+    });
 
     expect(response.batchItemFailures).toEqual([{ itemIdentifier: "100001" }]);
   });
@@ -91,27 +93,16 @@ describe("forwarder lambda handler", () => {
     const queue = queueSpy();
     const event: DynamoDBStreamEvent = {
       Records: [
-        {
+        createStreamEvent({
           eventID: "s:3",
           eventName: "MODIFY",
-          eventSource: "aws:dynamodb",
-          eventVersion: "1.1",
-          awsRegion: "eu-west-2",
-          dynamodb: {
-            SequenceNumber: "100003",
-            SizeBytes: 400,
-            StreamViewType: "NEW_IMAGE",
-            NewImage: { doc: { S: JSON.stringify(stagedDoc) } },
-          },
-        },
-        {
+          dynamodb: { SequenceNumber: "100003" },
+        }),
+        createStreamEvent({
           eventID: "s:4",
           eventName: "REMOVE",
-          eventSource: "aws:dynamodb",
-          eventVersion: "1.1",
-          awsRegion: "eu-west-2",
-          dynamodb: { SequenceNumber: "100004", SizeBytes: 400, StreamViewType: "NEW_IMAGE" },
-        },
+          dynamodb: { SequenceNumber: "100004" },
+        }),
       ],
     };
 

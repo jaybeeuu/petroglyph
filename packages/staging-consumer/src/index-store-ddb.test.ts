@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { createStagedIndexStoreDdb } from "./index-store-ddb.js";
+import type { StagedRecord } from "./record.js";
 
 function commandCall(
   send: ReturnType<typeof vi.fn>,
@@ -11,17 +12,20 @@ function commandCall(
   return (send.mock.calls[index] as [{ input: { [key: string]: unknown } }])[0];
 }
 
-const record = {
-  profileId: "p1",
-  itemId: "item-1",
-  s3Key: "staging/v1/p1/notes/a.pdf",
-  relativePath: "notes",
-  name: "a.pdf",
-  source: "onedrive",
-  mimeType: "application/pdf",
-  status: "staged" as const,
-  createdAt: "2026-09-01T00:00:00.000Z",
-};
+function createRecord(overrides: Partial<StagedRecord> = {}): StagedRecord {
+  return {
+    profileId: "p1",
+    itemId: "item-1",
+    s3Key: "staging/v1/p1/notes/a.pdf",
+    relativePath: "notes",
+    name: "a.pdf",
+    source: "onedrive",
+    mimeType: "application/pdf",
+    status: "staged",
+    createdAt: "2026-09-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
 describe("createStagedIndexStoreDdb", () => {
   const options = { tableName: "petroglyph-file-records" };
@@ -33,7 +37,7 @@ describe("createStagedIndexStoreDdb", () => {
       client: { send } as unknown as DynamoDBDocumentClient,
     });
 
-    await store.upsert(record);
+    await store.upsert(createRecord());
 
     const input = commandCall(send, 0).input as { Item: { [key: string]: unknown } };
     expect(input.Item).toMatchObject({
@@ -45,6 +49,7 @@ describe("createStagedIndexStoreDdb", () => {
   });
 
   it("reads a record back keyed by profileId+itemId, null when absent", async () => {
+    const record = createRecord();
     const send = vi.fn().mockResolvedValueOnce({ Item: record }).mockResolvedValueOnce({});
     const store = createStagedIndexStoreDdb({
       ...options,
@@ -77,6 +82,7 @@ describe("createStagedIndexStoreDdb", () => {
   });
 
   it("queries the feed ordered, cursor-paged via ExclusiveStartKey", async () => {
+    const record = createRecord();
     const send = vi
       .fn()
       .mockResolvedValueOnce({
