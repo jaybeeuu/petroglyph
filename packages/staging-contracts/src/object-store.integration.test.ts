@@ -11,7 +11,7 @@ function requireStored(result: StagedObjectStoreGetResult | null): StagedObjectS
 }
 
 describe("S3 StagedObjectStore against LocalStack", () => {
-  let container: StartedTestContainer;
+  let container: StartedTestContainer | undefined;
   let client: S3Client;
   let endpoint: string;
 
@@ -41,7 +41,10 @@ describe("S3 StagedObjectStore against LocalStack", () => {
   }, 180_000);
 
   afterAll(async () => {
-    await container.stop();
+    // Guard the handle: when beforeAll's container.start() rejects, `container`
+    // is never assigned, and an unguarded .stop() would throw a secondary
+    // TypeError that buries the real container-runtime error.
+    await container?.stop();
   }, 30_000);
 
   it("put stores bytes with content type; get reads them back with metadata intact", async () => {
@@ -125,6 +128,16 @@ describe("S3 StagedObjectStore against LocalStack", () => {
     expect(response.headers.get("content-disposition")).toBe('attachment; filename="dl.pdf"');
   });
 
+  // DECISION (petroglyph-f2ei): real-AWS signature enforcement is a recorded,
+  // accepted coverage gap. LocalStack 3.8.1 accepts a tampered presigned
+  // signature even with S3_SKIP_SIGNATURE_VALIDATION=0 (checksum /
+  // UNSIGNED-PAYLOAD quirks), so there is no LocalStack enforcement to assert
+  // against. Rather than weaken the security assertion, the test body stays as
+  // a canary: it asserts 403 whenever the endpoint does enforce signatures
+  // (e.g. pointed at real AWS) and skips with the reason below when it does
+  // not. A real-bucket opt-in run is the documented way to close the gap — see
+  // CONTRIBUTING.md, "Recorded coverage gap: real-AWS presigned-URL signature
+  // enforcement".
   it("a tampered signature on a presigned URL is rejected with 403", async (context) => {
     const store = createS3StagedObjectStore({
       bucket: "petroglyph-staged-pdfs",
@@ -142,12 +155,13 @@ describe("S3 StagedObjectStore against LocalStack", () => {
     );
     const response = await fetch(tampered);
     if (response.status === 200) {
-      // LocalStack image 3.8.1 still accepts the tampered signature even with
+      // LocalStack 3.8.1 still accepts the tampered signature even with
       // S3_SKIP_SIGNATURE_VALIDATION=0 (known checksum / UNSIGNED-PAYLOAD quirks),
       // so real-AWS 403 semantics cannot be exercised against it. Skip this single
-      // test rather than weaken the security assertion.
+      // test rather than weaken the security assertion. The real-AWS gap this
+      // leaves is recorded in the DECISION comment above and in CONTRIBUTING.md.
       context.skip(
-        "LocalStack does not enforce signature validation despite S3_SKIP_SIGNATURE_VALIDATION=0",
+        "LocalStack 3.8.1 does not enforce presigned-URL signature validation despite S3_SKIP_SIGNATURE_VALIDATION=0; real-AWS 403 enforcement is a recorded, accepted gap",
       );
     }
     expect(response.status).toBe(403);
