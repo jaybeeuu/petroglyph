@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { CreateBucketCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { DynamoDBClient, CreateTableCommand } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient, CreateTableCommand, ScanCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBEventLogWriter, type EventLogWriter } from "@petroglyph/events";
 import {
@@ -36,14 +36,20 @@ const change: FileChangeEvent = {
   mimeType: "application/pdf",
 };
 
-/** A capturing wrapper: asserts on the outer call, remembers the doc. */
-function capturingEventLog(inner: EventLogWriter): EventLogWriter & { docs: unknown[] } {
+/** A capturing wrapper: remembers each doc and the outcome the log returned. */
+function capturingEventLog(
+  inner: EventLogWriter,
+): EventLogWriter & { docs: unknown[]; writes: boolean[] } {
   const docs: unknown[] = [];
+  const writes: boolean[] = [];
   return {
     docs,
+    writes,
     async putIfAbsent(document) {
       docs.push(document);
-      return inner.putIfAbsent(document);
+      const written = await inner.putIfAbsent(document);
+      writes.push(written);
+      return written;
     },
   };
 }
@@ -52,6 +58,7 @@ describe.skipIf(!canRun)("fetch+gate+land against LocalStack S3 + DDB", () => {
   let container: StartedTestContainer;
   let store: ReturnType<typeof createS3StagedObjectStore>;
   let eventLog: EventLogWriter;
+  let dynamoClient: DynamoDBClient;
   let s3Client: S3Client;
 
   beforeAll(async () => {
@@ -72,7 +79,7 @@ describe.skipIf(!canRun)("fetch+gate+land against LocalStack S3 + DDB", () => {
     await s3Client.send(new CreateBucketCommand({ Bucket: BUCKET }));
     store = createS3StagedObjectStore({ bucket: BUCKET, region: "eu-west-2", client: s3Client });
 
-    const dynamoClient = new DynamoDBClient({ region: "eu-west-2", endpoint, credentials });
+    dynamoClient = new DynamoDBClient({ region: "eu-west-2", endpoint, credentials });
     await dynamoClient.send(
       new CreateTableCommand({
         TableName: LOG_TABLE,
@@ -136,8 +143,19 @@ describe.skipIf(!canRun)("fetch+gate+land against LocalStack S3 + DDB", () => {
       eventLog: log,
       emissionId: "emission-int-1",
     });
-    expect(outcome2).toBe("landed");
-    expect(log.docs).toHaveLength(2);
+    expect(outcome2).toBe("deduped");
+    expect(log.writes).toEqual([true, false]);
+
+    // the registry holds exactly one row for that source+id
+    const rows = await dynamoClient.send(
+      new ScanCommand({
+        TableName: LOG_TABLE,
+        FilterExpression: "#id = :id",
+        ExpressionAttributeNames: { "#id": "id" },
+        ExpressionAttributeValues: { ":id": { S: "emission-int-1" } },
+      }),
+    );
+    expect(rows.Count).toBe(1);
   });
 
   it("s3Key remains deterministic across a restage — same key, overwritten bytes", async () => {

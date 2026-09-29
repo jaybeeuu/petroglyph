@@ -278,4 +278,24 @@ describe("processChange", () => {
     expect(ids).toEqual(["emission-1", "emission-1"]);
     expect(putIfAbsent.mock.calls.length).toBe(2);
   });
+
+  it("a suppressed staged write (putIfAbsent false) is deduped, not landed — the bytes were still staged", async () => {
+    const harness = makeHarness();
+    harness.putIfAbsent.mockResolvedValue(false);
+
+    const outcome = await harness.run(created);
+
+    expect(outcome).toBe("deduped");
+    expect(harness.put).toHaveBeenCalledTimes(1);
+  });
+
+  it("a suppressed deleted write (putIfAbsent false) is deduped, not deleted", async () => {
+    const harness = makeHarness();
+    harness.putIfAbsent.mockResolvedValue(false);
+
+    const outcome = await harness.run(deletedChange);
+
+    expect(outcome).toBe("deduped");
+    expect(harness.put).not.toHaveBeenCalled();
+  });
 });
