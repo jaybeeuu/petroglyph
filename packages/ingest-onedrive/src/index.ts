@@ -47,6 +47,23 @@ export type IngestQueueMessage = z.infer<typeof ingestQueueMessageSchema>;
 type NotificationPayload = z.infer<typeof notificationPayloadSchema>;
 type Notification = NotificationPayload["value"][number];
 
+type WebhookEvent = Pick<
+  APIGatewayProxyEventV2,
+  "body" | "queryStringParameters" | "requestContext"
+> & {
+  headers?: APIGatewayProxyEventV2["headers"];
+  isBase64Encoded?: boolean;
+};
+
+type NotificationParseFailure =
+  | { reason: "empty-body" }
+  | { reason: "invalid-json" }
+  | { reason: "schema-mismatch"; error: z.ZodError };
+
+type NotificationParseResult =
+  | { ok: true; payload: NotificationPayload }
+  | { ok: false; failure: NotificationParseFailure };
+
 function jsonResponse(
   statusCode: number,
   body: { [key: string]: string },
@@ -60,14 +77,58 @@ function jsonResponse(
   };
 }
 
-function parseNotificationPayload(body: string | undefined): NotificationPayload | null {
-  try {
-    const parsedBody: unknown = JSON.parse(body ?? "");
-    const payload = notificationPayloadSchema.safeParse(parsedBody);
-    return payload.success ? payload.data : null;
-  } catch {
-    return null;
+function parseNotificationPayload(body: string | undefined): NotificationParseResult {
+  if (!body) {
+    return { ok: false, failure: { reason: "empty-body" } };
   }
+
+  let parsedBody: unknown;
+  try {
+    parsedBody = JSON.parse(body);
+  } catch {
+    return { ok: false, failure: { reason: "invalid-json" } };
+  }
+
+  const payload = notificationPayloadSchema.safeParse(parsedBody);
+  return payload.success
+    ? { ok: true, payload: payload.data }
+    : { ok: false, failure: { reason: "schema-mismatch", error: payload.error } };
+}
+
+function describeParseFailure(failure: NotificationParseFailure): string {
+  switch (failure.reason) {
+    case "empty-body":
+      return "empty body";
+    case "invalid-json":
+      return "invalid JSON";
+    case "schema-mismatch":
+      return "schema mismatch";
+  }
+}
+
+function readContentType(headers: WebhookEvent["headers"]): string | undefined {
+  if (!headers) {
+    return undefined;
+  }
+
+  return Object.entries(headers).find(([name]) => name.toLowerCase() === "content-type")?.[1];
+}
+
+function logRejectedNotification(event: WebhookEvent, failure: NotificationParseFailure): void {
+  console.error(`[ingest-onedrive] rejected notification: ${describeParseFailure(failure)}`, {
+    reason: failure.reason,
+    byteLength: Buffer.byteLength(event.body ?? "", "utf8"),
+    contentType: readContentType(event.headers),
+    isBase64Encoded: event.isBase64Encoded ?? false,
+    ...(failure.reason === "schema-mismatch"
+      ? {
+          issues: failure.error.issues.map((issue) => ({
+            path: issue.path.join("."),
+            message: issue.message,
+          })),
+        }
+      : {}),
+  });
 }
 
 function normalizeClientState(clientState: string): string | null {
@@ -140,9 +201,7 @@ export async function flushPendingNotificationWork(): Promise<void> {
   }
 }
 
-export const handler = (
-  event: Pick<APIGatewayProxyEventV2, "body" | "queryStringParameters" | "requestContext">,
-): Promise<APIGatewayProxyResultV2> => {
+export const handler = (event: WebhookEvent): Promise<APIGatewayProxyResultV2> => {
   const validationToken = event.queryStringParameters?.["validationToken"];
   const method = event.requestContext.http.method;
 
@@ -157,16 +216,17 @@ export const handler = (
   }
 
   if (method === "POST") {
-    const payload = parseNotificationPayload(event.body);
-    if (!payload) {
+    const parseResult = parseNotificationPayload(event.body);
+    if (!parseResult.ok) {
+      logRejectedNotification(event, parseResult.failure);
       return Promise.resolve(jsonResponse(400, { error: "Invalid notification payload" }));
     }
 
-    if (!notificationsHaveClientState(payload.value)) {
+    if (!notificationsHaveClientState(parseResult.payload.value)) {
       return Promise.resolve(jsonResponse(401, { error: "Invalid clientState" }));
     }
 
-    scheduleNotificationProcessing(payload.value);
+    scheduleNotificationProcessing(parseResult.payload.value);
 
     return Promise.resolve({
       statusCode: 200,
