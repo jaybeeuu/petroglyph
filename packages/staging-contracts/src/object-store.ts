@@ -7,36 +7,36 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-export interface ObjectStorePutResult {
+export interface StagedObjectStorePutResult {
   versionId?: string;
 }
 
-export interface ObjectStoreGetResult {
+export interface StagedObjectStoreGetResult {
   body: Uint8Array;
   etag?: string;
 }
 
-export interface ObjectStorePresignGetOptions {
+export interface StagedObjectStorePresignGetOptions {
   ttlSeconds?: number;
   responseContentDisposition?: string;
 }
 
 /**
- * Keys and bytes, no domain knowledge. The staging domain's layout lives in
- * @petroglyph/staging-contracts; presigned URLs are an S3 concern and are
+ * Keys and bytes, no domain knowledge. The staging domain's layout lives beside
+ * this port in deriveStagingKey; presigned URLs are an S3 concern and are
  * issued from stored keys here — readers never derive keys.
  */
-export interface ObjectStore {
+export interface StagedObjectStore {
   put(
     key: string,
     body: Uint8Array,
     options: { contentType?: string },
-  ): Promise<ObjectStorePutResult>;
+  ): Promise<StagedObjectStorePutResult>;
   /** null signals absent — callers must never receive a throw for a missing object. */
-  get(key: string): Promise<ObjectStoreGetResult | null>;
+  get(key: string): Promise<StagedObjectStoreGetResult | null>;
   /** Idempotent: deleting a missing object is a no-op. */
   delete(key: string): Promise<void>;
-  presignGet(key: string, options?: ObjectStorePresignGetOptions): Promise<string>;
+  presignGet(key: string, options?: StagedObjectStorePresignGetOptions): Promise<string>;
 }
 
 function isNotFoundError(error: unknown): boolean {
@@ -47,11 +47,11 @@ function isNotFoundError(error: unknown): boolean {
   );
 }
 
-export function createS3ObjectStore(options: {
+export function createS3StagedObjectStore(options: {
   bucket: string;
   region: string;
   client?: S3Client;
-}): ObjectStore {
+}): StagedObjectStore {
   const client: S3Client = options.client ?? new S3Client({ region: options.region });
   const bucket = options.bucket;
 

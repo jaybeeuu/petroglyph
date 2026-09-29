@@ -1,4 +1,4 @@
-import type { ObjectStore } from "@petroglyph/core";
+import type { StagedObjectStore } from "./object-store.js";
 import { deriveStagingKey } from "./keys.js";
 import type { MimeType } from "./type.js";
 
@@ -18,7 +18,10 @@ export interface StageInput {
  * derive + put ONLY. Fetching, gating and event emission are adapter-owned
  * glue (6.5.1.1) — this lib holds no Graph, no queue, no gate logic.
  */
-export async function stage(store: ObjectStore, input: StageInput): Promise<{ s3Key: string }> {
+export async function stage(
+  store: StagedObjectStore,
+  input: StageInput,
+): Promise<{ s3Key: string }> {
   const s3Key = deriveStagingKey({
     profileId: input.profileId,
     relativePath: input.relativePath,

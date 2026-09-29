@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { stage } from "./stage.js";
-import type { ObjectStore } from "@petroglyph/core";
+import type { StagedObjectStore } from "./object-store.js";
 
 describe("stage", () => {
   it("derives the key once and puts exactly once with the derived key and content type", async () => {
     const put = vi.fn().mockResolvedValue({ versionId: "v-9" });
-    const store = { put } as unknown as ObjectStore;
+    const store = { put } as unknown as StagedObjectStore;
 
     const result = await stage(store, {
       profileId: "p1",
@@ -26,7 +26,7 @@ describe("stage", () => {
 
   it("is idempotent by construction — same input derives the same key", async () => {
     const put = vi.fn().mockResolvedValue({});
-    const store = { put } as unknown as ObjectStore;
+    const store = { put } as unknown as StagedObjectStore;
 
     await stage(store, {
       profileId: "p1",

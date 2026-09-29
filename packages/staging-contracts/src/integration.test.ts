@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { CreateBucketCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { createS3ObjectStore, type ObjectStoreGetResult } from "@petroglyph/core";
+import { createS3StagedObjectStore, type StagedObjectStoreGetResult } from "./object-store.js";
 
-function requireStored(result: ObjectStoreGetResult | null): ObjectStoreGetResult {
+function requireStored(result: StagedObjectStoreGetResult | null): StagedObjectStoreGetResult {
   if (result === null) {
     throw new Error("expected a stored object");
   }
@@ -26,7 +26,7 @@ const stagingBucket = "petroglyph-staged-pdfs";
 describe("staging land against LocalStack S3", () => {
   let container: StartedTestContainer;
   let client: S3Client;
-  let store: ReturnType<typeof createS3ObjectStore>;
+  let store: ReturnType<typeof createS3StagedObjectStore>;
 
   beforeAll(async () => {
     container = await new GenericContainer("localstack/localstack:3.8.1")
@@ -48,7 +48,7 @@ describe("staging land against LocalStack S3", () => {
       credentials: { accessKeyId: "test", secretAccessKey: "test" },
     });
     await client.send(new CreateBucketCommand({ Bucket: stagingBucket }));
-    store = createS3ObjectStore({ bucket: stagingBucket, region: "eu-west-2", client });
+    store = createS3StagedObjectStore({ bucket: stagingBucket, region: "eu-west-2", client });
   }, 180_000);
 
   afterAll(async () => {
@@ -88,7 +88,7 @@ describe("staging land against LocalStack S3", () => {
     });
 
     const stored = requireStored(await store.get(s3Key));
-    // The ObjectStore port is keys-and-bytes — get() returns body + etag, not
+    // The StagedObjectStore port is keys-and-bytes — get() returns body + etag, not
     // ContentType — so the stored header is read from the client that owns the bucket.
     const head = await client.send(new HeadObjectCommand({ Bucket: stagingBucket, Key: s3Key }));
 

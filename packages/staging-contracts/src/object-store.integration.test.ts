@@ -1,16 +1,16 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { CreateBucketCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { createS3ObjectStore, type ObjectStoreGetResult } from "./object-store.js";
+import { createS3StagedObjectStore, type StagedObjectStoreGetResult } from "./object-store.js";
 
-function requireStored(result: ObjectStoreGetResult | null): ObjectStoreGetResult {
+function requireStored(result: StagedObjectStoreGetResult | null): StagedObjectStoreGetResult {
   if (result === null) {
     throw new Error("expected a stored object");
   }
   return result;
 }
 
-describe("S3 ObjectStore against LocalStack", () => {
+describe("S3 StagedObjectStore against LocalStack", () => {
   let container: StartedTestContainer;
   let client: S3Client;
   let endpoint: string;
@@ -45,7 +45,7 @@ describe("S3 ObjectStore against LocalStack", () => {
   }, 30_000);
 
   it("put stores bytes with content type; get reads them back with metadata intact", async () => {
-    const store = createS3ObjectStore({
+    const store = createS3StagedObjectStore({
       bucket: "petroglyph-staged-pdfs",
       region: "eu-west-2",
       client,
@@ -63,7 +63,7 @@ describe("S3 ObjectStore against LocalStack", () => {
   });
 
   it("get returns null for a missing object; delete is idempotent", async () => {
-    const store = createS3ObjectStore({
+    const store = createS3StagedObjectStore({
       bucket: "petroglyph-staged-pdfs",
       region: "eu-west-2",
       client,
@@ -75,7 +75,7 @@ describe("S3 ObjectStore against LocalStack", () => {
   });
 
   it("overwriting the same key yields a fresh version id when versioning is enabled", async () => {
-    const store = createS3ObjectStore({
+    const store = createS3StagedObjectStore({
       bucket: "petroglyph-staged-pdfs",
       region: "eu-west-2",
       client,
@@ -94,7 +94,7 @@ describe("S3 ObjectStore against LocalStack", () => {
   });
 
   it("presignGet issues a URL that serves bytes with the content-disposition override for real", async () => {
-    const store = createS3ObjectStore({
+    const store = createS3StagedObjectStore({
       bucket: "petroglyph-staged-pdfs",
       region: "eu-west-2",
       client,
@@ -126,7 +126,7 @@ describe("S3 ObjectStore against LocalStack", () => {
   });
 
   it("a tampered signature on a presigned URL is rejected with 403", async (context) => {
-    const store = createS3ObjectStore({
+    const store = createS3StagedObjectStore({
       bucket: "petroglyph-staged-pdfs",
       region: "eu-west-2",
       client,
