@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { CreateBucketCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -14,16 +13,6 @@ import { processChange } from "./process-change.js";
 import type { GraphClient } from "../tokens/graph-client.js";
 import type { FileChangeEvent } from "../delta/delta-walk.js";
 
-function dockerAvailable(): boolean {
-  try {
-    execSync("docker info", { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const canRun = dockerAvailable();
 const BUCKET = "petroglyph-staged-pdfs";
 const LOG_TABLE = "event-log-int";
 
@@ -54,7 +43,7 @@ function capturingEventLog(
   };
 }
 
-describe.skipIf(!canRun)("fetch+gate+land against LocalStack S3 + DDB", () => {
+describe("fetch+gate+land against LocalStack S3 + DDB", () => {
   let container: StartedTestContainer;
   let store: ReturnType<typeof createS3StagedObjectStore>;
   let eventLog: EventLogWriter;
