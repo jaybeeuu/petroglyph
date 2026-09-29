@@ -7,7 +7,13 @@ import { passesPreDownloadFilter } from "./gate.js";
 import { deriveRemovedKey, landBytes } from "./land.js";
 import { emitFileDeleted, emitFileStaged } from "./emit.js";
 
-export type ProcessChangeOutcome = "landed" | "skipped" | "gate-rejected" | "deleted" | "fetch-404";
+export type ProcessChangeOutcome =
+  | "landed"
+  | "deduped"
+  | "skipped"
+  | "gate-rejected"
+  | "deleted"
+  | "fetch-404";
 
 export interface ProcessChangeDeps {
   graph: GraphClient;
@@ -30,6 +36,9 @@ export interface ProcessChangeDeps {
  *   Unit 2 acts on the event.
  * - put THEN emit: a crash between leaves an orphan object (invisible
  *   garbage) — beats an event referencing an absent object.
+ * - A suppressed emit (the event log already holds source+id) returns
+ *   "deduped": the write did not happen, so callers must not count it as
+ *   landed/deleted.
  */
 export async function processChange(
   change: FileChangeEvent,
@@ -38,12 +47,12 @@ export async function processChange(
   const log = deps.log ?? console.error;
 
   if (change.kind === "deleted") {
-    await emitFileDeleted(deps.eventLog, {
+    const written = await emitFileDeleted(deps.eventLog, {
       change,
       s3Key: change.isFolder ? null : deriveRemovedKey(change),
       emissionId: deps.emissionId,
     });
-    return "deleted";
+    return written ? "deleted" : "deduped";
   }
 
   const name = change.name;
@@ -73,11 +82,11 @@ export async function processChange(
   }
 
   const { s3Key } = await landBytes(deps.store, { ...change, name }, fetched.bytes, detected);
-  await emitFileStaged(deps.eventLog, {
+  const written = await emitFileStaged(deps.eventLog, {
     change: { ...change, name },
     s3Key,
     mimeType: detected,
     emissionId: deps.emissionId,
   });
-  return "landed";
+  return written ? "landed" : "deduped";
 }

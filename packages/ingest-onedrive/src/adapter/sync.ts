@@ -29,7 +29,8 @@ export interface RunDeltaSyncOptions {
  * The walker owns the change token; a failed walk processes nothing and the
  * caller redelivers. Each change's CE id is deterministic
  * (profileId:itemId:kind) so a redelivered trigger — or a restage of the same
- * item — dedupes centrally at the event log.
+ * item — dedupes centrally at the event log. landed/deleted count only writes
+ * the log accepted; a suppressed re-emission ("deduped") counts as skipped.
  */
 export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaSyncResult> {
   const log = options.log ?? console.error;
@@ -68,6 +69,8 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
     } else if (outcome === "deleted") {
       deleted += 1;
     } else {
+      // "deduped" lands here: the log already held source+id, so no write
+      // happened and it must not inflate the landed/deleted counters.
       skipped += 1;
     }
   }
