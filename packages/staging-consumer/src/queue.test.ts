@@ -43,6 +43,24 @@ describe("createSqsQueue", () => {
     expect(command.input["MessageGroupId"]).toBe("p1");
   });
 
+  it("passes the message deduplication id through when provided (FIFO exactly-once)", async () => {
+    const send = vi.fn().mockResolvedValue({});
+    const client = { send } as unknown as SQSClient;
+    const queue = createSqsQueue<StagingMessage>({
+      client,
+      queueUrl: "https://sqs.eu-west-2.amazonaws.com/123456789012/staging.fifo",
+      encode: (message) => JSON.stringify(message),
+    });
+
+    await queue.send(
+      { s3Key: "staging/v1/p1/a/b.pdf", profileId: "p1" },
+      { messageDeduplicationId: "onedrive://profiles/p1#emission-1" },
+    );
+
+    const command = (send.mock.calls[0] as [{ input: { [key: string]: unknown } }])[0];
+    expect(command.input["MessageDeduplicationId"]).toBe("onedrive://profiles/p1#emission-1");
+  });
+
   it("propagates send failures to the caller", async () => {
     const send = vi.fn().mockRejectedValue(new Error("SQS send failed"));
     const client = { send } as unknown as SQSClient;
