@@ -1,6 +1,6 @@
-import type { Queue } from "@petroglyph/core";
 import type { CloudEvent, EventSource } from "@petroglyph/events";
 import { fileDeletedEvent, fileStagedEvent } from "@petroglyph/staging-contracts";
+import type { Queue } from "./queue.js";
 
 export interface ForwardDependencies<WireRecord> {
   source: EventSource<WireRecord>;

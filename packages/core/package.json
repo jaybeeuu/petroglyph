@@ -17,7 +17,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-sqs": "^3.1029.0",
     "@aws-sdk/lib-dynamodb": "^3.1024.0",
     "zod": "^4.3.6"
   },
