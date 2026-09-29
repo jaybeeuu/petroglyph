@@ -4,11 +4,7 @@ import { CreateBucketCommand, HeadObjectCommand, S3Client } from "@aws-sdk/clien
 import { DynamoDBClient, CreateTableCommand, ScanCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBEventLogWriter, type EventLogWriter } from "@petroglyph/events";
-import {
-  createS3StagedObjectStore,
-  detectType,
-  fileStagedEvent,
-} from "@petroglyph/staging-contracts";
+import { S3StagedObjectStore, detectType, fileStagedEvent } from "@petroglyph/staging-contracts";
 import { processChange } from "./process-change.js";
 import type { GraphClient } from "../tokens/graph-client.js";
 import type { FileChangeEvent } from "../delta/delta-walk.js";
@@ -45,7 +41,7 @@ function capturingEventLog(
 
 describe("fetch+gate+land against LocalStack S3 + DDB", () => {
   let container: StartedTestContainer;
-  let store: ReturnType<typeof createS3StagedObjectStore>;
+  let store: S3StagedObjectStore;
   let eventLog: EventLogWriter;
   let dynamoClient: DynamoDBClient;
   let s3Client: S3Client;
@@ -66,7 +62,7 @@ describe("fetch+gate+land against LocalStack S3 + DDB", () => {
     const credentials = { accessKeyId: "test", secretAccessKey: "test" };
     s3Client = new S3Client({ region: "eu-west-2", endpoint, forcePathStyle: true, credentials });
     await s3Client.send(new CreateBucketCommand({ Bucket: BUCKET }));
-    store = createS3StagedObjectStore({ bucket: BUCKET, region: "eu-west-2", client: s3Client });
+    store = new S3StagedObjectStore({ bucket: BUCKET, region: "eu-west-2", client: s3Client });
 
     dynamoClient = new DynamoDBClient({ region: "eu-west-2", endpoint, credentials });
     await dynamoClient.send(

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { CreateBucketCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { createS3StagedObjectStore, type StagedObjectStoreGetResult } from "./object-store.js";
+import { S3StagedObjectStore, type StagedObjectStoreGetResult } from "./object-store.js";
 
 function requireStored(result: StagedObjectStoreGetResult | null): StagedObjectStoreGetResult {
   if (result === null) {
@@ -26,7 +26,7 @@ const stagingBucket = "petroglyph-staged-pdfs";
 describe("staging land against LocalStack S3", () => {
   let container: StartedTestContainer;
   let client: S3Client;
-  let store: ReturnType<typeof createS3StagedObjectStore>;
+  let store: S3StagedObjectStore;
 
   beforeAll(async () => {
     container = await new GenericContainer("localstack/localstack:3.8.1")
@@ -48,7 +48,7 @@ describe("staging land against LocalStack S3", () => {
       credentials: { accessKeyId: "test", secretAccessKey: "test" },
     });
     await client.send(new CreateBucketCommand({ Bucket: stagingBucket }));
-    store = createS3StagedObjectStore({ bucket: stagingBucket, region: "eu-west-2", client });
+    store = new S3StagedObjectStore({ bucket: stagingBucket, region: "eu-west-2", client });
   }, 180_000);
 
   afterAll(async () => {
