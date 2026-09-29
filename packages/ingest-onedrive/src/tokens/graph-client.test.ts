@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createGraphClient } from "./graph-client.js";
+import { MicrosoftGraphClient } from "./graph-client.js";
 import type { ResolveOutcome } from "@petroglyph/core";
 
 function scriptedResolver(outcomes: ResolveOutcome[]): {
@@ -14,12 +14,12 @@ function scriptedResolver(outcomes: ResolveOutcome[]): {
 
 const response = (status: number): Response => new Response(null, { status });
 
-describe("createGraphClient", () => {
+describe("MicrosoftGraphClient", () => {
   it("sends every request with a Bearer token from the resolver", async () => {
     const fetchFn = vi.fn().mockResolvedValue(response(200));
     const { resolveAccessToken } = scriptedResolver([{ kind: "success", accessToken: "tok-1" }]);
 
-    const client = createGraphClient({
+    const client = new MicrosoftGraphClient({
       baseUrl: "https://graph.microsoft.com/v1.0",
       fetchFn,
       resolveAccessToken,
@@ -44,7 +44,7 @@ describe("createGraphClient", () => {
       { kind: "success", accessToken: "fresh-tok" },
     ]);
 
-    const client = createGraphClient({
+    const client = new MicrosoftGraphClient({
       baseUrl: "https://graph.microsoft.com/v1.0",
       fetchFn,
       resolveAccessToken,
@@ -67,7 +67,7 @@ describe("createGraphClient", () => {
       { kind: "reconnect-required" },
     ]);
 
-    const client = createGraphClient({
+    const client = new MicrosoftGraphClient({
       baseUrl: "https://graph.microsoft.com/v1.0",
       fetchFn,
       resolveAccessToken,
@@ -84,7 +84,7 @@ describe("createGraphClient", () => {
     const fetchFn = vi.fn().mockResolvedValue(response(200));
     const { resolveAccessToken } = scriptedResolver([{ kind: "success", accessToken: "tok-1" }]);
 
-    const client = createGraphClient({
+    const client = new MicrosoftGraphClient({
       baseUrl: "https://graph.microsoft.com/v1.0",
       fetchFn,
       resolveAccessToken,
@@ -103,7 +103,7 @@ describe("createGraphClient", () => {
     const fetchFn = vi.fn();
     const { resolveAccessToken } = scriptedResolver([{ kind: "reconnect-required" }]);
 
-    const client = createGraphClient({
+    const client = new MicrosoftGraphClient({
       baseUrl: "https://graph.microsoft.com/v1.0",
       fetchFn,
       resolveAccessToken,
@@ -127,7 +127,7 @@ describe("createGraphClient", () => {
     const fetchFn = vi.fn().mockResolvedValue(contentResponse);
     const { resolveAccessToken } = scriptedResolver([{ kind: "success", accessToken: "tok-1" }]);
 
-    const client = createGraphClient({
+    const client = new MicrosoftGraphClient({
       baseUrl: "https://graph.microsoft.com/v1.0",
       fetchFn,
       resolveAccessToken,

@@ -44,26 +44,37 @@ export interface TokenClientOptions {
   fetchFn?: typeof fetch;
 }
 
-export type TokenClient = (refreshToken: string) => Promise<TokenRequestOutcome>;
+export interface TokenClient {
+  requestTokens(refreshToken: string): Promise<TokenRequestOutcome>;
+}
 
 /** The adapter's MS token endpoint client — the only place OAuth speaks Microsoft. */
-export function createTokenClient(options: TokenClientOptions): TokenClient {
-  const fetchFn = options.fetchFn ?? fetch;
-  return async (refreshToken) => {
+export class OAuthTokenClient implements TokenClient {
+  readonly #clientId: string;
+  readonly #clientSecret: string;
+  readonly #fetchFn: typeof fetch;
+
+  constructor(options: TokenClientOptions) {
+    this.#clientId = options.clientId;
+    this.#clientSecret = options.clientSecret;
+    this.#fetchFn = options.fetchFn ?? fetch;
+  }
+
+  async requestTokens(refreshToken: string): Promise<TokenRequestOutcome> {
     const body = new URLSearchParams({
-      client_id: options.clientId,
-      client_secret: options.clientSecret,
+      client_id: this.#clientId,
+      client_secret: this.#clientSecret,
       grant_type: "refresh_token",
       refresh_token: refreshToken,
       scope: "files.readwrite offline_access",
     });
 
-    const response = await fetchFn(TOKEN_ENDPOINT, {
+    const response = await this.#fetchFn(TOKEN_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
     });
 
     return parseTokenResponse(response);
-  };
+  }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { createTokenStoreDdb } from "./token-store-ddb.js";
+import { DynamoDBTokenStore } from "./token-store-ddb.js";
 import type { TokenRecord } from "@petroglyph/core";
 
 const record: TokenRecord = {
@@ -18,13 +18,13 @@ function commandCall(
   return (send.mock.calls[index] as [{ input: { [key: string]: unknown } }])[0];
 }
 
-describe("createTokenStoreDdb", () => {
+describe("DynamoDBTokenStore", () => {
   const options = { tableName: "petroglyph-refresh-tokens" };
 
   it("reads a record keyed by the composite (userId, provider) key", async () => {
     const send = vi.fn().mockResolvedValue({ Item: record });
     const client = { send } as unknown as DynamoDBDocumentClient;
-    const store = createTokenStoreDdb({ ...options, client });
+    const store = new DynamoDBTokenStore({ ...options, client });
 
     const result = await store.read("github|12345", "onedrive");
 
@@ -38,7 +38,7 @@ describe("createTokenStoreDdb", () => {
   it("returns null when no record exists for the connection", async () => {
     const send = vi.fn().mockResolvedValue({});
     const client = { send } as unknown as DynamoDBDocumentClient;
-    const store = createTokenStoreDdb({ ...options, client });
+    const store = new DynamoDBTokenStore({ ...options, client });
 
     await expect(store.read("github|12345", "onedrive")).resolves.toBeNull();
   });
@@ -48,7 +48,7 @@ describe("createTokenStoreDdb", () => {
       Item: { accessToken: "access-1", provider: "onedrive" /* missing fields */ },
     });
     const client = { send } as unknown as DynamoDBDocumentClient;
-    const store = createTokenStoreDdb({ ...options, client });
+    const store = new DynamoDBTokenStore({ ...options, client });
 
     await expect(store.read("github|12345", "onedrive")).rejects.toThrow();
   });
@@ -56,7 +56,7 @@ describe("createTokenStoreDdb", () => {
   it("blind write (bootstrap) puts the full record without a condition", async () => {
     const send = vi.fn().mockResolvedValue({});
     const client = { send } as unknown as DynamoDBDocumentClient;
-    const store = createTokenStoreDdb({ ...options, client });
+    const store = new DynamoDBTokenStore({ ...options, client });
 
     const written = await store.write("github|12345", "onedrive", record, undefined);
 
@@ -72,7 +72,7 @@ describe("createTokenStoreDdb", () => {
     });
     const send = vi.fn().mockRejectedValue(conditionalFailure);
     const client = { send } as unknown as DynamoDBDocumentClient;
-    const store = createTokenStoreDdb({ ...options, client });
+    const store = new DynamoDBTokenStore({ ...options, client });
 
     const written = await store.write("github|12345", "onedrive", record, record);
 
@@ -94,7 +94,7 @@ describe("createTokenStoreDdb", () => {
   it("CAS write succeeds when the condition holds", async () => {
     const send = vi.fn().mockResolvedValue({});
     const client = { send } as unknown as DynamoDBDocumentClient;
-    const store = createTokenStoreDdb({ ...options, client });
+    const store = new DynamoDBTokenStore({ ...options, client });
 
     const written = await store.write("github|12345", "onedrive", record, record);
 
@@ -104,7 +104,7 @@ describe("createTokenStoreDdb", () => {
   it("rethrows non-condition failures", async () => {
     const send = vi.fn().mockRejectedValue(new Error("ProvisionedThroughputExceeded"));
     const client = { send } as unknown as DynamoDBDocumentClient;
-    const store = createTokenStoreDdb({ ...options, client });
+    const store = new DynamoDBTokenStore({ ...options, client });
 
     await expect(store.write("github|12345", "onedrive", record, record)).rejects.toThrow();
   });

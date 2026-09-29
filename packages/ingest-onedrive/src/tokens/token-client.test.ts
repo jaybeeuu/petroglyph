@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { createTokenClient } from "./token-client.js";
+import { OAuthTokenClient } from "./token-client.js";
 
 const okResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
-describe("createTokenClient", () => {
+describe("OAuthTokenClient", () => {
   const options = { clientId: "client-1", clientSecret: "secret-1" };
 
   it("parses a valid token response into a success outcome and posts the refresh-token form", async () => {
@@ -16,9 +16,9 @@ describe("createTokenClient", () => {
         token_type: "Bearer",
       }),
     );
-    const refresh = createTokenClient({ ...options, fetchFn });
+    const client = new OAuthTokenClient({ ...options, fetchFn });
 
-    const outcome = await refresh("refresh-1");
+    const outcome = await client.requestTokens("refresh-1");
 
     expect(outcome).toEqual({
       kind: "success",
@@ -47,16 +47,16 @@ describe("createTokenClient", () => {
       .mockResolvedValue(
         okResponse({ error: "invalid_grant", error_description: "AADSTS700082" }, 400),
       );
-    const refresh = createTokenClient({ ...options, fetchFn });
+    const client = new OAuthTokenClient({ ...options, fetchFn });
 
-    await expect(refresh("refresh-1")).resolves.toEqual({ kind: "grant-invalid" });
+    await expect(client.requestTokens("refresh-1")).resolves.toEqual({ kind: "grant-invalid" });
   });
 
   it("throws for other non-2xx responses", async () => {
     const fetchFn = vi.fn().mockResolvedValue(okResponse({ error: "server_error" }, 502));
-    const refresh = createTokenClient({ ...options, fetchFn });
+    const client = new OAuthTokenClient({ ...options, fetchFn });
 
-    await expect(refresh("refresh-1")).rejects.toThrow();
+    await expect(client.requestTokens("refresh-1")).rejects.toThrow();
   });
 
   it("rejects a malformed success body via zod", async () => {
@@ -65,15 +65,15 @@ describe("createTokenClient", () => {
       .mockResolvedValue(
         okResponse({ access_token: "access-1" /* missing refresh_token/expires_in */ }),
       );
-    const refresh = createTokenClient({ ...options, fetchFn });
+    const client = new OAuthTokenClient({ ...options, fetchFn });
 
-    await expect(refresh("refresh-1")).rejects.toThrow();
+    await expect(client.requestTokens("refresh-1")).rejects.toThrow();
   });
 
   it("rejects a non-JSON body on success", async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response("<html>oops</html>", { status: 200 }));
-    const refresh = createTokenClient({ ...options, fetchFn });
+    const client = new OAuthTokenClient({ ...options, fetchFn });
 
-    await expect(refresh("refresh-1")).rejects.toThrow();
+    await expect(client.requestTokens("refresh-1")).rejects.toThrow();
   });
 });

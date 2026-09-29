@@ -3,7 +3,7 @@ import { GenericContainer, Wait, type StartedTestContainer } from "testcontainer
 import { DynamoDBClient, CreateTableCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { createTokenResolver, type TokenRecord, type TokenRequestOutcome } from "@petroglyph/core";
-import { createTokenStoreDdb } from "./token-store-ddb.js";
+import { DynamoDBTokenStore } from "./token-store-ddb.js";
 
 const TABLE_NAME = "refresh-tokens-int";
 
@@ -19,7 +19,7 @@ const persistenceDeadline = Math.floor(Date.now() / 1000) + 3600;
 
 describe("token store CAS + resolver concurrency against LocalStack DDB", () => {
   let container: StartedTestContainer;
-  let store: ReturnType<typeof createTokenStoreDdb>;
+  let store: DynamoDBTokenStore;
 
   beforeAll(async () => {
     container = await new GenericContainer("localstack/localstack:3.8.1")
@@ -53,7 +53,7 @@ describe("token store CAS + resolver concurrency against LocalStack DDB", () => 
         BillingMode: "PAY_PER_REQUEST",
       }),
     );
-    store = createTokenStoreDdb({
+    store = new DynamoDBTokenStore({
       client: DynamoDBDocumentClient.from(dynamoClient),
       tableName: TABLE_NAME,
     });
