@@ -3,14 +3,15 @@ import { GenericContainer, Wait, type StartedTestContainer } from "testcontainer
 import { CreateTableCommand, DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { z } from "zod";
-import { createDeltaStateStoreDdb } from "./delta-state-store-ddb.js";
+import { DynamoDBDeltaStateStore } from "./delta-state-store-ddb.js";
+import type { DeltaStateStore } from "./delta-state-store.js";
 
 const TABLE_NAME = "delta-state-int";
 
 describe("delta state store against LocalStack DDB", () => {
   let container: StartedTestContainer;
   let client: DynamoDBDocumentClient;
-  let store: ReturnType<typeof createDeltaStateStoreDdb>;
+  let store: DeltaStateStore;
 
   beforeAll(async () => {
     container = await new GenericContainer("localstack/localstack:3.8.1")
@@ -45,7 +46,7 @@ describe("delta state store against LocalStack DDB", () => {
       }),
     );
     client = DynamoDBDocumentClient.from(dynamoClient);
-    store = createDeltaStateStoreDdb({ client, tableName: TABLE_NAME });
+    store = new DynamoDBDeltaStateStore({ client, tableName: TABLE_NAME });
   }, 180_000);
 
   afterAll(async () => {

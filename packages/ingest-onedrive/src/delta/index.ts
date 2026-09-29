@@ -7,4 +7,4 @@ export type {
   FileChangeEvent,
 } from "./delta-walk.js";
 export type { DeltaState, DeltaStateStore } from "./delta-state-store.js";
-export { createDeltaStateStoreDdb } from "./delta-state-store-ddb.js";
+export { DynamoDBDeltaStateStore } from "./delta-state-store-ddb.js";
