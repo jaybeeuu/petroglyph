@@ -95,8 +95,9 @@ function fileItem(id: string, folder: string): { [key: string]: unknown } {
   return {
     id,
     name: `${id}.pdf`,
+    eTag: `etag-${id}`,
     parentReference: { path: `/drive/root:/${folder}` },
-    file: { mimeType: "application/pdf", eTag: `etag-${id}` },
+    file: { mimeType: "application/pdf" },
   };
 }
 

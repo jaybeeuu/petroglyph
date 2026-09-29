@@ -165,8 +165,9 @@ describe("runDeltaSync — adapter driver", () => {
     const revisedItem = (eTag: string): unknown => ({
       id: "item-1",
       name: "a.pdf",
+      eTag,
       parentReference: { path: "/drive/root:/notes" },
-      file: { mimeType: "application/pdf", eTag },
+      file: { mimeType: "application/pdf" },
     });
     const firstLink = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=first";
     const secondLink = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=second";

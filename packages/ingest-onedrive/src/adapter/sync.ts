@@ -87,9 +87,9 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
  * event and id is reused only for a re-send of the same revision (CE v1.0.2).
  * A deleted item carries no version, so its id deliberately falls back to the
  * 3-part profile:item:kind. A file change with no eTag is unexpected (the
- * delta `file` facet is selected), so it falls back too — and logs, because
- * the absence means the page contract is wrong and the second update would be
- * silently suppressed as a duplicate.
+ * delta `$select` requests the top-level `eTag`), so it falls back too — and
+ * logs, because the absence means the page contract is wrong and the second
+ * update would be silently suppressed as a duplicate.
  */
 function emissionIdFor(change: FileChangeEvent, log: (message: string) => void): string {
   const id = `${change.profileId}:${change.itemId}:${change.kind}`;

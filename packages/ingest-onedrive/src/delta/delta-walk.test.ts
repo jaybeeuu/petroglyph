@@ -4,7 +4,7 @@ import type { DeltaState, DeltaStateStore } from "./delta-state-store.js";
 import type { GraphClient } from "../tokens/graph-client.js";
 
 const INITIAL_URL =
-  "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,parentReference,file,folder,deleted";
+  "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,eTag,parentReference,file,folder,deleted";
 
 function makeState(overrides: Partial<DeltaState> = {}): DeltaState {
   return {
@@ -754,20 +754,13 @@ describe("walkDelta", () => {
     expect(result.events[0]).not.toHaveProperty("mimeType");
   });
 
-  it("carries the file facet eTag through as the version dimension", async () => {
+  it("carries the top-level driveItem eTag through as the version dimension", async () => {
     const store = memStateStore(null);
     const { client } = scriptedClient([
       () =>
-        page(
-          [
-            fileItem({
-              id: "i1",
-              name: "a.pdf",
-              file: { mimeType: "application/pdf", eTag: "etag-1" },
-            }),
-          ],
-          { deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=final" },
-        ),
+        page([fileItem({ id: "i1", name: "a.pdf", eTag: "etag-1" })], {
+          deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=final",
+        }),
     ]);
 
     const result = await walkDelta({
