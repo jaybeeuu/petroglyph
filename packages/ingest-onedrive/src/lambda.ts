@@ -80,19 +80,23 @@ function env(name: string, fallback: string): string {
   return process.env[name] ?? fallback;
 }
 
-function stagedBucketName(): string {
-  const bucket = process.env["STAGED_PDFS_BUCKET"];
-  if (bucket === undefined) {
-    console.warn("[adapter] STAGED_PDFS_BUCKET not set — landing will fail");
-    return "";
+/**
+ * Required configuration fails loudly at composition time — a missing table or
+ * bucket names itself in the Error instead of silently defaulting to a table
+ * whose key schema cannot serve the adapter's queries (petroglyph-j1gn.22).
+ */
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value === "") {
+    throw new Error(`Missing required environment variable: ${name}`);
   }
-  return bucket;
+  return value;
 }
 
 const DEFAULT_DRIVE_ROOT_DELTA_URL =
   "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,parentReference,file,folder,deleted";
 
-function buildDeltaRunner(): (connection: {
+export function buildDeltaRunner(): (connection: {
   userId: string;
   provider: string;
 }) => Promise<DeltaSyncResult> {
@@ -106,18 +110,14 @@ function buildDeltaRunner(): (connection: {
     const resolver = createTokenResolver({
       store: createTokenStoreDdb({
         client: docClient,
-        tableName: env("REFRESH_TOKENS_TABLE", "petroglyph-refresh-tokens-default"),
+        tableName: requiredEnv("REFRESH_TOKENS_TABLE"),
       }),
       now: () => Math.floor(Date.now() / 1000),
       requestTokens: createTokenClient({ clientId, clientSecret }),
     });
 
     const profiles = (
-      await listProfiles(
-        docClient,
-        env("SYNC_PROFILES_TABLE", "petroglyph-sync-profiles-default"),
-        connection.userId,
-      )
+      await listProfiles(docClient, requiredEnv("SYNC_PROFILES_TABLE"), connection.userId)
     )
       .filter((profile) => profile.enabled && profile.active)
       .map((profile) => ({ profileId: profile.profileId, rootPath: profile.sourceFolderPath }));
@@ -129,16 +129,16 @@ function buildDeltaRunner(): (connection: {
           resolver.resolveAccessToken(connection.userId, connection.provider, options),
       }),
       store: createS3StagedObjectStore({
-        bucket: stagedBucketName(),
+        bucket: requiredEnv("STAGED_PDFS_BUCKET"),
         region: env("AWS_REGION", "eu-west-2"),
       }),
       eventLog: new DynamoDBEventLogWriter({
         client: docClient,
-        tableName: env("EVENT_LOG_TABLE", "petroglyph-event-log-default"),
+        tableName: requiredEnv("EVENT_LOG_TABLE"),
       }),
       deltaStateStore: createDeltaStateStoreDdb({
         client: docClient,
-        tableName: env("DELTA_TOKENS_TABLE", "petroglyph-delta-tokens-default"),
+        tableName: requiredEnv("DELTA_TOKENS_TABLE"),
       }),
       connection,
       profiles,
