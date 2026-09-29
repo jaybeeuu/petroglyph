@@ -3,9 +3,9 @@ import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { SQSBatchResponse, SQSEvent } from "aws-lambda";
 import { z } from "zod";
-import { createTokenResolver, listProfiles } from "@petroglyph/core";
+import { OAuthTokenResolver, listProfiles } from "@petroglyph/core";
 import { DynamoDBEventLogWriter } from "@petroglyph/events";
-import { createS3StagedObjectStore } from "@petroglyph/staging-contracts";
+import { S3StagedObjectStore } from "@petroglyph/staging-contracts";
 import { DynamoDBTokenStore } from "./tokens/token-store-ddb.js";
 import { OAuthTokenClient } from "./tokens/token-client.js";
 import { MicrosoftGraphClient } from "./tokens/graph-client.js";
@@ -108,7 +108,7 @@ export function buildDeltaRunner(): (connection: {
       ),
     ]);
     const tokenClient = new OAuthTokenClient({ clientId, clientSecret });
-    const resolver = createTokenResolver({
+    const resolver = new OAuthTokenResolver({
       store: new DynamoDBTokenStore({
         client: docClient,
         tableName: requiredEnv("REFRESH_TOKENS_TABLE"),
@@ -129,7 +129,7 @@ export function buildDeltaRunner(): (connection: {
         resolveAccessToken: (options) =>
           resolver.resolveAccessToken(connection.userId, connection.provider, options),
       }),
-      store: createS3StagedObjectStore({
+      store: new S3StagedObjectStore({
         bucket: requiredEnv("STAGED_PDFS_BUCKET"),
         region: env("AWS_REGION", "eu-west-2"),
       }),
