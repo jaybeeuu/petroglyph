@@ -15,6 +15,17 @@ export interface ForwardResult {
 }
 
 /**
+ * The staged_events queue has content-based deduplication disabled, so every
+ * send must carry an explicit token. It is derived from the CloudEvent
+ * identity that the event log already dedupes on — `source`+`id` — not from
+ * the payload shape, so a re-send of the same event dedupes and a payload
+ * change does not.
+ */
+function deduplicationId(event: CloudEvent<unknown>): string {
+  return `${event.source}#${event.id}`;
+}
+
+/**
  * 6.5.2.2 forwarder: event-log rows → the staging domain's INTERNAL FIFO queue
  * (MessageGroupId = profileId). Each row is a CE document (Q8); rows are parsed
  * through the registered events, so only validated business events ever reach
@@ -63,6 +74,7 @@ export async function forwardStreamRecords<WireRecord>(
 
     const profileId = (parsed.data as { profileId?: unknown }).profileId;
     await deps.queue.send(parsed, {
+      messageDeduplicationId: deduplicationId(parsed),
       ...(typeof profileId === "string" ? { messageGroupId: profileId } : {}),
     });
     forwarded += 1;

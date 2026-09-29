@@ -3,7 +3,7 @@ import type { DynamoDBRecord } from "aws-lambda";
 import { createDdbStreamEventSource } from "./ddb-stream-event-source.js";
 import { forwardStreamRecords } from "./forwarder.js";
 import type { CloudEvent, EventSource } from "@petroglyph/events";
-import type { Queue } from "./queue.js";
+import type { Queue, QueueSendOptions } from "./queue.js";
 
 const ddbStreamEventSource = createDdbStreamEventSource();
 
@@ -91,18 +91,22 @@ const folderDeletedDoc = buildDocument({
 interface SendCall {
   message: unknown;
   messageGroupId?: string;
+  messageDeduplicationId?: string;
 }
 
 function queueSpy(): { queue: Queue<CloudEvent<unknown>>; sends: SendCall[]; errors: string[] } {
   const sends: SendCall[] = [];
   const errors: string[] = [];
   const queue = {
-    send: (message: CloudEvent<unknown>, options?: { messageGroupId?: string }): Promise<void> => {
+    send: (message: CloudEvent<unknown>, options?: QueueSendOptions): Promise<void> => {
       sends.push({
         message,
         ...(options?.messageGroupId === undefined
           ? {}
           : { messageGroupId: options.messageGroupId }),
+        ...(options?.messageDeduplicationId === undefined
+          ? {}
+          : { messageDeduplicationId: options.messageDeduplicationId }),
       });
       return Promise.resolve();
     },
@@ -131,6 +135,17 @@ describe("forwardStreamRecords", () => {
       itemId: "item-1",
       s3Key: "staging/v1/p1/notes/a.pdf",
     });
+  });
+
+  it("derives the FIFO deduplication id from the event identity (source+id)", async () => {
+    const { queue, sends } = queueSpy();
+
+    await forwardStreamRecords([streamRecord("INSERT", json(stagedDoc))], {
+      source: ddbStreamEventSource,
+      queue,
+    });
+
+    expect(sends[0]?.messageDeduplicationId).toBe("onedrive://profiles/p1#emission-1");
   });
 
   it("forwards deleted item events (s3Key string) as validated business events", async () => {
