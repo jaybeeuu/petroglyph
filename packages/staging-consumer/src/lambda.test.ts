@@ -1,0 +1,116 @@
+import { describe, expect, it, vi } from "vitest";
+import type { DynamoDBRecord, DynamoDBStreamEvent } from "aws-lambda";
+import type { CloudEvent } from "@petroglyph/events";
+import type { FileStagedData } from "@petroglyph/staging-contracts";
+import { createForwarderHandler } from "./lambda.js";
+import type { Queue } from "./queue.js";
+
+const stagedDoc = {
+  specversion: "1.0",
+  id: "emission-1",
+  source: "onedrive://profiles/p1",
+  type: "petroglyph.file.staged",
+  time: "2026-09-01T00:00:00.000Z",
+  datacontenttype: "application/json",
+  dataschema: "https://schemas.petroglyph.dev/file-staged/v1.json",
+  subject: "files/item-1",
+  data: {
+    profileId: "p1",
+    source: "onedrive",
+    changeType: "created",
+    itemId: "item-1",
+    name: "a.pdf",
+    relativePath: "notes",
+    s3Key: "staging/v1/p1/notes/a.pdf",
+    mimeType: "application/pdf",
+  },
+} satisfies CloudEvent<FileStagedData>;
+
+function createStreamEvent(overrides: Partial<DynamoDBRecord> = {}): DynamoDBRecord {
+  const { dynamodb: dynamodbOverrides, ...recordOverrides } = overrides;
+  return {
+    eventID: "shardId-000000000000:00000000000000000001",
+    eventName: "INSERT",
+    eventSource: "aws:dynamodb",
+    eventVersion: "1.1",
+    awsRegion: "eu-west-2",
+    ...recordOverrides,
+    dynamodb: {
+      SequenceNumber: "100001",
+      SizeBytes: 400,
+      StreamViewType: "NEW_IMAGE",
+      NewImage: { doc: { S: JSON.stringify(stagedDoc) } },
+      ...dynamodbOverrides,
+    },
+  };
+}
+
+function queueSpy(): Queue<CloudEvent<unknown>> & { send: ReturnType<typeof vi.fn> } {
+  return {
+    send: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+describe("forwarder lambda handler", () => {
+  it("forwards every sendable row and never lists skipped malformed rows as failures", async () => {
+    const queue = queueSpy();
+    const handler = createForwarderHandler({ queue });
+
+    const response = await handler({
+      Records: [
+        createStreamEvent(),
+        createStreamEvent({
+          eventID: "shardId-000000000000:00000000000000000002",
+          dynamodb: { SequenceNumber: "100002", NewImage: { doc: { S: "not-json{" } } },
+        }),
+      ],
+    });
+
+    expect(queue.send).toHaveBeenCalledTimes(1);
+    expect(response.batchItemFailures).toEqual([]);
+  });
+
+  it("marks a row whose send throws as a batch failure (Streams redelivers it), keeping others", async () => {
+    const queue = queueSpy();
+    queue.send.mockRejectedValueOnce(new Error("queue unavailable"));
+
+    const handler = createForwarderHandler({ queue });
+
+    const response = await handler({
+      Records: [
+        createStreamEvent(),
+        createStreamEvent({
+          eventID: "shardId-000000000000:00000000000000000002",
+          dynamodb: { SequenceNumber: "100002", NewImage: { doc: { S: "not-json{" } } },
+        }),
+      ],
+    });
+
+    expect(response.batchItemFailures).toEqual([{ itemIdentifier: "100001" }]);
+  });
+
+  it("ignores MODIFY/REMOVE rows on the immutable log without failing them", async () => {
+    const queue = queueSpy();
+    const event: DynamoDBStreamEvent = {
+      Records: [
+        createStreamEvent({
+          eventID: "s:3",
+          eventName: "MODIFY",
+          dynamodb: { SequenceNumber: "100003" },
+        }),
+        createStreamEvent({
+          eventID: "s:4",
+          eventName: "REMOVE",
+          dynamodb: { SequenceNumber: "100004" },
+        }),
+      ],
+    };
+
+    const handler = createForwarderHandler({ queue });
+
+    const response = await handler(event);
+
+    expect(queue.send).not.toHaveBeenCalled();
+    expect(response.batchItemFailures).toEqual([]);
+  });
+});
