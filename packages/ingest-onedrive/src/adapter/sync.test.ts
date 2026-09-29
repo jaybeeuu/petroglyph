@@ -48,6 +48,7 @@ function makeHarness(deltaItems: unknown[]): {
   store: StagedObjectStore;
   puts: unknown[];
   eventLog: EventLogWriter;
+  putIfAbsent: ReturnType<typeof vi.fn>;
   documents: CloudEvent<unknown>[];
   deltaState: ReturnType<typeof makeDeltaState>;
   deltaStateStore: DeltaStateStore;
@@ -85,6 +86,7 @@ function makeHarness(deltaItems: unknown[]): {
     store,
     puts,
     eventLog,
+    putIfAbsent,
     documents,
     deltaState,
     deltaStateStore,
@@ -203,5 +205,27 @@ describe("runDeltaSync — adapter driver", () => {
     expect(harness.documents).toEqual([]);
     expect(harness.puts).toEqual([]);
     expect(harness.deltaState.write).not.toHaveBeenCalled();
+  });
+
+  it("a duplicate emit (putIfAbsent false) is counted as skipped — never as landed or deleted", async () => {
+    const harness = makeHarness([
+      {
+        id: "item-1",
+        name: "a.pdf",
+        parentReference: { path: "/drive/root:/notes" },
+        file: { mimeType: "application/pdf" },
+      },
+      {
+        id: "item-3",
+        name: "c.pdf",
+        parentReference: { path: "/drive/root:/notes" },
+        deleted: {},
+      },
+    ]);
+    harness.putIfAbsent.mockResolvedValue(false);
+
+    const result = await harness.run();
+
+    expect(result).toEqual({ outcome: "completed", landed: 0, deleted: 0, skipped: 2 });
   });
 });
