@@ -1,6 +1,5 @@
 import type { SyncProfile } from "@petroglyph/core";
-import type { StagedObjectStore } from "@petroglyph/staging-contracts";
-import type { StagedIndexStore } from "@petroglyph/staging-consumer";
+import type { StagedIndexStore, StagedObjectStore } from "@petroglyph/staging-contracts";
 import { Hono } from "hono";
 import { z } from "zod";
 import { decodeFeedCursor, type FeedCursor } from "./cursor.js";

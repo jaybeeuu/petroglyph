@@ -1,6 +1,8 @@
 import { listProfiles } from "@petroglyph/core";
-import { createS3StagedObjectStore } from "@petroglyph/staging-contracts";
-import { createStagedIndexStoreDdb } from "@petroglyph/staging-consumer";
+import {
+  createS3StagedObjectStore,
+  createStagedIndexStoreDdb,
+} from "@petroglyph/staging-contracts";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { handle } from "hono/aws-lambda";

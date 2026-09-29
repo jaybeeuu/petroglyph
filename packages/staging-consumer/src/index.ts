@@ -1,9 +1,7 @@
-export { stagedRecordSchema } from "./record.js";
-export type { StagedRecord } from "./record.js";
+export { stagedRecordSchema, createStagedIndexStoreDdb } from "@petroglyph/staging-contracts";
+export type { StagedRecord, StagedIndexStore, FeedPage } from "@petroglyph/staging-contracts";
 export { applyStaged, applyDeleted } from "./index-apply.js";
 export type { ApplyStagedOptions } from "./index-apply.js";
-export { createStagedIndexStoreDdb } from "./index-store-ddb.js";
-export type { StagedIndexStore, FeedPage } from "./index-store.js";
 export { forwardStreamRecords } from "./forwarder.js";
 export type { ForwardDependencies, ForwardResult } from "./forwarder.js";
 export { createDdbStreamEventSource } from "./ddb-stream-event-source.js";

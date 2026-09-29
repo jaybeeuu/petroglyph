@@ -5,9 +5,12 @@ import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { DynamoDBClient, CreateTableCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { SyncProfile } from "@petroglyph/core";
-import { createS3StagedObjectStore } from "@petroglyph/staging-contracts";
-import type { StagedObjectStore } from "@petroglyph/staging-contracts";
-import { createStagedIndexStoreDdb, type StagedIndexStore } from "@petroglyph/staging-consumer";
+import {
+  createS3StagedObjectStore,
+  createStagedIndexStoreDdb,
+  type StagedIndexStore,
+  type StagedObjectStore,
+} from "@petroglyph/staging-contracts";
 import { Hono } from "hono";
 import { createFilesRouter, type FilesRouterVariables } from "./app.js";
 

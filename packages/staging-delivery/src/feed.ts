@@ -1,5 +1,8 @@
-import type { StagedObjectStore } from "@petroglyph/staging-contracts";
-import type { StagedIndexStore, StagedRecord } from "@petroglyph/staging-consumer";
+import type {
+  StagedIndexStore,
+  StagedObjectStore,
+  StagedRecord,
+} from "@petroglyph/staging-contracts";
 import { encodeFeedCursor } from "./cursor.js";
 
 export const DEFAULT_PAGE_SIZE = 25;

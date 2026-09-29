@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { StagedObjectStore } from "@petroglyph/staging-contracts";
-import type { StagedIndexStore, StagedRecord } from "@petroglyph/staging-consumer";
+import type {
+  StagedIndexStore,
+  StagedObjectStore,
+  StagedRecord,
+} from "@petroglyph/staging-contracts";
 import { DEFAULT_PAGE_SIZE, buildFeed, buildPresignedDisposition } from "./feed.js";
 
 const record: StagedRecord = {

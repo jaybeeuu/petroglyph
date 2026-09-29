@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { StagedObjectStore } from "@petroglyph/staging-contracts";
-import type { FileDeletedData, FileStagedData } from "@petroglyph/staging-contracts";
+import {
+  stagedRecordSchema,
+  type FileDeletedData,
+  type FileStagedData,
+  type StagedIndexStore,
+  type StagedObjectStore,
+  type StagedRecord,
+} from "@petroglyph/staging-contracts";
 import { applyDeleted, applyStaged } from "./index-apply.js";
-import { stagedRecordSchema, type StagedRecord } from "./record.js";
-import type { StagedIndexStore } from "./index-store.js";
 
 /** In-memory index store — unit fixture matching the interface contract. */
 function memStore(): StagedIndexStore & { records: StagedRecord[] } {

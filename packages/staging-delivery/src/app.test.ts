@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { SyncProfile } from "@petroglyph/core";
-import type { StagedObjectStore } from "@petroglyph/staging-contracts";
-import type { FeedPage, StagedIndexStore, StagedRecord } from "@petroglyph/staging-consumer";
+import type {
+  FeedPage,
+  StagedIndexStore,
+  StagedObjectStore,
+  StagedRecord,
+} from "@petroglyph/staging-contracts";
 import { createFilesRouter, type FilesRouterVariables } from "./app.js";
 import { encodeFeedCursor } from "./cursor.js";
 
