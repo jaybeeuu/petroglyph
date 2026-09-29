@@ -1,6 +1,6 @@
 import { SendMessageCommand } from "@aws-sdk/client-sqs";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 const mockSqsSend = vi.hoisted(() => vi.fn());
 
@@ -79,16 +79,15 @@ function makeNotificationBody(clientState = "expected-secret"): string {
   });
 }
 
+type ConsoleErrorSpy = MockInstance<(message: string, context: { [key: string]: unknown }) => void>;
+
 describe("ingest-onedrive handler", () => {
-  let restoreConsoleError = (): void => undefined;
+  let consoleErrorSpy: ConsoleErrorSpy;
 
   beforeEach(() => {
     vi.stubEnv("INGEST_QUEUE_URL", "https://sqs.example.com/queue");
     mockSqsSend.mockReset();
-    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    restoreConsoleError = () => {
-      consoleErrorSpy.mockRestore();
-    };
+    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     mockSqsSend.mockImplementation((command: unknown) => {
       if (command instanceof SendMessageCommand) {
@@ -101,7 +100,7 @@ describe("ingest-onedrive handler", () => {
 
   afterEach(async () => {
     await flushPendingNotificationWork();
-    restoreConsoleError();
+    consoleErrorSpy.mockRestore();
     vi.unstubAllEnvs();
   });
 
@@ -158,6 +157,13 @@ describe("ingest-onedrive handler", () => {
       body: JSON.stringify({ error: "Invalid notification payload" }),
     });
     expect(mockSqsSend).not.toHaveBeenCalled();
+
+    const [rejectionMessage, rejectionContext] = consoleErrorSpy.mock.calls[0] ?? [];
+    expect(rejectionMessage).toContain("schema mismatch");
+    expect(rejectionContext).toMatchObject({
+      reason: "schema-mismatch",
+      issues: [{ path: "value.0.resourceData.id" }],
+    });
   });
 
   it("returns 400 when the notification body is not valid JSON", async () => {
@@ -170,6 +176,58 @@ describe("ingest-onedrive handler", () => {
       statusCode: 400,
       body: JSON.stringify({ error: "Invalid notification payload" }),
     });
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("invalid JSON"),
+      expect.objectContaining({ reason: "invalid-json" }),
+    );
+  });
+
+  it("returns 400 and logs an empty body distinctly from malformed JSON", async () => {
+    const result = await handler({
+      body: "",
+      requestContext: makeRequestContext("POST"),
+    });
+
+    expect(result).toMatchObject({
+      statusCode: 400,
+      body: JSON.stringify({ error: "Invalid notification payload" }),
+    });
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("empty body"),
+      expect.objectContaining({ reason: "empty-body", byteLength: 0 }),
+    );
+  });
+
+  it("logs request details for a rejected notification", async () => {
+    const body = JSON.stringify({ value: [] });
+
+    await handler({
+      body,
+      headers: { "content-type": "application/json" },
+      isBase64Encoded: true,
+      requestContext: makeRequestContext("POST"),
+    });
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("schema mismatch"),
+      expect.objectContaining({
+        contentType: "application/json",
+        isBase64Encoded: true,
+        byteLength: Buffer.byteLength(body, "utf8"),
+      }),
+    );
+  });
+
+  it("does not log the raw notification body on rejection", async () => {
+    const body = JSON.stringify({ value: "sensitive-content" });
+
+    await handler({
+      body,
+      requestContext: makeRequestContext("POST"),
+    });
+
+    const [, loggedContext] = consoleErrorSpy.mock.calls[0] ?? [];
+    expect(JSON.stringify(loggedContext)).not.toContain("sensitive-content");
   });
 
   it("accepts non-blank clientState values from existing subscriptions", async () => {
