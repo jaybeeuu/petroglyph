@@ -6,9 +6,9 @@ import { z } from "zod";
 import { createTokenResolver, listProfiles } from "@petroglyph/core";
 import { DynamoDBEventLogWriter } from "@petroglyph/events";
 import { createS3StagedObjectStore } from "@petroglyph/staging-contracts";
-import { createTokenStoreDdb } from "./tokens/token-store-ddb.js";
-import { createTokenClient } from "./tokens/token-client.js";
-import { createGraphClient } from "./tokens/graph-client.js";
+import { DynamoDBTokenStore } from "./tokens/token-store-ddb.js";
+import { OAuthTokenClient } from "./tokens/token-client.js";
+import { MicrosoftGraphClient } from "./tokens/graph-client.js";
 import { createDeltaStateStoreDdb } from "./delta/delta-state-store-ddb.js";
 import { runDeltaSync, type DeltaSyncResult } from "./adapter/sync.js";
 
@@ -107,13 +107,14 @@ export function buildDeltaRunner(): (connection: {
         env("ONEDRIVE_CLIENT_SECRET_SSM_PATH", "/petroglyph/onedrive/client-secret"),
       ),
     ]);
+    const tokenClient = new OAuthTokenClient({ clientId, clientSecret });
     const resolver = createTokenResolver({
-      store: createTokenStoreDdb({
+      store: new DynamoDBTokenStore({
         client: docClient,
         tableName: requiredEnv("REFRESH_TOKENS_TABLE"),
       }),
       now: () => Math.floor(Date.now() / 1000),
-      requestTokens: createTokenClient({ clientId, clientSecret }),
+      requestTokens: (refreshToken) => tokenClient.requestTokens(refreshToken),
     });
 
     const profiles = (
@@ -123,7 +124,7 @@ export function buildDeltaRunner(): (connection: {
       .map((profile) => ({ profileId: profile.profileId, rootPath: profile.sourceFolderPath }));
 
     return runDeltaSync({
-      client: createGraphClient({
+      client: new MicrosoftGraphClient({
         baseUrl: env("GRAPH_BASE_URL", "https://graph.microsoft.com/v1.0"),
         resolveAccessToken: (options) =>
           resolver.resolveAccessToken(connection.userId, connection.provider, options),
