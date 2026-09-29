@@ -94,7 +94,7 @@ function requiredEnv(name: string): string {
 }
 
 const DEFAULT_DRIVE_ROOT_DELTA_URL =
-  "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,parentReference,file,folder,deleted";
+  "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,eTag,parentReference,file,folder,deleted";
 
 export function buildDeltaRunner(): (connection: {
   userId: string;

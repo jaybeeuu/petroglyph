@@ -161,6 +161,108 @@ describe("runDeltaSync — adapter driver", () => {
     expect(written?.[2]).toMatchObject({ deltaLink: DELTA_LINK });
   });
 
+  it("gives two updates to one item distinct emission ids, so both reach the event log", async () => {
+    const revisedItem = (eTag: string): unknown => ({
+      id: "item-1",
+      name: "a.pdf",
+      eTag,
+      parentReference: { path: "/drive/root:/notes" },
+      file: { mimeType: "application/pdf" },
+    });
+    const firstLink = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=first";
+    const secondLink = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=second";
+    const pages: { [url: string]: unknown } = {
+      [INITIAL_URL]: { value: [revisedItem("etag-1")], "@odata.deltaLink": firstLink },
+      [firstLink]: { value: [revisedItem("etag-2")], "@odata.deltaLink": secondLink },
+    };
+    const client: GraphClient = {
+      request(path) {
+        if (path.startsWith("/me/drive/items/")) {
+          return Promise.resolve(new Response(pdfBytes, { status: 200 }));
+        }
+        return Promise.resolve(jsonResponse(pages[path] ?? { value: [] }));
+      },
+    };
+
+    let stored: { deltaLink: string; updatedAt: string } | null = null;
+    const deltaStateStore: DeltaStateStore = {
+      read: () => Promise.resolve(stored),
+      write: (_userId, _provider, state) => {
+        stored = state;
+        return Promise.resolve();
+      },
+      clear: () => {
+        stored = null;
+        return Promise.resolve();
+      },
+    };
+    const store = {
+      put: vi.fn().mockResolvedValue({ versionId: "v1" }),
+    } as unknown as StagedObjectStore;
+
+    // The real log dedupes source+id at write; mirror it so a colliding id
+    // would silently drop the second, distinct update.
+    const written: CloudEvent<unknown>[] = [];
+    const seen = new Set<string>();
+    const eventLog: EventLogWriter = {
+      putIfAbsent(document) {
+        const key = `${document.source}:${document.id}`;
+        if (seen.has(key)) {
+          return Promise.resolve(false);
+        }
+        seen.add(key);
+        written.push(document);
+        return Promise.resolve(true);
+      },
+    };
+
+    const options = {
+      client,
+      store,
+      eventLog,
+      deltaStateStore,
+      connection: { userId: "u1", provider: "onedrive" },
+      profiles: [profile],
+      initialUrl: INITIAL_URL,
+    };
+    const firstRun = await runDeltaSync(options);
+    const secondRun = await runDeltaSync(options);
+
+    // Two delta runs over two edits of one item: each is a distinct event.
+    expect(firstRun).toEqual({ outcome: "completed", landed: 1, deleted: 0, skipped: 0 });
+    expect(secondRun).toEqual({ outcome: "completed", landed: 1, deleted: 0, skipped: 0 });
+    expect(written.map((document) => document.id)).toEqual([
+      "p1:item-1:file:etag-1",
+      "p1:item-1:file:etag-2",
+    ]);
+  });
+
+  it("falls back to the unversioned id and logs when a file change carries no eTag", async () => {
+    const harness = makeHarness([
+      {
+        id: "item-1",
+        name: "a.pdf",
+        parentReference: { path: "/drive/root:/notes" },
+        file: { mimeType: "application/pdf" },
+      },
+    ]);
+    const logs: string[] = [];
+
+    await runDeltaSync({
+      client: harness.client,
+      store: harness.store,
+      eventLog: harness.eventLog,
+      deltaStateStore: harness.deltaStateStore,
+      connection: { userId: "u1", provider: "onedrive" },
+      profiles: [profile],
+      initialUrl: INITIAL_URL,
+      log: (message) => logs.push(message),
+    });
+
+    expect(harness.documents.map((document) => document.id)).toEqual(["p1:item-1:file"]);
+    expect(logs).toContainEqual(expect.stringContaining("no eTag"));
+  });
+
   it("records a gate-rejected lie as skipped with no S3 put and no emit", async () => {
     const harness = makeHarness([
       {

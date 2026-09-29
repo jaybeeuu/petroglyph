@@ -40,14 +40,18 @@ type DriveItem = FileItem | FolderItem | DeletedItem;
 /**
  * Tolerant wire schema for a delta page item. Graph may return facets this
  * adapter does not model, so unknown keys are stripped rather than rejected.
- * The `file` facet is loose for the same reason and carries `eTag` — the
- * version dimension (`cTag` is not returned for folders, is unchanged by
- * metadata-only edits, and is omitted by delta on Create/Modify).
+ * `eTag` is a top-level driveItem property, not part of the `file` facet
+ * (`file` is `{ hashes, mimeType }` only). It is the version dimension
+ * (`cTag` is not returned for folders, is unchanged by metadata-only edits,
+ * and is omitted by delta on Create/Modify).
  */
 const driveItemSchema = z
   .object({
     id: z.string().min(1),
     name: z.string().min(1).optional(),
+    // Top-level driveItem version property. Graph never returns it on the
+    // `file` facet, so it must be read from here.
+    eTag: z.string().min(1).optional(),
     // Graph delta supplies `parentReference.path` for items inside the drive;
     // the drive-root folder omits it. A present parentReference without path
     // must not fail the whole page (the root folder is always present).
@@ -55,7 +59,6 @@ const driveItemSchema = z
     file: z
       .object({
         mimeType: z.string().min(1).optional(),
-        eTag: z.string().min(1).optional(),
       })
       .loose()
       .optional(),
@@ -85,7 +88,7 @@ const driveItemSchema = z
           ? {}
           : { parentPath: item.parentReference.path }),
         ...(item.file.mimeType === undefined ? {} : { mimeType: item.file.mimeType }),
-        ...(item.file.eTag === undefined ? {} : { eTag: item.file.eTag }),
+        ...(item.eTag === undefined ? {} : { eTag: item.eTag }),
       };
     }
     return {
