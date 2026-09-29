@@ -1,9 +1,9 @@
 import { SQSClient } from "@aws-sdk/client-sqs";
 import type { DynamoDBBatchResponse, DynamoDBRecord, DynamoDBStreamEvent } from "aws-lambda";
-import { createSqsQueue, type Queue } from "@petroglyph/core";
 import type { CloudEvent, EventSource } from "@petroglyph/events";
 import { createDdbStreamEventSource } from "./ddb-stream-event-source.js";
 import { forwardStreamRecords } from "./forwarder.js";
+import { createSqsQueue, type Queue } from "./queue.js";
 
 /**
  * 6.5.2.2 forwarder lambda: event-log DDB Streams → the staging domain's

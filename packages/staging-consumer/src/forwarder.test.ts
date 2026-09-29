@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DynamoDBRecord } from "aws-lambda";
-import type { Queue } from "@petroglyph/core";
 import { createDdbStreamEventSource } from "./ddb-stream-event-source.js";
 import { forwardStreamRecords } from "./forwarder.js";
 import type { CloudEvent, EventSource } from "@petroglyph/events";
+import type { Queue } from "./queue.js";
 
 const ddbStreamEventSource = createDdbStreamEventSource();
 

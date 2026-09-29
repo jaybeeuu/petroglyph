@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DynamoDBStreamEvent } from "aws-lambda";
-import type { Queue } from "@petroglyph/core";
 import type { CloudEvent } from "@petroglyph/events";
 import type { FileStagedData } from "@petroglyph/staging-contracts";
 import { createForwarderHandler } from "./lambda.js";
+import type { Queue } from "./queue.js";
 
 const stagedDoc = {
   specversion: "1.0",
