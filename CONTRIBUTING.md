@@ -137,7 +137,7 @@ Set the appropriate variables in your `.env` and follow the package-level instru
 The LocalStack suites cannot exercise presigned-URL signature enforcement: LocalStack 3.8.1 accepts a
 tampered signature even with `S3_SKIP_SIGNATURE_VALIDATION=0` (checksum / `UNSIGNED-PAYLOAD` quirks).
 The decision (petroglyph-f2ei) is to keep that case in
-`packages/core/src/aws/object-store.integration.test.ts` as a skipped canary that states its reason,
+`packages/staging-contracts/src/object-store.integration.test.ts` as a skipped canary that states its reason,
 rather than weaken the `403` assertion. The assertion runs whenever the endpoint enforces
 signatures, so pointing that test at a real bucket in an opt-in run is how the gap is closed.
 
