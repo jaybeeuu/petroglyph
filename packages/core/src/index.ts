@@ -13,3 +13,5 @@ export type { TokenResolver, TokenResolveOptions } from "./tokens/token-resolver
 export type { TokenRequestOutcome, ResolveOutcome } from "./tokens/token-resolver.js";
 export { tokenRecordSchema } from "./tokens/token-store.js";
 export type { TokenRecord, TokenStore } from "./tokens/token-store.js";
+export { createSqsQueue } from "./aws/queue.js";
+export type { Queue, QueueSendOptions } from "./aws/queue.js";
