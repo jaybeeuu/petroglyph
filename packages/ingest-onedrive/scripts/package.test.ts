@@ -44,6 +44,11 @@ describe("Ingest OneDrive Lambda packaging smoke test", () => {
     expect(existsSync(indexPath)).toBe(true);
   });
 
+  it("contains dist/lambda.js", () => {
+    const lambdaPath = join(extractDir, "dist", "lambda.js");
+    expect(existsSync(lambdaPath)).toBe(true);
+  });
+
   it("contains package.json", () => {
     const pkgPath = join(extractDir, "package.json");
     expect(existsSync(pkgPath)).toBe(true);
@@ -53,6 +58,15 @@ describe("Ingest OneDrive Lambda packaging smoke test", () => {
     const indexPath = join(extractDir, "dist", "index.js");
     const indexUrl = new URL(`file://${indexPath}`);
     const module = (await import(indexUrl.href)) as { handler?: unknown };
+
+    expect(module).toHaveProperty("handler");
+    expect(typeof module.handler).toBe("function");
+  }, 15_000);
+
+  it("dist/lambda.js can be loaded by Node and exports handler", async () => {
+    const lambdaPath = join(extractDir, "dist", "lambda.js");
+    const lambdaUrl = new URL(`file://${lambdaPath}`);
+    const module = (await import(lambdaUrl.href)) as { handler?: unknown };
 
     expect(module).toHaveProperty("handler");
     expect(typeof module.handler).toBe("function");
