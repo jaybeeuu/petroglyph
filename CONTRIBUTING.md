@@ -124,7 +124,8 @@ Some integration tests exercise real services through Testcontainers — for exa
 DynamoDB suite in `packages/events`. **Docker is a hard requirement** for these tests and the daemon
 must be running and reachable. A missing or unreachable Docker fails the suite rather than skipping
 it, so a red run means fixing the environment — start the daemon or provision it in CI — not
-skipping the suite. A test that never runs proves nothing.
+skipping the suite. A test that never runs proves nothing. See [docs/testing.md](docs/testing.md)
+for how to detect Docker and what to do when it is absent.
 
 ### Optional local-against-remote checks
 

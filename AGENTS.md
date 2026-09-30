@@ -13,6 +13,19 @@ Never put working documents in `docs/` or any other tracked directory.
   OAuth responses. Do not add other shape-validation libraries; `@jaybeeuu/is` has been removed
   from every package and must not be reintroduced.
 
+## Testing
+
+Docker is a mandatory development dependency — container-backed integration tests run real services
+through Testcontainers and LocalStack, so `pnpm test` needs a running, reachable Docker daemon.
+
+**Integration tests MUST fail, never skip, when Docker is unavailable.** Do not add a
+`dockerAvailable()` guard or `describe.skipIf(!canRun)`: a skipped suite reports green while
+proving nothing. Detect Docker with `docker info`; when it fails, start the daemon (or provision it
+in CI) instead of skipping.
+
+Read the `style-tests` skill before writing or reviewing any test. See [docs/testing.md](docs/testing.md)
+for test levels, detection, and recovery.
+
 ## Generic type naming
 
 - Name generic type parameters after their role/payload — `Envelope<Payload>`, `Queue<Message>` —
