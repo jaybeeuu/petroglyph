@@ -105,6 +105,12 @@ describe("buildFeed", () => {
 });
 
 describe("buildPresignedDisposition", () => {
+  it("percent-encodes filename characters that are invalid RFC 5987 attr-chars", () => {
+    expect(buildPresignedDisposition("a(b)*'.pdf")).toBe(
+      "attachment; filename*=UTF-8''a%28b%29%2A%27.pdf",
+    );
+  });
+
   it("encodes the filename for a Content-Disposition attachment override", () => {
     expect(buildPresignedDisposition("a b.pdf")).toBe("attachment; filename*=UTF-8''a%20b.pdf");
   });

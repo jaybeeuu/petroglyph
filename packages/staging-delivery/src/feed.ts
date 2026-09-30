@@ -86,7 +86,26 @@ export async function resolveOwnedEntry(options: {
 
 /** Content-Disposition override so the download lands as `<name>` regardless of s3Key. */
 export function buildPresignedDisposition(name: string): string {
-  return `attachment; filename*=UTF-8''${encodeURIComponent(name)}`;
+  return `attachment; filename*=UTF-8''${encodeRfc5987(name)}`;
+}
+
+/** RFC 5987 attr-char: ALPHA / DIGIT / ! # $ & + - . ^ _ ` | ~ */
+const RFC_5987_ATTR_CHAR = /^[A-Za-z0-9!#$&+.^_`|~-]$/;
+
+/**
+ * Percent-encodes UTF-8 bytes outside the RFC 5987 attr-char set.
+ * `encodeURIComponent` leaves `* ' ( )` unescaped, none of which are valid
+ * attr-chars, so filenames containing them would produce a malformed header.
+ */
+function encodeRfc5987(value: string): string {
+  return [...new TextEncoder().encode(value)]
+    .map((byte) => {
+      const char = String.fromCharCode(byte);
+      return RFC_5987_ATTR_CHAR.test(char)
+        ? char
+        : `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+    })
+    .join("");
 }
 
 async function entryFromRecord(
