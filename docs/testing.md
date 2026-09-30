@@ -42,8 +42,3 @@ signatures, not because an environment is missing.
 | Real-cloud integration (AWS, Entra, OneDrive)  | No              | No — opt-in         |
 
 [CONTRIBUTING.md](../CONTRIBUTING.md) holds the workspace commands and package script conventions.
-
-## Writing tests
-
-Read the `style-tests` skill before writing or reviewing any test. It defines assertion strategy,
-mock discipline, test-data construction, and the ban on skipped tests that the rule above enforces.
