@@ -202,6 +202,19 @@ describe("GET /files feed", () => {
     expect(await res.json()).toEqual({ error: "Invalid files cursor" });
   });
 
+  it("rejects a cursor pinned to a non-active owned profile (active-profile scoping)", async () => {
+    const { app } = buildApp({
+      profiles: [profile(), profile({ profileId: "p2", active: false })],
+      index: new MemoryIndex(),
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    const nonActive = encodeFeedCursor({ profileId: "p2", itemId: "item-1" });
+    const res = await app.request(`/files?after=${encodeURIComponent(nonActive)}`);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid files cursor" });
+  });
+
   it("rejects a malformed cursor and an out-of-range limit", async () => {
     const { app } = buildApp({
       profiles: [profile()],

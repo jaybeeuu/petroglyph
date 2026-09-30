@@ -59,10 +59,10 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
       } catch {
         return c.json(INVALID_CURSOR, 400);
       }
-      if (!profiles.some((p) => p.profileId === decoded.profileId)) {
+      if (decoded.profileId !== activeProfile.profileId) {
         return c.json(INVALID_CURSOR, 400);
       }
-      profileId = decoded.profileId;
+      profileId = activeProfile.profileId;
       cursor = decoded.itemId;
     }
 
