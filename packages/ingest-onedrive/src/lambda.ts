@@ -9,7 +9,7 @@ import { S3StagedObjectStore } from "@petroglyph/staging-contracts";
 import { DynamoDBTokenStore } from "./tokens/token-store-ddb.js";
 import { OAuthTokenClient } from "./tokens/token-client.js";
 import { MicrosoftGraphClient } from "./tokens/graph-client.js";
-import { createDeltaStateStoreDdb } from "./delta/delta-state-store-ddb.js";
+import { DynamoDBDeltaStateStore } from "./delta/delta-state-store-ddb.js";
 import { runDeltaSync, type DeltaSyncResult } from "./adapter/sync.js";
 
 const deltaTriggerSchema = z.object({
@@ -137,7 +137,7 @@ export function buildDeltaRunner(): (connection: {
         client: docClient,
         tableName: requiredEnv("EVENT_LOG_TABLE"),
       }),
-      deltaStateStore: createDeltaStateStoreDdb({
+      deltaStateStore: new DynamoDBDeltaStateStore({
         client: docClient,
         tableName: requiredEnv("DELTA_TOKENS_TABLE"),
       }),
