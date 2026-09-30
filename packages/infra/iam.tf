@@ -360,3 +360,195 @@ resource "aws_iam_role_policy" "petroglyph_sync_worker_policy" {
     ]
   })
 }
+
+# ---------------------------------------------------------------------------
+# Staging forwarder role (6.5.2.2): event-log stream read → staged-events send
+# ---------------------------------------------------------------------------
+
+resource "aws_iam_role" "petroglyph_staging_forwarder_role" {
+  name               = "petroglyph-staging-forwarder-${terraform.workspace}"
+  assume_role_policy = local.lambda_assume_role_policy
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+resource "aws_iam_role_policy" "petroglyph_staging_forwarder_policy" {
+  name = "petroglyph-staging-forwarder-policy"
+  role = aws_iam_role.petroglyph_staging_forwarder_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "DynamoDBReadEventLogStream"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:DescribeStream",
+          "dynamodb:GetRecords",
+          "dynamodb:GetShardIterator",
+          "dynamodb:ListStreams",
+        ]
+        Resource = [
+          aws_dynamodb_table.event_log.arn,
+          "${aws_dynamodb_table.event_log.arn}/stream/*",
+        ]
+      },
+      {
+        Sid      = "SQSSendStagedEvents"
+        Effect   = "Allow"
+        Action   = "sqs:SendMessage"
+        Resource = aws_sqs_queue.staged_events.arn
+      },
+      {
+        Sid    = "CloudWatchLogsWrite"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "${local.lambda_log_group_arn_prefix}/petroglyph-staging-forwarder-${terraform.workspace}:*"
+      },
+    ]
+  })
+}
+
+# ---------------------------------------------------------------------------
+# OneDrive adapter role (6.5.1.1): vault + delta state + profiles + event log,
+# S3 put for landing, delta-trigger queue read, onedrive SSM secrets
+# ---------------------------------------------------------------------------
+
+resource "aws_iam_role" "petroglyph_adapter_onedrive_role" {
+  name               = "petroglyph-adapter-onedrive-${terraform.workspace}"
+  assume_role_policy = local.lambda_assume_role_policy
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+resource "aws_iam_role_policy" "petroglyph_adapter_onedrive_policy" {
+  name = "petroglyph-adapter-onedrive-policy"
+  role = aws_iam_role.petroglyph_adapter_onedrive_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "DynamoDBAdapterReadWrite"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+        ]
+        Resource = [
+          aws_dynamodb_table.token_vaults.arn,
+          aws_dynamodb_table.delta_states.arn,
+          aws_dynamodb_table.refresh_tokens.arn,
+          aws_dynamodb_table.delta_tokens.arn,
+          aws_dynamodb_table.event_log.arn,
+          aws_dynamodb_table.sync_profiles.arn,
+        ]
+      },
+      {
+        Sid      = "S3PutStagedObjects"
+        Effect   = "Allow"
+        Action   = "s3:PutObject"
+        Resource = "${local.staged_bucket_arn}/*"
+      },
+      {
+        Sid    = "SQSReadDeltaTriggerQueue"
+        Effect = "Allow"
+        Action = [
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:ReceiveMessage",
+        ]
+        Resource = aws_sqs_queue.delta_trigger.arn
+      },
+      {
+        Sid    = "SSMReadOnedriveSecrets"
+        Effect = "Allow"
+        Action = "ssm:GetParameter"
+        Resource = "${local.ssm_arn_prefix}/petroglyph/onedrive/*"
+      },
+      {
+        Sid    = "CloudWatchLogsWrite"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "${local.lambda_log_group_arn_prefix}/petroglyph-adapter-onedrive-${terraform.workspace}:*"
+      },
+    ]
+  })
+}
+
+# ---------------------------------------------------------------------------
+# Staging delivery role (6.5.2.4): index + profiles read, presign from stored
+# s3Key, JWT public key via SSM
+# ---------------------------------------------------------------------------
+
+resource "aws_iam_role" "petroglyph_staging_delivery_role" {
+  name               = "petroglyph-staging-delivery-${terraform.workspace}"
+  assume_role_policy = local.lambda_assume_role_policy
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+resource "aws_iam_role_policy" "petroglyph_staging_delivery_policy" {
+  name = "petroglyph-staging-delivery-policy"
+  role = aws_iam_role.petroglyph_staging_delivery_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "DynamoDBIndexAndProfilesRead"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:Query",
+        ]
+        Resource = [
+          aws_dynamodb_table.staged_records.arn,
+          aws_dynamodb_table.sync_profiles.arn,
+        ]
+      },
+      {
+        Sid    = "S3PresignStagedObjects"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket",
+        ]
+        Resource = [
+          local.staged_bucket_arn,
+          "${local.staged_bucket_arn}/*",
+        ]
+      },
+      {
+        Sid    = "SSMReadJwtPublicKey"
+        Effect = "Allow"
+        Action = "ssm:GetParameter"
+        Resource = "${local.ssm_arn_prefix}/petroglyph/jwt/*"
+      },
+      {
+        Sid    = "CloudWatchLogsWrite"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "${local.lambda_log_group_arn_prefix}/petroglyph-staging-delivery-${terraform.workspace}:*"
+      },
+    ]
+  })
+}

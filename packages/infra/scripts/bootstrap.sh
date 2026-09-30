@@ -281,7 +281,11 @@ POLICY_DOC=$(cat << EOF
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-profiles-production",
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-file-records-production",
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-tokens-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-jobs-production"
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-jobs-production",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-event-log-production",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-staged-records-production",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-token-vaults-production",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-states-production"
       ]
     },
     {

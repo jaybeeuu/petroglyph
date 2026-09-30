@@ -104,7 +104,7 @@ Once applied, the following values are needed as GitHub Actions secrets on the `
 | `TF_STATE_BUCKET`        | `petroglyph-terraform-state-<ACCOUNT_ID>`            |
 | `LAMBDA_ARTIFACT_BUCKET` | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`           |
 
-Configure the `production` environment so only `main` can deploy, and require deployment review before the `deploy` job proceeds. See [CONTRIBUTING.md](../CONTRIBUTING.md#cd-secrets) for how to configure these secrets.
+Configure the `production` environment so only `main` can deploy. There is no separate deployment-review gate on the environment: merging a PR to `main` deploys immediately, so **the PR review and merge is the deployment gate** — review the `.tf` diff knowing it will apply on merge. See [CONTRIBUTING.md](../CONTRIBUTING.md#cd-secrets) for how to configure these secrets.
 
 PR-time plans read their credentials from a separate `terraform-plan` environment. It must have **no branch restriction** (the job runs on pull requests from any branch) and hold the same state/artifact bucket names plus the read-only role ARN:
 
@@ -122,7 +122,7 @@ Until `AWS_PLAN_ROLE_ARN` is set, the terraform plan job skips cleanly rather th
 
 Petroglyph Lambdas are deployed from zipped artifacts stored in S3. Any Lambda package must include its runtime dependencies in the zip — bare `node_modules` are **not** deployed.
 
-- **Bundled Lambdas (ESM)**: The API, ingest-onedrive, sync-worker and sync-relay Lambdas are bundled with esbuild to **ESM** output so runtime dependencies (for example `zod`) are included.
+- **Bundled Lambdas (ESM)**: The API, ingest-onedrive, sync-worker, sync-relay, processor, staging-consumer (staging forwarder) and staging-delivery Lambdas are bundled with esbuild to **ESM** output so runtime dependencies (for example `zod`) are included. The ingest-onedrive zip carries **two esbuild entries** — the webhook receiver (`dist/index.handler`) and the OneDrive adapter (`dist/lambda.handler`) — from a single `pnpm package` run.
 - **Non-Lambda packages (ESM)**: Keep these as bare **ESM** modules to preserve tree-shaking. Do not emit CommonJS builds.
 - **Packaging entrypoint**: `pnpm package` runs each package’s `package` script (via `--if-present`) before deploy.
 
