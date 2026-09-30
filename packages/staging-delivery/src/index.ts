@@ -17,9 +17,8 @@ function syncProfilesTableName(): string {
 
 function stagedBucketName(): string {
   const bucket = process.env["STAGED_PDFS_BUCKET"];
-  if (bucket === undefined) {
-    console.warn("[staging-delivery] STAGED_PDFS_BUCKET not set — presigned URLs will fail");
-    return "";
+  if (bucket === undefined || bucket === "") {
+    throw new Error("STAGED_PDFS_BUCKET env var not set");
   }
   return bucket;
 }
@@ -58,6 +57,14 @@ export function createApp(): Hono {
   return app;
 }
 
-const app = createApp();
+let cachedHandler: ReturnType<typeof handle> | undefined;
 
-export const handler = handle(app);
+/**
+ * Lambda entrypoint. The app is built on first invocation, so missing
+ * configuration fails fast at cold start without breaking imports of the
+ * factory (tests build the app after stubbing env).
+ */
+export const handler: ReturnType<typeof handle> = (event, lambdaContext) => {
+  cachedHandler ??= handle(createApp());
+  return cachedHandler(event, lambdaContext);
+};
