@@ -34,12 +34,12 @@ interface FeedScope {
 
 const INVALID_CURSOR = { error: "Invalid files cursor" };
 
-function parseFeedQuery(query: Record<string, string>): FeedQueryResult {
+function parseFeedQuery(query: { [key: string]: string }): FeedQueryResult {
   const parsed = feedQuerySchema.safeParse(query);
   return parsed.success ? { ok: true, data: parsed.data } : { ok: false, error: parsed.error };
 }
 
-const FEED_QUERY_CONSTRAINTS: Record<string, string> = {
+const FEED_QUERY_CONSTRAINTS: { [field: string]: string } = {
   after: "must be a non-empty string",
   limit: `must be an integer between 1 and ${MAX_PAGE_SIZE}`,
 };
