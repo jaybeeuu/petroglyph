@@ -228,12 +228,6 @@ importers:
       '@aws-sdk/client-sqs':
         specifier: ^3.1029.0
         version: 3.1029.0
-      '@aws-sdk/lib-dynamodb':
-        specifier: ^3.1024.0
-        version: 3.1024.0(@aws-sdk/client-dynamodb@3.1024.0)
-      '@aws-sdk/util-dynamodb':
-        specifier: ^3.996.2
-        version: 3.996.2(@aws-sdk/client-dynamodb@3.1024.0)
       '@petroglyph/core':
         specifier: workspace:*
         version: link:../core
@@ -247,9 +241,6 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
-      '@aws-sdk/client-dynamodb':
-        specifier: ^3.1024.0
-        version: 3.1024.0
       '@types/aws-lambda':
         specifier: ^8.10.145
         version: 8.10.161
@@ -299,9 +290,6 @@ importers:
       '@aws-sdk/client-dynamodb':
         specifier: ^3.1024.0
         version: 3.1024.0
-      '@aws-sdk/client-s3':
-        specifier: ^3.1024.0
-        version: 3.1029.0
       '@aws-sdk/client-ssm':
         specifier: ^3.1024.0
         version: 3.1024.0
@@ -324,6 +312,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.1024.0
+        version: 3.1029.0
       '@types/aws-lambda':
         specifier: ^8.10.145
         version: 8.10.161
