@@ -10,11 +10,10 @@ vi.mock("./db.js", () => ({
 import { createApp } from "./index.js";
 import { resetKeyCache } from "./jwt.js";
 
-const app = createApp();
-
 describe("staging delivery auth middleware", () => {
   let privateKey: CryptoKey;
   let publicKeyPem: string;
+  let app: ReturnType<typeof createApp>;
 
   beforeAll(async () => {
     const keyPair = await generateKeyPair("RS256");
@@ -25,6 +24,7 @@ describe("staging delivery auth middleware", () => {
   beforeEach(() => {
     vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
     vi.stubEnv("STAGED_PDFS_BUCKET", "petroglyph-staged-pdfs-test");
+    app = createApp();
   });
 
   afterEach(() => {
