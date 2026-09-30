@@ -215,6 +215,34 @@ describe("GET /files feed", () => {
     expect(await res.json()).toEqual({ error: "Invalid files cursor" });
   });
 
+  it("names the limit field when the feed limit is out of range", async () => {
+    const { app } = buildApp({
+      profiles: [profile()],
+      index: new MemoryIndex(),
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    const res = await app.request("/files?limit=0");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Invalid files query: limit must be an integer between 1 and 100",
+    });
+  });
+
+  it("names the after field when the cursor is malformed", async () => {
+    const { app } = buildApp({
+      profiles: [profile()],
+      index: new MemoryIndex(),
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    const res = await app.request("/files?after=");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Invalid files query: after must be a non-empty string",
+    });
+  });
+
   it("rejects a malformed cursor and an out-of-range limit", async () => {
     const { app } = buildApp({
       profiles: [profile()],

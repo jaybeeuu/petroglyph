@@ -39,6 +39,20 @@ function parseFeedQuery(query: Record<string, string>): FeedQueryResult {
   return parsed.success ? { ok: true, data: parsed.data } : { ok: false, error: parsed.error };
 }
 
+const FEED_QUERY_CONSTRAINTS: Record<string, string> = {
+  after: "must be a non-empty string",
+  limit: `must be an integer between 1 and ${MAX_PAGE_SIZE}`,
+};
+
+/** Reports the offending field and its constraint — never the raw input. */
+function describeFeedQueryError(error: z.ZodError): string {
+  const fields = [...new Set(error.issues.map((issue) => issue.path.join(".") || "query"))];
+  const details = fields.map(
+    (field) => `${field} ${FEED_QUERY_CONSTRAINTS[field] ?? "is invalid"}`,
+  );
+  return `Invalid files query: ${details.join("; ")}`;
+}
+
 /**
  * Pins the whole pagination run to the active profile: a cursor naming any
  * other profile — or one that will not decode — is rejected, so a mid-
@@ -79,7 +93,7 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
   app.get("/files", async (c) => {
     const query = parseFeedQuery(c.req.query());
     if (!query.ok) {
-      return c.json({ error: "Invalid files query" }, 400);
+      return c.json({ error: describeFeedQueryError(query.error) }, 400);
     }
 
     const profiles = await deps.listProfiles(c.get("userId"));
