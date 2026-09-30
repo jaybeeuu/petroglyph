@@ -1,8 +1,5 @@
 import { listProfiles } from "@petroglyph/core";
-import {
-  createS3StagedObjectStore,
-  createStagedIndexStoreDdb,
-} from "@petroglyph/staging-contracts";
+import { createStagedIndexStoreDdb, S3StagedObjectStore } from "@petroglyph/staging-contracts";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { handle } from "hono/aws-lambda";
@@ -51,7 +48,7 @@ export function createApp(): Hono {
         client: docClient,
         tableName: fileRecordsTableName(),
       }),
-      objectStore: createS3StagedObjectStore({
+      objectStore: new S3StagedObjectStore({
         bucket: stagedBucketName(),
         region: process.env["AWS_REGION"] ?? "eu-west-2",
       }),

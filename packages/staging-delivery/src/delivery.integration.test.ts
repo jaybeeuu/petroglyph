@@ -6,8 +6,8 @@ import { DynamoDBClient, CreateTableCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { SyncProfile } from "@petroglyph/core";
 import {
-  createS3StagedObjectStore,
   createStagedIndexStoreDdb,
+  S3StagedObjectStore,
   type StagedIndexStore,
   type StagedObjectStore,
 } from "@petroglyph/staging-contracts";
@@ -72,7 +72,7 @@ describe.skipIf(!canRun)("delivery surface /files against LocalStack S3 + DDB", 
       credentials,
     });
     await s3Client.send(new CreateBucketCommand({ Bucket: BUCKET }));
-    objectStore = createS3StagedObjectStore({
+    objectStore = new S3StagedObjectStore({
       bucket: BUCKET,
       region: "eu-west-2",
       client: s3Client,
