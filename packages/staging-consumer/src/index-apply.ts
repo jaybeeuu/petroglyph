@@ -1,10 +1,10 @@
 import type {
   FileDeletedData,
   FileStagedData,
+  StagedIndexStore,
   StagedObjectStore,
+  StagedRecord,
 } from "@petroglyph/staging-contracts";
-import type { StagedIndexStore } from "./index-store.js";
-import type { StagedRecord } from "./record.js";
 
 export interface ApplyStagedOptions {
   createdAt?: string;

@@ -17,3 +17,7 @@ export type {
   StagedObjectStorePresignGetOptions,
   StagedObjectStorePutResult,
 } from "./object-store.js";
+export { stagedRecordSchema } from "./record.js";
+export type { StagedRecord } from "./record.js";
+export { createStagedIndexStoreDdb } from "./index-store-ddb.js";
+export type { FeedPage, StagedIndexStore } from "./index-store.js";
