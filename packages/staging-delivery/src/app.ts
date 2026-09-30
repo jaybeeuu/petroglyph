@@ -22,7 +22,48 @@ const feedQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
 });
 
+type FeedQuery = z.infer<typeof feedQuerySchema>;
+
+type FeedQueryResult = { ok: true; data: FeedQuery } | { ok: false; error: z.ZodError };
+
+/** The profile a page is read from, plus the index cursor when resuming. */
+interface FeedScope {
+  profileId: string;
+  cursor?: string;
+}
+
 const INVALID_CURSOR = { error: "Invalid files cursor" };
+
+function parseFeedQuery(query: Record<string, string>): FeedQueryResult {
+  const parsed = feedQuerySchema.safeParse(query);
+  return parsed.success ? { ok: true, data: parsed.data } : { ok: false, error: parsed.error };
+}
+
+/**
+ * Pins the whole pagination run to the active profile: a cursor naming any
+ * other profile — or one that will not decode — is rejected, so a mid-
+ * pagination active-profile change invalidates the page rather than silently
+ * re-scoping the feed.
+ */
+function resolveFeedScope(query: FeedQuery, activeProfileId: string): FeedScope | null {
+  if (query.after === undefined) {
+    return { profileId: activeProfileId };
+  }
+  let decoded: FeedCursor;
+  try {
+    decoded = decodeFeedCursor(query.after);
+  } catch {
+    return null;
+  }
+  if (decoded.profileId !== activeProfileId) {
+    return null;
+  }
+  return { profileId: activeProfileId, cursor: decoded.itemId };
+}
+
+function presignTtlOptions(ttlSeconds: number | undefined): { presignTtlSeconds?: number } {
+  return ttlSeconds === undefined ? {} : { presignTtlSeconds: ttlSeconds };
+}
 
 /**
  * 6ra.5.2.4 /files staging delivery surface — the plugin's ONLY file-flow
@@ -36,11 +77,8 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
   const app = new Hono<{ Variables: FilesRouterVariables }>();
 
   app.get("/files", async (c) => {
-    const query = feedQuerySchema.safeParse({
-      after: c.req.query("after"),
-      limit: c.req.query("limit"),
-    });
-    if (!query.success) {
+    const query = parseFeedQuery(c.req.query());
+    if (!query.ok) {
       return c.json({ error: "Invalid files query" }, 400);
     }
 
@@ -50,31 +88,18 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
       return c.json({ files: [], nextToken: null });
     }
 
-    let profileId = activeProfile.profileId;
-    let cursor: string | undefined;
-    if (query.data.after !== undefined) {
-      let decoded: FeedCursor;
-      try {
-        decoded = decodeFeedCursor(query.data.after);
-      } catch {
-        return c.json(INVALID_CURSOR, 400);
-      }
-      if (decoded.profileId !== activeProfile.profileId) {
-        return c.json(INVALID_CURSOR, 400);
-      }
-      profileId = activeProfile.profileId;
-      cursor = decoded.itemId;
+    const scope = resolveFeedScope(query.data, activeProfile.profileId);
+    if (scope === null) {
+      return c.json(INVALID_CURSOR, 400);
     }
 
     const result = await buildFeed({
       index: deps.index,
       objectStore: deps.objectStore,
-      profileId,
+      profileId: scope.profileId,
       limit: query.data.limit,
-      ...(cursor === undefined ? {} : { cursor }),
-      ...(deps.presignTtlSeconds === undefined
-        ? {}
-        : { presignTtlSeconds: deps.presignTtlSeconds }),
+      ...(scope.cursor === undefined ? {} : { cursor: scope.cursor }),
+      ...presignTtlOptions(deps.presignTtlSeconds),
     });
     return c.json({ files: result.files, nextToken: result.nextToken });
   });
@@ -90,9 +115,7 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
       objectStore: deps.objectStore,
       profileIds: profiles.map((p) => p.profileId),
       itemId: c.req.param("itemId"),
-      ...(deps.presignTtlSeconds === undefined
-        ? {}
-        : { presignTtlSeconds: deps.presignTtlSeconds }),
+      ...presignTtlOptions(deps.presignTtlSeconds),
     });
     if (entry === null) {
       // 404, never 403: the record's existence is not leaked across users.
