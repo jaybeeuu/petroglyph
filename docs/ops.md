@@ -85,13 +85,16 @@ This creates and verifies the following (bucket names embed your AWS account ID 
 | DynamoDB table     | `petroglyph-terraform-locks`                  | Terraform state locking                                                                |
 | S3 bucket          | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`    | Lambda deployment ZIP artifacts                                                        |
 | IAM managed policy | `petroglyph-github-actions-deploy-production` | Deploy role permissions; bootstrap.sh converges it to the checked-in document on drift |
+| IAM role           | `petroglyph-github-actions-plan`              | Read-only role assumed by the PR-time terraform plan workflow                          |
 
 ### Guardrails
 
 - **Granular policy**: the deploy managed policy (`petroglyph-github-actions-deploy-production`) is explicit-actions-only. Never add `"Action": "*"` or wildcard resources — every required permission is named by hand in `packages/infra/scripts/bootstrap.sh` (e.g. `DynamoDbProjectTables`, `LambdaProjectFunctions`).
 - **Resource additions extend bootstrap.sh in the same change**: any work adding an AWS resource under `packages/infra/*.tf` must add the required ARNs/actions to `bootstrap.sh` in the same commit.
 - **Single source of truth**: `bootstrap.sh` is the source of truth for the deploy policy; the live policy converges to the checked-in document via the node drift-check (commit 4a888fb). Re-run `bootstrap.sh` after any policy change.
-- **Terraform contract checks run in CD, not at PR time**: no unit test executes terraform or asserts `.tf` resource contracts. The `validate` test job and the `deploy` build job do not install terraform; HCL validity and resource contracts (SQS attributes, IAM Sids/Actions, Lambda env wiring, outputs) are first checked by `terraform init`/`apply` in the CD `deploy` job, after merge. `apply` catches syntax and configuration errors but not semantic regressions — a dropped DLQ alarm or a widened IAM statement applies cleanly — so review `.tf` diffs with that in mind.
+- **Terraform checks run at PR time**: `.github/workflows/terraform.yml` runs on pull requests that touch `packages/infra/**/*.tf` and performs `terraform fmt -check`, `terraform init`, `terraform validate` and a read-only `terraform plan -refresh=false -lock=false -detailed-exitcode` with the same `-var` set as the CD apply (non-empty artifact bucket, placeholder keys). The plan diff is posted to the PR as a collapsed comment that is updated in place. The job fails only when the plan itself errors — exit code 2 (changes present) is the normal outcome for an infra PR. Formatting drift in files the PR does not touch is reported as a warning rather than a failure, so pre-existing drift does not block unrelated changes.
+- **Plan role is read-only**: the PR job assumes `petroglyph-github-actions-plan`, trusted for `repo:jaybeeuu/petroglyph:environment:terraform-plan`. Its only permission is reading the Terraform state bucket (`s3:GetObject`, `s3:ListBucket`), so a pull request can never create, update or delete infrastructure, and it cannot assume the production deploy role. Because it holds no application-resource permissions, the PR plan does not replace review: a dropped DLQ alarm or a widened IAM statement still plans cleanly.
+- **PR plan skips without credentials**: fork PRs and PRs raised before the `terraform-plan` environment is configured have no plan secrets, so the job skips cleanly instead of failing.
 
 Once applied, the following values are needed as GitHub Actions secrets on the `production` environment for CD:
 
@@ -102,6 +105,16 @@ Once applied, the following values are needed as GitHub Actions secrets on the `
 | `LAMBDA_ARTIFACT_BUCKET` | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`           |
 
 Configure the `production` environment so only `main` can deploy, and require deployment review before the `deploy` job proceeds. See [CONTRIBUTING.md](../CONTRIBUTING.md#cd-secrets) for how to configure these secrets.
+
+PR-time plans read their credentials from a separate `terraform-plan` environment. It must have **no branch restriction** (the job runs on pull requests from any branch) and hold the same state/artifact bucket names plus the read-only role ARN:
+
+| Secret                   | Description                                    |
+| ------------------------ | ---------------------------------------------- |
+| `AWS_PLAN_ROLE_ARN`      | ARN of the read-only IAM role assumed via OIDC |
+| `TF_STATE_BUCKET`        | `petroglyph-terraform-state-<ACCOUNT_ID>`      |
+| `LAMBDA_ARTIFACT_BUCKET` | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`     |
+
+Until `AWS_PLAN_ROLE_ARN` is set, the terraform plan job skips cleanly rather than failing. Creating the environment (and running `bootstrap.sh` to create `petroglyph-github-actions-plan`) is a manual step.
 
 ---
 
