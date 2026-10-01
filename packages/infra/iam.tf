@@ -471,9 +471,9 @@ resource "aws_iam_role_policy" "petroglyph_adapter_onedrive_policy" {
         Resource = aws_sqs_queue.delta_trigger.arn
       },
       {
-        Sid    = "SSMReadOnedriveSecrets"
-        Effect = "Allow"
-        Action = "ssm:GetParameter"
+        Sid      = "SSMReadOnedriveSecrets"
+        Effect   = "Allow"
+        Action   = "ssm:GetParameter"
         Resource = "${local.ssm_arn_prefix}/petroglyph/onedrive/*"
       },
       {
@@ -535,9 +535,9 @@ resource "aws_iam_role_policy" "petroglyph_staging_delivery_policy" {
         ]
       },
       {
-        Sid    = "SSMReadJwtPublicKey"
-        Effect = "Allow"
-        Action = "ssm:GetParameter"
+        Sid      = "SSMReadJwtPublicKey"
+        Effect   = "Allow"
+        Action   = "ssm:GetParameter"
         Resource = "${local.ssm_arn_prefix}/petroglyph/jwt/*"
       },
       {

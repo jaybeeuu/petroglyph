@@ -168,15 +168,15 @@ resource "aws_lambda_function" "petroglyph_adapter_onedrive" {
 
   environment {
     variables = {
-      EVENT_LOG_TABLE              = aws_dynamodb_table.event_log.name
-      DELTA_TOKENS_TABLE           = aws_dynamodb_table.delta_states.name
-      REFRESH_TOKENS_TABLE         = aws_dynamodb_table.token_vaults.name
-      SYNC_PROFILES_TABLE          = aws_dynamodb_table.sync_profiles.name
-      STAGED_PDFS_BUCKET           = aws_s3_bucket.staged_pdfs.id
+      EVENT_LOG_TABLE                 = aws_dynamodb_table.event_log.name
+      DELTA_TOKENS_TABLE              = aws_dynamodb_table.delta_states.name
+      REFRESH_TOKENS_TABLE            = aws_dynamodb_table.token_vaults.name
+      SYNC_PROFILES_TABLE             = aws_dynamodb_table.sync_profiles.name
+      STAGED_PDFS_BUCKET              = aws_s3_bucket.staged_pdfs.id
       ONEDRIVE_CLIENT_ID_SSM_PATH     = aws_ssm_parameter.onedrive_client_id.name
       ONEDRIVE_CLIENT_SECRET_SSM_PATH = aws_ssm_parameter.onedrive_client_secret.name
-      GRAPH_BASE_URL               = "https://graph.microsoft.com/v1.0"
-      GRAPH_DRIVE_ROOT_DELTA_URL   = "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,parentReference,file,folder,deleted"
+      GRAPH_BASE_URL                  = "https://graph.microsoft.com/v1.0"
+      GRAPH_DRIVE_ROOT_DELTA_URL      = "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,parentReference,file,folder,deleted"
     }
   }
 
@@ -226,9 +226,9 @@ resource "aws_lambda_function" "petroglyph_staging_delivery" {
 
   environment {
     variables = {
-      FILE_RECORDS_TABLE    = aws_dynamodb_table.staged_records.name
-      SYNC_PROFILES_TABLE   = aws_dynamodb_table.sync_profiles.name
-      STAGED_PDFS_BUCKET    = aws_s3_bucket.staged_pdfs.id
+      FILE_RECORDS_TABLE      = aws_dynamodb_table.staged_records.name
+      SYNC_PROFILES_TABLE     = aws_dynamodb_table.sync_profiles.name
+      STAGED_PDFS_BUCKET      = aws_s3_bucket.staged_pdfs.id
       JWT_PUBLIC_KEY_SSM_PATH = aws_ssm_parameter.jwt_public_key.name
     }
   }
