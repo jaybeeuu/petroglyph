@@ -498,6 +498,103 @@ else
   success "Managed policy attached"
 fi
 
+# ── Step 7: GitHub Actions read-only plan role ───────────────────────────────
+#
+# This role is assumed by the PR-time terraform plan workflow
+# (.github/workflows/terraform.yml) via OIDC. It is deliberately read-only: it
+# may read the remote state bucket and nothing else, so a pull-request job can
+# never create, update or delete infrastructure. It does not carry the deploy
+# role's Lambda / DynamoDB / IAM / SQS / SSM permissions, and its trust is
+# pinned to the terraform-plan environment subject so a PR job cannot assume
+# the production deploy role.
+
+PLAN_ROLE="petroglyph-github-actions-plan"
+PLAN_POLICY_NAME="petroglyph-github-actions-plan"
+
+info "Checking plan role ($PLAN_ROLE)..."
+if $AWS iam get-role --role-name "$PLAN_ROLE" &>/dev/null; then
+  success "Plan role already exists"
+else
+  info "Creating plan role..."
+  $AWS iam create-role \
+    --role-name "$PLAN_ROLE" \
+    --assume-role-policy-document "{
+      \"Version\": \"2012-10-17\",
+      \"Statement\": [{
+        \"Effect\": \"Allow\",
+        \"Principal\": {
+          \"Federated\": \"${OIDC_PROVIDER_ARN}\"
+        },
+        \"Action\": \"sts:AssumeRoleWithWebIdentity\",
+        \"Condition\": {
+          \"StringEquals\": {
+            \"token.actions.githubusercontent.com:sub\": \"repo:jaybeeuu/petroglyph:environment:terraform-plan\",
+            \"token.actions.githubusercontent.com:aud\": \"sts.amazonaws.com\"
+          }
+        }
+      }]
+    }"
+  success "Plan role created"
+fi
+
+PLAN_POLICY_DOC=$(cat << EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "TerraformStateBucketRead",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::petroglyph-terraform-state-${ACCOUNT_ID}",
+        "arn:aws:s3:::petroglyph-terraform-state-${ACCOUNT_ID}/*"
+      ]
+    }
+  ]
+}
+EOF
+)
+
+info "Checking plan inline policy ($PLAN_POLICY_NAME)..."
+if $AWS iam get-role-policy --role-name "$PLAN_ROLE" --policy-name "$PLAN_POLICY_NAME" &>/dev/null; then
+  LIVE_PLAN_POLICY_DOC=$($AWS iam get-role-policy \
+    --role-name "$PLAN_ROLE" \
+    --policy-name "$PLAN_POLICY_NAME" \
+    --query 'PolicyDocument' \
+    --output json)
+
+  # IAM may normalise whitespace and key order, so compare the documents
+  # semantically (as parsed JSON) rather than as raw text.
+  if ! node --input-type=commonjs -e '
+const { isDeepStrictEqual } = require("node:util");
+const { readFileSync } = require("node:fs");
+
+const generated = JSON.parse(process.argv[1]);
+let live = JSON.parse(readFileSync(0, "utf8"));
+if (typeof live === "string") live = JSON.parse(live);
+process.exit(isDeepStrictEqual(generated, live) ? 0 : 1);
+' "$PLAN_POLICY_DOC" <<< "$LIVE_PLAN_POLICY_DOC"; then
+    info "Plan inline policy drifted from bootstrap.sh — updating..."
+    $AWS iam put-role-policy \
+      --role-name "$PLAN_ROLE" \
+      --policy-name "$PLAN_POLICY_NAME" \
+      --policy-document "$PLAN_POLICY_DOC"
+    success "Plan inline policy updated to match bootstrap.sh"
+  else
+    success "Plan inline policy already in sync with bootstrap.sh"
+  fi
+else
+  info "Creating plan inline policy..."
+  $AWS iam put-role-policy \
+    --role-name "$PLAN_ROLE" \
+    --policy-name "$PLAN_POLICY_NAME" \
+    --policy-document "$PLAN_POLICY_DOC"
+  success "Plan inline policy created"
+fi
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 echo ""
@@ -507,11 +604,19 @@ echo ""
 echo "  TF_STATE_BUCKET        = $TF_STATE_BUCKET"
 echo "  LAMBDA_ARTIFACT_BUCKET = $LAMBDA_ARTIFACT_BUCKET"
 echo "  DEPLOY_ROLE_ARN        = arn:aws:iam::${ACCOUNT_ID}:role/${GITHUB_ACTIONS_ROLE}"
+echo "  PLAN_ROLE_ARN          = arn:aws:iam::${ACCOUNT_ID}:role/${PLAN_ROLE}"
 echo ""
-echo "  Set these GitHub Actions secrets:"
+echo "  Set these GitHub Actions secrets on the 'production' environment:"
 echo "    AWS_ROLE_ARN           = arn:aws:iam::${ACCOUNT_ID}:role/${GITHUB_ACTIONS_ROLE}"
 echo "    TF_STATE_BUCKET        = $TF_STATE_BUCKET"
 echo "    LAMBDA_ARTIFACT_BUCKET = $LAMBDA_ARTIFACT_BUCKET"
+echo ""
+echo "  Create a 'terraform-plan' environment (no branch restriction) with:"
+echo "    AWS_PLAN_ROLE_ARN      = arn:aws:iam::${ACCOUNT_ID}:role/${PLAN_ROLE}"
+echo "    TF_STATE_BUCKET        = $TF_STATE_BUCKET"
+echo "    LAMBDA_ARTIFACT_BUCKET = $LAMBDA_ARTIFACT_BUCKET"
+echo ""
+echo "  The plan workflow skips cleanly until AWS_PLAN_ROLE_ARN is set."
 echo ""
 echo "  Local AWS profiles use IAM Identity Center (SSO)."
 echo "  Run 'aws sso login --profile petroglyph-admin' to authenticate."
