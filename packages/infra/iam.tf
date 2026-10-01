@@ -435,24 +435,40 @@ resource "aws_iam_role_policy" "petroglyph_adapter_onedrive_policy" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      # Per-table least privilege: the adapter's env points REFRESH_TOKENS_TABLE at
+      # token_vaults and DELTA_TOKENS_TABLE at delta_states, so the legacy
+      # refresh_tokens/delta_tokens tables are not reachable from its code.
       {
-        Sid    = "DynamoDBAdapterReadWrite"
+        Sid    = "DynamoDBTokenVaultReadWrite"
         Effect = "Allow"
         Action = [
           "dynamodb:GetItem",
           "dynamodb:PutItem",
           "dynamodb:UpdateItem",
+        ]
+        Resource = aws_dynamodb_table.token_vaults.arn
+      },
+      {
+        Sid    = "DynamoDBDeltaStateReadWrite"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:UpdateItem",
           "dynamodb:DeleteItem",
-          "dynamodb:Query",
         ]
-        Resource = [
-          aws_dynamodb_table.token_vaults.arn,
-          aws_dynamodb_table.delta_states.arn,
-          aws_dynamodb_table.refresh_tokens.arn,
-          aws_dynamodb_table.delta_tokens.arn,
-          aws_dynamodb_table.event_log.arn,
-          aws_dynamodb_table.sync_profiles.arn,
-        ]
+        Resource = aws_dynamodb_table.delta_states.arn
+      },
+      {
+        Sid      = "DynamoDBEventLogAppend"
+        Effect   = "Allow"
+        Action   = "dynamodb:PutItem"
+        Resource = aws_dynamodb_table.event_log.arn
+      },
+      {
+        Sid      = "DynamoDBSyncProfilesRead"
+        Effect   = "Allow"
+        Action   = "dynamodb:Query"
+        Resource = aws_dynamodb_table.sync_profiles.arn
       },
       {
         Sid      = "S3PutStagedObjects"
