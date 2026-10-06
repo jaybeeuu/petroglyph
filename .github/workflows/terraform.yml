@@ -1,0 +1,181 @@
+name: Terraform
+
+# PR-time HCL validation and a read-only `terraform plan`.
+#
+# The `paths` filter is deliberately scoped to `.tf` files rather than the whole
+# `packages/infra/**` package. Changes to `packages/infra/scripts/bootstrap.sh`
+# define the plan role this job assumes, so a package-wide filter would attach
+# this job (and its OIDC assumption) to the very PR that introduces the role —
+# before the role exists in the account. `.tf` scoping keeps that PR green and
+# attaches the job only to genuine infrastructure changes.
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/infra/**/*.tf"
+      - "packages/infra/*.tf"
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    environment: terraform-plan
+    timeout-minutes: 30
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform-plugin-cache
+      AWS_REGION: eu-west-2
+      AWS_PLAN_ROLE_ARN: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+      TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+      LAMBDA_ARTIFACT_BUCKET: ${{ secrets.LAMBDA_ARTIFACT_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Needed to diff changed `.tf` files against the PR base for the
+          # formatting check.
+          fetch-depth: 0
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          # The wrapper rewrites terraform output and exit codes; the plan step
+          # relies on `-detailed-exitcode` propagating untouched.
+          terraform_wrapper: false
+
+      - name: Cache Terraform providers
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.terraform-plugin-cache
+          key: terraform-providers-${{ runner.os }}-${{ hashFiles('packages/infra/.terraform.lock.hcl') }}
+
+      - name: Check plan credentials
+        id: preflight
+        run: |
+          missing=""
+          for name in AWS_PLAN_ROLE_ARN TF_STATE_BUCKET LAMBDA_ARTIFACT_BUCKET; do
+            if [ -z "${!name}" ]; then
+              missing="${missing} ${name}"
+            fi
+          done
+
+          if [ -n "${missing}" ]; then
+            echo "available=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::Skipping terraform init/plan: missing secrets:${missing}. This is expected for fork PRs and until the terraform-plan environment is created."
+          else
+            echo "available=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Check formatting
+        run: |
+          # `terraform fmt -check -recursive` reports pre-existing drift in
+          # dynamodb.tf and lambda_ingestion.tf that predates this workflow.
+          # Reformatting them here would be unrelated churn, so repo-wide drift
+          # is a warning; only files this PR changes must be formatted.
+          if ! terraform fmt -check -recursive; then
+            echo "::warning title=Terraform formatting drift::terraform fmt -check -recursive flagged files (diff below)."
+            terraform fmt -write=false -diff -recursive || true
+          fi
+
+          mapfile -t changed < <(git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- '*.tf' 2>/dev/null || true)
+          if [ "${#changed[@]}" -gt 0 ]; then
+            terraform fmt -check "${changed[@]}"
+          fi
+
+      - name: Configure AWS credentials
+        if: steps.preflight.outputs.available == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform init
+        if: steps.preflight.outputs.available == 'true'
+        working-directory: packages/infra
+        run: |
+          mkdir -p "${TF_PLUGIN_CACHE_DIR}"
+          # `dynamodb_table` is deliberately omitted: the S3 backend resolves the
+          # lock table's key attribute via DescribeTable during init, which the
+          # read-only plan role is not granted. `terraform plan -lock=false`
+          # never acquires a lock, so the table is not needed.
+          terraform init -input=false -no-color \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=petroglyph/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform workspace
+        if: steps.preflight.outputs.available == 'true'
+        working-directory: packages/infra
+        run: terraform workspace select production
+
+      - name: Terraform validate
+        if: steps.preflight.outputs.available == 'true'
+        working-directory: packages/infra
+        run: terraform validate -no-color
+
+      - name: Terraform plan
+        if: steps.preflight.outputs.available == 'true'
+        id: plan
+        working-directory: packages/infra
+        run: |
+          set +e
+          terraform plan -input=false -no-color \
+            -refresh=false -lock=false -detailed-exitcode \
+            -var="api_zip_s3_bucket=${LAMBDA_ARTIFACT_BUCKET}" \
+            -var="api_zip_s3_key=plan-placeholder/lambda.zip" \
+            -var="ingest_onedrive_zip_s3_bucket=${LAMBDA_ARTIFACT_BUCKET}" \
+            -var="ingest_onedrive_zip_s3_key=plan-placeholder/ingest-onedrive.zip" \
+            -var="sync_worker_zip_s3_bucket=${LAMBDA_ARTIFACT_BUCKET}" \
+            -var="sync_worker_zip_s3_key=plan-placeholder/sync-worker.zip" \
+            -var="sync_relay_zip_s3_bucket=${LAMBDA_ARTIFACT_BUCKET}" \
+            -var="sync_relay_zip_s3_key=plan-placeholder/sync-relay.zip" \
+            -var="processor_zip_s3_bucket=${LAMBDA_ARTIFACT_BUCKET}" \
+            -var="processor_zip_s3_key=plan-placeholder/processor.zip" \
+            -var="api_custom_domain=api.petroglyph.page" \
+            2>&1 | tee "${RUNNER_TEMP}/terraform-plan.txt"
+          status="${PIPESTATUS[0]}"
+          set -e
+
+          echo "exitcode=${status}" >> "${GITHUB_OUTPUT}"
+
+          # 0 = no changes, 2 = changes present (the normal case for an infra
+          # PR). Only a real plan error should fail the job.
+          if [ "${status}" -eq 0 ] || [ "${status}" -eq 2 ]; then
+            exit 0
+          fi
+
+          echo "::error::terraform plan failed (exit code ${status}) — see the PR comment for the output."
+          exit 1
+
+      - name: Comment plan on pull request
+        if: always() && steps.plan.outputs.exitcode != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          marker="<!-- terraform-plan -->"
+          body="$(mktemp)"
+          {
+            echo "${marker}"
+            echo "<details>"
+            echo "<summary>Terraform plan — exit code ${{ steps.plan.outputs.exitcode }} (0 = no changes, 2 = changes present)</summary>"
+            echo ""
+            echo '```hcl'
+            head -c 60000 "${RUNNER_TEMP}/terraform-plan.txt"
+            echo ""
+            echo '```'
+            echo "</details>"
+          } > "${body}"
+
+          comment_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --paginate --jq ".[] | select(.body | startswith(\"<!-- terraform-plan -->\")) | .id" | head -n 1)"
+
+          if [ -n "${comment_id}" ]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -F body=@"${body}"
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@"${body}"
+          fi
