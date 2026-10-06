@@ -31,6 +31,18 @@ resource "aws_apigatewayv2_route" "health" {
   target    = "integrations/${aws_apigatewayv2_integration.petroglyph_api.id}"
 }
 
+# Pins the legacy file-feed path to the API Lambda. HTTP API route
+# precedence is exact > parameterized > greedy > $default, so without this
+# exact route GET /files/changes would match the parameterized
+# GET /files/{itemId} route in lambda_staging.tf (itemId="changes") and be
+# served by staging-delivery instead of the API Lambda that owns the handler
+# in api/src/app.ts. Do not delete as redundant.
+resource "aws_apigatewayv2_route" "files_changes" {
+  api_id    = aws_apigatewayv2_api.petroglyph_api.id
+  route_key = "GET /files/changes"
+  target    = "integrations/${aws_apigatewayv2_integration.petroglyph_api.id}"
+}
+
 resource "aws_apigatewayv2_route" "default" {
   api_id    = aws_apigatewayv2_api.petroglyph_api.id
   route_key = "$default"

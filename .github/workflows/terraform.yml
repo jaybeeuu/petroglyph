@@ -135,6 +135,10 @@ jobs:
             -var="sync_relay_zip_s3_key=plan-placeholder/sync-relay.zip" \
             -var="processor_zip_s3_bucket=${LAMBDA_ARTIFACT_BUCKET}" \
             -var="processor_zip_s3_key=plan-placeholder/processor.zip" \
+            -var="forwarder_zip_s3_bucket=${LAMBDA_ARTIFACT_BUCKET}" \
+            -var="forwarder_zip_s3_key=plan-placeholder/forwarder.zip" \
+            -var="staging_delivery_zip_s3_bucket=${LAMBDA_ARTIFACT_BUCKET}" \
+            -var="staging_delivery_zip_s3_key=plan-placeholder/staging-delivery.zip" \
             -var="api_custom_domain=api.petroglyph.page" \
             2>&1 | tee "${RUNNER_TEMP}/terraform-plan.txt"
           status="${PIPESTATUS[0]}"
