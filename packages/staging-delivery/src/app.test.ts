@@ -305,7 +305,7 @@ describe("GET /files/:itemId download", () => {
     expect((await noProfiles.app.request("/files/item-1")).status).toBe(404);
   });
 
-  it("serves a record under any owned profile, active or not (own-records-only scope)", async () => {
+  it("returns 404 when the record is under a non-active owned profile (active-profile scoping)", async () => {
     const index = new MemoryIndex();
     index.put({ ...stagedRecord, profileId: "p2" });
     const { app } = buildApp({
@@ -315,6 +315,40 @@ describe("GET /files/:itemId download", () => {
     });
 
     const res = await app.request("/files/item-1");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 404 when the active profile is not sync-enabled (consistent with the feed gate)", async () => {
+    const index = new MemoryIndex();
+    index.put(stagedRecord);
+    const { app } = buildApp({
+      profiles: [profile({ enabled: false })],
+      index,
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    const res = await app.request("/files/item-1");
+    expect(res.status).toBe(404);
+  });
+
+  it("resolves the item under the active profile when owned profiles share an itemId", async () => {
+    const index = new MemoryIndex();
+    index.put({ ...stagedRecord, profileId: "p2", s3Key: "staging/v1/p2/notes/a.pdf" });
+    index.put({ ...stagedRecord, profileId: "p1", s3Key: "staging/v1/p1/notes/a.pdf" });
+    const { objectStore, presigned } = objectStoreSpy();
+    const { app } = buildApp({
+      // Non-active profile listed first: resolution must follow the active
+      // profile, not profile order.
+      profiles: [profile({ profileId: "p2", active: false }), profile()],
+      index,
+      objectStore,
+    });
+
+    const res = await app.request("/files/item-1");
     expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      s3PresignedUrl: "https://presigned.example/staging/v1/p1/notes/a.pdf",
+    });
+    expect(presigned).toEqual([{ key: "staging/v1/p1/notes/a.pdf" }]);
   });
 });
