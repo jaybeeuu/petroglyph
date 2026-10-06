@@ -506,13 +506,16 @@ fi
 #
 # This role is assumed by the PR-time terraform plan workflow
 # (.github/workflows/terraform.yml) via OIDC. It is deliberately read-only: it
-# may read the remote state bucket, plus the one SSM parameter the configuration
+# may read the remote state bucket, the one SSM parameter the configuration
 # resolves at plan time (data.aws_ssm_parameter.onedrive_client_id — Terraform
-# reads data sources during plan even with -refresh=false), and nothing else, so
-# a pull-request job can never create, update or delete infrastructure. It does
-# not carry the deploy role's Lambda / DynamoDB / IAM / SQS / wildcard-SSM
-# permissions, and its trust is pinned to the terraform-plan environment subject
-# so a PR job cannot assume the production deploy role.
+# reads data sources during plan even with -refresh=false), and the project
+# DynamoDB table metadata that the AWS provider reads during CustomizeDiff
+# (validateTableAttributes calls DescribeTable for every table resource, again
+# regardless of -refresh=false). It grants no write action, so a pull-request
+# job can never create, update or delete infrastructure. It does not carry the
+# deploy role's Lambda / IAM / SQS / wildcard-SSM permissions or any DynamoDB
+# data-plane action, and its trust is pinned to the terraform-plan environment
+# subject so a PR job cannot assume the production deploy role.
 
 PLAN_ROLE="petroglyph-github-actions-plan"
 PLAN_POLICY_NAME="petroglyph-github-actions-plan"
@@ -575,6 +578,12 @@ PLAN_POLICY_DOC=$(cat << EOF
           "kms:ViaService": "ssm.eu-west-2.amazonaws.com"
         }
       }
+    },
+    {
+      "Sid": "PlanTimeTableMetadataRead",
+      "Effect": "Allow",
+      "Action": "dynamodb:DescribeTable",
+      "Resource": "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-*"
     }
   ]
 }
