@@ -217,7 +217,7 @@ resource "aws_dynamodb_table" "sync_jobs" {
     type = "S"
   }
 
-  stream_enabled   = true
+  stream_enabled = true
   # NEW_AND_OLD_IMAGES keeps NewImage on INSERT (the relay fan-out path) and
   # adds OldImage on REMOVE — the only place the relay's TTL-retry backstop can
   # read the pre-deletion job (a NEW_IMAGE-only stream emits no item image on
