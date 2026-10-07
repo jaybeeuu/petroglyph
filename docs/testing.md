@@ -33,12 +33,18 @@ The only permitted skip is the recorded LocalStack signature-gap canary, documen
 [CONTRIBUTING.md](../CONTRIBUTING.md); it skips because LocalStack cannot enforce presigned-URL
 signatures, not because an environment is missing.
 
-## What runs where
+## Test layers
 
-| Test level                                     | Needs Docker    | Runs in `pnpm test` |
-| ---------------------------------------------- | --------------- | ------------------- |
-| Unit and mocked integration (in-process stubs) | No              | Yes                 |
-| Container-backed integration (Testcontainers)  | Yes — mandatory | Yes                 |
-| Real-cloud integration (AWS, Entra, OneDrive)  | No              | No — opt-in         |
+Each layer proves what the one below it cannot.
+
+| Layer                   | Proves                                                   | Infrastructure                                      | Runs in `pnpm test` | Status                                         |
+| ----------------------- | -------------------------------------------------------- | --------------------------------------------------- | ------------------- | ---------------------------------------------- |
+| Component / integration | a package's behaviour against real services              | LocalStack (Docker)                                 | Yes                 | In place                                       |
+| Service boundary        | a deployed handler wires its collaborators correctly     | LocalStack (Docker)                                 | Yes                 | Partial — handler tests exist with mocked deps |
+| Contract                | producer and consumer agree on the payloads between them | None                                                | Yes                 | Planned                                        |
+| Deployed smoke          | the deployed path works end to end                       | QA environment (Graph stubbed via `GRAPH_BASE_URL`) | No                  | Planned                                        |
+| Live Microsoft Graph    | behaviour against the real Microsoft edge                | Real Graph (throwaway account)                      | No                  | Opt-in, never scheduled                        |
+
+The deployed smoke is the release gate: the deploy pipeline promotes through QA (deploy QA → smoke → deploy production). The live-Graph tier is opt-in and never gates. See [technical-direction/verification-strategy.md](technical-direction/verification-strategy.md) for the decision and rationale.
 
 [CONTRIBUTING.md](../CONTRIBUTING.md) holds the workspace commands and package script conventions.
