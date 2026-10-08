@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
@@ -14,16 +13,6 @@ import {
 import { Hono } from "hono";
 import { createFilesRouter, type FilesRouterVariables } from "./app.js";
 
-function dockerAvailable(): boolean {
-  try {
-    execSync("docker info", { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const canRun = dockerAvailable();
 const BUCKET = "petroglyph-staged-pdfs";
 const RECORDS_TABLE = "file-records-int";
 
@@ -41,7 +30,7 @@ const profile: SyncProfile = {
   updatedAt: "2026-09-01T00:00:00.000Z",
 };
 
-describe.skipIf(!canRun)("delivery surface /files against LocalStack S3 + DDB", () => {
+describe("delivery surface /files against LocalStack S3 + DDB", () => {
   let container: StartedTestContainer;
   let index: StagedIndexStore;
   let objectStore: StagedObjectStore;
