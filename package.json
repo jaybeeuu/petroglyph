@@ -21,7 +21,7 @@
   "keywords": [],
   "author": "Josh Bickley-Wallace",
   "license": "ISC",
-  "packageManager": "pnpm@10.4.1",
+  "packageManager": "pnpm@12.9.1",
   "devDependencies": {
     "@jaybeeuu/eslint-config": "5.0.0",
     "eslint": "^9.9.1",
