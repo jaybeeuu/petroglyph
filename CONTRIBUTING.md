@@ -63,8 +63,7 @@ This runs the `dev` script across all packages in dependency order.
 By default, `AUTH_MODE=mock` is set in `packages/api/.env.example`.
 This removes the Microsoft Entra dependency from the development loop so no cloud credentials are needed for a local session.
 
-See [docs/local-runtime-model.md](docs/local-runtime-model.md) for the full local process model and a description of what runs locally versus remotely.
-See [docs/environment-variables.md](docs/environment-variables.md) for a complete environment variable reference.
+Each package ships its own `.env.example`; copy the ones for the packages you run and edit them in place.
 
 ## Workspace Scripts
 
@@ -99,7 +98,7 @@ Each package should expose the following scripts where applicable:
 | `dev`       | Start the package in development mode using `tsx` for TypeScript execution     |
 | `package`   | Produce a Lambda deployment artifact (`lambda.zip`) via `pnpm build` + staging |
 
-See [docs/creating-a-package.md](docs/creating-a-package.md) for the canonical package scaffolding template.
+Mirror an existing package for scaffolding — `packages/staging-consumer` is the reference (`package.json`, `tsconfig.json`, `vitest.config.ts`, `eslint.config.js`).
 
 ## Testing
 
@@ -193,7 +192,7 @@ Branch protection on `main` requires all five checks to pass before a pull reque
 
 ## Adding a New Package
 
-Follow the instructions in [docs/creating-a-package.md](docs/creating-a-package.md).
+Create the directory under `packages/` — the `packages/*` glob in `pnpm-workspace.yaml` picks it up — and mirror an existing package. `packages/staging-consumer` is the reference for `package.json`, `tsconfig.json`, `vitest.config.ts`, and `eslint.config.js`.
 
 ## Plugin Development
 
