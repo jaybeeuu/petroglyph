@@ -80,6 +80,16 @@ function presignTtlOptions(ttlSeconds: number | undefined): { presignTtlSeconds?
 }
 
 /**
+ * The single active, sync-enabled profile the delivery surface is scoped to.
+ * Both the feed and the download surface gate on it, so they cannot drift:
+ * no active-enabled profile means no served records.
+ */
+function activeEnabledProfile(profiles: SyncProfile[]): SyncProfile | null {
+  const active = profiles.find((profile) => profile.active);
+  return active !== undefined && active.enabled ? active : null;
+}
+
+/**
  * 6ra.5.2.4 /files staging delivery surface — the plugin's ONLY file-flow
  * surface. It talks only to the OUTPUT of staging (index + S3): zero source
  * or ingest references here. Identity comes from the caller middleware
@@ -96,9 +106,8 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
       return c.json({ error: describeFeedQueryError(query.error) }, 400);
     }
 
-    const profiles = await deps.listProfiles(c.get("userId"));
-    const activeProfile = profiles.find((p) => p.active);
-    if (activeProfile === undefined || !activeProfile.enabled) {
+    const activeProfile = activeEnabledProfile(await deps.listProfiles(c.get("userId")));
+    if (activeProfile === null) {
       return c.json({ files: [], nextToken: null });
     }
 
@@ -119,15 +128,15 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
   });
 
   app.get("/files/:itemId", async (c) => {
-    const profiles = await deps.listProfiles(c.get("userId"));
-    if (profiles.length === 0) {
+    const activeProfile = activeEnabledProfile(await deps.listProfiles(c.get("userId")));
+    if (activeProfile === null) {
       return c.json({ error: "File not found" }, 404);
     }
 
     const entry = await resolveOwnedEntry({
       index: deps.index,
       objectStore: deps.objectStore,
-      profileIds: profiles.map((p) => p.profileId),
+      profileIds: [activeProfile.profileId],
       itemId: c.req.param("itemId"),
       ...presignTtlOptions(deps.presignTtlSeconds),
     });
