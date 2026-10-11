@@ -37,13 +37,15 @@ signatures, not because an environment is missing.
 
 Each layer proves what the one below it cannot.
 
-| Layer                   | Proves                                                   | Infrastructure                                      | Runs in `pnpm test` | Status                                         |
-| ----------------------- | -------------------------------------------------------- | --------------------------------------------------- | ------------------- | ---------------------------------------------- |
-| Component / integration | a package's behaviour against real services              | LocalStack (Docker)                                 | Yes                 | In place                                       |
-| Service boundary        | a deployed handler wires its collaborators correctly     | LocalStack (Docker)                                 | Yes                 | Partial — handler tests exist with mocked deps |
-| Contract                | producer and consumer agree on the payloads between them | None                                                | Yes                 | Planned                                        |
-| Deployed smoke          | the deployed path works end to end                       | QA environment (Graph stubbed via `GRAPH_BASE_URL`) | No                  | Planned                                        |
-| Live Microsoft Graph    | behaviour against the real Microsoft edge                | Real Graph (throwaway account)                      | No                  | Opt-in, never scheduled                        |
+| Layer                   | Proves                                                   | Infrastructure                                      | Runs in `pnpm test` | Status                                                  |
+| ----------------------- | -------------------------------------------------------- | --------------------------------------------------- | ------------------- | ------------------------------------------------------- |
+| Component / integration | a package's behaviour against real services              | LocalStack (Docker)                                 | Yes                 | In place                                                |
+| Service boundary        | a deployed handler wires its collaborators correctly     | LocalStack (Docker)                                 | Yes                 | Adapter, forwarder, delivery in place; dispatch planned |
+| Contract                | producer and consumer agree on the payloads between them | None                                                | Yes                 | Planned                                                 |
+| Deployed smoke          | the deployed path works end to end                       | QA environment (Graph stubbed via `GRAPH_BASE_URL`) | No                  | Planned                                                 |
+| Live Microsoft Graph    | behaviour against the real Microsoft edge                | Real Graph (throwaway account)                      | No                  | Opt-in, never scheduled                                 |
+
+Boundary suites drive the real handler with a realistic trigger: adapter (`SQSEvent` → Graph delta → S3 + event log), forwarder (`DynamoDBStreamEvent` → FIFO message), and delivery (API Gateway v2 request → feed + presigned GET). The dispatch boundary waits on `petroglyph-j1gn.55`.
 
 The deployed smoke is the release gate: the deploy pipeline promotes through QA (deploy QA → smoke → deploy production). The live-Graph tier is opt-in and never gates. See [technical-direction/verification-strategy.md](technical-direction/verification-strategy.md) for the decision and rationale.
 
