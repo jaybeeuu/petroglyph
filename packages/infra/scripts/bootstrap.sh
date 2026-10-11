@@ -192,11 +192,12 @@ fi
 info "Checking deploy managed policy ($DEPLOY_POLICY_NAME)..."
 POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${DEPLOY_POLICY_NAME}"
 # NOTE: LambdaProjectFunctions and ProjectQueues name every function/queue ARN
-# explicitly, matching DynamoDbProjectTables. LambdaEventSourceMappings is the
-# one documented exception: an event-source-mapping ARN embeds an AWS-generated
-# UUID that does not exist until the mapping is created, and the Lambda API does
-# not support resource-level scoping for Create/Get/ListEventSourceMappings. The
-# wildcard is therefore retained and justified in docs/ops.md.
+# explicitly, matching DynamoDbProjectTables. LambdaEventSourceMappings scopes
+# to the mapping ARNs, but lambda:CreateEventSourceMapping and
+# lambda:ListEventSourceMappings do not support resource-level permissions, so
+# they need "Resource": "*". Only CreateEventSourceMapping and
+# ListEventSourceMappings are non-scopable; GetEventSourceMapping and the other
+# mapping actions are scoped. This exception is justified in docs/ops.md.
 POLICY_DOC=$(cat << EOF
 {
   "Version": "2012-10-17",
@@ -335,13 +336,20 @@ POLICY_DOC=$(cat << EOF
       ]
     },
     {
-      "Sid": "LambdaEventSourceMappings",
+      "Sid": "LambdaEventSourceMappingUnscopable",
       "Effect": "Allow",
       "Action": [
         "lambda:CreateEventSourceMapping",
+        "lambda:ListEventSourceMappings"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "LambdaEventSourceMappings",
+      "Effect": "Allow",
+      "Action": [
         "lambda:DeleteEventSourceMapping",
         "lambda:GetEventSourceMapping",
-        "lambda:ListEventSourceMappings",
         "lambda:ListTags",
         "lambda:TagResource",
         "lambda:UntagResource",
