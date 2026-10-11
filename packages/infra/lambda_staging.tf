@@ -147,6 +147,58 @@ resource "aws_cloudwatch_log_group" "lambda_staging_forwarder" {
 }
 
 # ---------------------------------------------------------------------------
+# Staging dispatch Lambda (6.5.2.3): staged-events FIFO → staged-records index
+# Reuses the staging-consumer artifact (same zip as the forwarder).
+# ---------------------------------------------------------------------------
+
+resource "aws_lambda_function" "petroglyph_staging_dispatch" {
+  count = var.forwarder_zip_s3_bucket != "" ? 1 : 0
+
+  function_name = "petroglyph-staging-dispatch-${terraform.workspace}"
+
+  s3_bucket = var.forwarder_zip_s3_bucket
+  s3_key    = var.forwarder_zip_s3_key
+
+  runtime = "nodejs24.x"
+  handler = "dist/dispatch-lambda.handler"
+
+  role    = aws_iam_role.petroglyph_staging_dispatch_role.arn
+  timeout = 30
+
+  environment {
+    variables = {
+      FILE_RECORDS_TABLE       = aws_dynamodb_table.staged_records.name
+      STAGED_PDFS_BUCKET       = aws_s3_bucket.staged_pdfs.id
+      STAGED_RETENTION_SECONDS = tostring(var.retention_days * 86400)
+    }
+  }
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+resource "aws_lambda_event_source_mapping" "staging_dispatch_staged_events" {
+  count = var.forwarder_zip_s3_bucket != "" ? 1 : 0
+
+  event_source_arn        = aws_sqs_queue.staged_events.arn
+  function_name           = aws_lambda_function.petroglyph_staging_dispatch[0].arn
+  batch_size              = 10
+  function_response_types = ["ReportBatchItemFailures"]
+}
+
+resource "aws_cloudwatch_log_group" "lambda_staging_dispatch" {
+  count = var.forwarder_zip_s3_bucket != "" ? 1 : 0
+
+  name              = "/aws/lambda/${aws_lambda_function.petroglyph_staging_dispatch[0].function_name}"
+  retention_in_days = 14
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+# ---------------------------------------------------------------------------
 # OneDrive adapter Lambda (6.5.1.1 flow): delta-trigger FIFO → walk → land →
 # emit to the event log. Same deployment artifact as the webhook receiver
 # (ingest-onedrive zip) but with the dist/lambda.handler entry point.
