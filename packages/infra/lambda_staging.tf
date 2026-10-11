@@ -176,7 +176,7 @@ resource "aws_lambda_function" "petroglyph_adapter_onedrive" {
       ONEDRIVE_CLIENT_ID_SSM_PATH     = aws_ssm_parameter.onedrive_client_id.name
       ONEDRIVE_CLIENT_SECRET_SSM_PATH = aws_ssm_parameter.onedrive_client_secret.name
       GRAPH_BASE_URL                  = "https://graph.microsoft.com/v1.0"
-      GRAPH_DRIVE_ROOT_DELTA_URL      = "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,parentReference,file,folder,deleted"
+      GRAPH_DRIVE_ROOT_DELTA_URL      = "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,eTag,parentReference,file,folder,deleted"
     }
   }
 
