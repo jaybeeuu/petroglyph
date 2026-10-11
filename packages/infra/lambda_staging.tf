@@ -31,6 +31,8 @@ resource "aws_sqs_queue" "staged_events" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "staged_events_dlq_depth" {
+  count = terraform.workspace == "production" ? 1 : 0
+
   alarm_name          = "petroglyph-staged-events-dlq-depth-${terraform.workspace}"
   alarm_description   = "Alerts when staging dispatch messages land on the DLQ."
   comparison_operator = "GreaterThanThreshold"
@@ -80,6 +82,8 @@ resource "aws_sqs_queue" "delta_trigger" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "delta_trigger_dlq_depth" {
+  count = terraform.workspace == "production" ? 1 : 0
+
   alarm_name          = "petroglyph-delta-trigger-dlq-depth-${terraform.workspace}"
   alarm_description   = "Alerts when delta-trigger bells land on the DLQ (adapter failures)."
   comparison_operator = "GreaterThanThreshold"

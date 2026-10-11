@@ -26,6 +26,8 @@ resource "aws_sqs_queue" "sync_jobs" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "sync_jobs_dlq_depth" {
+  count = terraform.workspace == "production" ? 1 : 0
+
   alarm_name          = "petroglyph-sync-jobs-dlq-depth-${terraform.workspace}"
   alarm_description   = "Alerts when the sync-worker sends messages to the DLQ."
   comparison_operator = "GreaterThanThreshold"
