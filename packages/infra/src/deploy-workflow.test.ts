@@ -47,3 +47,33 @@ describe("Deploy workflow artifact handling", () => {
     );
   });
 });
+
+describe("Deploy workflow environments", () => {
+  it("deploys qa from its own GitHub environment and Terraform workspace", () => {
+    const workflow = readDeployWorkflow();
+    expect(workflow).toMatch(/^ {2}deploy-qa:\n[\s\S]*?environment: qa$/m);
+    expect(workflow).toMatch(/^ {2}deploy-qa:\n[\s\S]*?TF_WORKSPACE: qa$/m);
+  });
+
+  it("deploys production from its own GitHub environment and Terraform workspace", () => {
+    const workflow = readDeployWorkflow();
+    expect(workflow).toMatch(/^ {2}deploy-production:\n[\s\S]*?environment: production$/m);
+    expect(workflow).toMatch(/^ {2}deploy-production:\n[\s\S]*?TF_WORKSPACE: production$/m);
+  });
+
+  it("selects or creates the Terraform workspace from the job environment", () => {
+    const workflow = readDeployWorkflow();
+    expect(workflow).toMatch(
+      /terraform workspace select "\$\{TF_WORKSPACE\}" \|\| terraform workspace new "\$\{TF_WORKSPACE\}"/,
+    );
+  });
+
+  it("keeps the production custom domain and leaves qa on the raw execute-api URL", () => {
+    const workflow = readDeployWorkflow();
+    expect(workflow).toMatch(/^ {2}deploy-qa:\n[\s\S]*?API_CUSTOM_DOMAIN: ""$/m);
+    expect(workflow).toMatch(
+      /^ {2}deploy-production:\n[\s\S]*?API_CUSTOM_DOMAIN: api\.petroglyph\.page$/m,
+    );
+    expect(workflow).toMatch(/-var="api_custom_domain=\$\{API_CUSTOM_DOMAIN\}"/);
+  });
+});

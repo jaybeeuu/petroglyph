@@ -140,7 +140,7 @@ LIFECYCLE=$($AWS s3api get-bucket-lifecycle-configuration \
 assert_contains "S3 lifecycle rule enabled" "Enabled" "$LIFECYCLE"
 
 PARAMS=$($AWS ssm get-parameters-by-path \
-  --path /petroglyph/ --recursive \
+  --path "/petroglyph/${WORKSPACE}/" --recursive \
   --query 'Parameters[].Name' --output text)
 PARAM_COUNT=$(echo "$PARAMS" | wc -w)
 if [[ "$PARAM_COUNT" -ge 12 ]]; then

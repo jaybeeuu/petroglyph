@@ -18,8 +18,8 @@ describe("loadSSMParameters", () => {
   it("calls SSM with correct parameter names when path env vars are set", async () => {
     const mockSend = vi.fn().mockResolvedValue({
       Parameters: [
-        { Name: "/petroglyph/github/client-id", Value: "test-client-id" },
-        { Name: "/petroglyph/jwt/signing-secret", Value: "test-secret" },
+        { Name: "/petroglyph/production/github/client-id", Value: "test-client-id" },
+        { Name: "/petroglyph/production/jwt/signing-secret", Value: "test-secret" },
       ],
     });
     const mockClient = {
@@ -27,8 +27,8 @@ describe("loadSSMParameters", () => {
     } as unknown as SSMClient;
 
     const env = {
-      GITHUB_CLIENT_ID_SSM_PATH: "/petroglyph/github/client-id",
-      JWT_SIGNING_SECRET_SSM_PATH: "/petroglyph/jwt/signing-secret",
+      GITHUB_CLIENT_ID_SSM_PATH: "/petroglyph/production/github/client-id",
+      JWT_SIGNING_SECRET_SSM_PATH: "/petroglyph/production/jwt/signing-secret",
     };
 
     await loadSSMParameters(mockClient, SSM_MAPPINGS, env);
@@ -40,8 +40,8 @@ describe("loadSSMParameters", () => {
     const command = calls[0]?.[0];
     assert(command !== undefined);
     expect(command.input.Names).toEqual([
-      "/petroglyph/github/client-id",
-      "/petroglyph/jwt/signing-secret",
+      "/petroglyph/production/github/client-id",
+      "/petroglyph/production/jwt/signing-secret",
     ]);
     expect(command.input.WithDecryption).toBe(true);
   });
@@ -49,8 +49,8 @@ describe("loadSSMParameters", () => {
   it("writes SSM values to target env vars", async () => {
     const mockSend = vi.fn().mockResolvedValue({
       Parameters: [
-        { Name: "/petroglyph/github/client-id", Value: "test-client-id" },
-        { Name: "/petroglyph/jwt/signing-secret", Value: "test-secret" },
+        { Name: "/petroglyph/production/github/client-id", Value: "test-client-id" },
+        { Name: "/petroglyph/production/jwt/signing-secret", Value: "test-secret" },
       ],
     });
     const mockClient = {
@@ -58,8 +58,8 @@ describe("loadSSMParameters", () => {
     } as unknown as SSMClient;
 
     const env: { [key: string]: string } = {
-      GITHUB_CLIENT_ID_SSM_PATH: "/petroglyph/github/client-id",
-      JWT_SIGNING_SECRET_SSM_PATH: "/petroglyph/jwt/signing-secret",
+      GITHUB_CLIENT_ID_SSM_PATH: "/petroglyph/production/github/client-id",
+      JWT_SIGNING_SECRET_SSM_PATH: "/petroglyph/production/jwt/signing-secret",
     };
 
     await loadSSMParameters(mockClient, SSM_MAPPINGS, env);
@@ -70,14 +70,14 @@ describe("loadSSMParameters", () => {
 
   it("handles partial mappings (some SSM paths set, some not)", async () => {
     const mockSend = vi.fn().mockResolvedValue({
-      Parameters: [{ Name: "/petroglyph/github/client-id", Value: "test-client-id" }],
+      Parameters: [{ Name: "/petroglyph/production/github/client-id", Value: "test-client-id" }],
     });
     const mockClient = {
       send: mockSend,
     } as unknown as SSMClient;
 
     const env: { [key: string]: string } = {
-      GITHUB_CLIENT_ID_SSM_PATH: "/petroglyph/github/client-id",
+      GITHUB_CLIENT_ID_SSM_PATH: "/petroglyph/production/github/client-id",
       // JWT_SIGNING_SECRET_SSM_PATH is NOT set
     };
 
@@ -91,7 +91,7 @@ describe("loadSSMParameters", () => {
     const mockSend = vi.fn().mockResolvedValue({
       Parameters: [
         // Only one parameter returned, even though two were requested
-        { Name: "/petroglyph/github/client-id", Value: "test-client-id" },
+        { Name: "/petroglyph/production/github/client-id", Value: "test-client-id" },
       ],
     });
     const mockClient = {
@@ -99,8 +99,8 @@ describe("loadSSMParameters", () => {
     } as unknown as SSMClient;
 
     const env: { [key: string]: string } = {
-      GITHUB_CLIENT_ID_SSM_PATH: "/petroglyph/github/client-id",
-      JWT_SIGNING_SECRET_SSM_PATH: "/petroglyph/jwt/signing-secret",
+      GITHUB_CLIENT_ID_SSM_PATH: "/petroglyph/production/github/client-id",
+      JWT_SIGNING_SECRET_SSM_PATH: "/petroglyph/production/jwt/signing-secret",
     };
 
     await loadSSMParameters(mockClient, SSM_MAPPINGS, env);
@@ -112,7 +112,7 @@ describe("loadSSMParameters", () => {
   it("does not overwrite existing target env vars when SSM returns no value", async () => {
     const mockSend = vi.fn().mockResolvedValue({
       Parameters: [
-        { Name: "/petroglyph/github/client-id", Value: undefined }, // No value
+        { Name: "/petroglyph/production/github/client-id", Value: undefined }, // No value
       ],
     });
     const mockClient = {
@@ -120,7 +120,7 @@ describe("loadSSMParameters", () => {
     } as unknown as SSMClient;
 
     const env: { [key: string]: string | undefined } = {
-      GITHUB_CLIENT_ID_SSM_PATH: "/petroglyph/github/client-id",
+      GITHUB_CLIENT_ID_SSM_PATH: "/petroglyph/production/github/client-id",
       GITHUB_CLIENT_ID: "existing-value",
     };
 
@@ -132,13 +132,13 @@ describe("loadSSMParameters", () => {
   it("maps all expected SSM paths to target env vars", async () => {
     const mockSend = vi.fn().mockResolvedValue({
       Parameters: [
-        { Name: "/petroglyph/github/client-id", Value: "github-id" },
-        { Name: "/petroglyph/github/client-secret", Value: "github-secret" },
-        { Name: "/petroglyph/jwt/signing-secret", Value: "jwt-secret" },
-        { Name: "/petroglyph/jwt/private-key", Value: "jwt-private" },
-        { Name: "/petroglyph/jwt/public-key", Value: "jwt-public" },
-        { Name: "/petroglyph/onedrive/client-id", Value: "onedrive-id" },
-        { Name: "/petroglyph/onedrive/client-secret", Value: "onedrive-secret" },
+        { Name: "/petroglyph/production/github/client-id", Value: "github-id" },
+        { Name: "/petroglyph/production/github/client-secret", Value: "github-secret" },
+        { Name: "/petroglyph/production/jwt/signing-secret", Value: "jwt-secret" },
+        { Name: "/petroglyph/production/jwt/private-key", Value: "jwt-private" },
+        { Name: "/petroglyph/production/jwt/public-key", Value: "jwt-public" },
+        { Name: "/petroglyph/production/onedrive/client-id", Value: "onedrive-id" },
+        { Name: "/petroglyph/production/onedrive/client-secret", Value: "onedrive-secret" },
       ],
     });
     const mockClient = {
@@ -146,13 +146,13 @@ describe("loadSSMParameters", () => {
     } as unknown as SSMClient;
 
     const env: { [key: string]: string } = {
-      GITHUB_CLIENT_ID_SSM_PATH: "/petroglyph/github/client-id",
-      GITHUB_CLIENT_SECRET_SSM_PATH: "/petroglyph/github/client-secret",
-      JWT_SIGNING_SECRET_SSM_PATH: "/petroglyph/jwt/signing-secret",
-      JWT_PRIVATE_KEY_SSM_PATH: "/petroglyph/jwt/private-key",
-      JWT_PUBLIC_KEY_SSM_PATH: "/petroglyph/jwt/public-key",
-      ONEDRIVE_CLIENT_ID_SSM_PATH: "/petroglyph/onedrive/client-id",
-      ONEDRIVE_CLIENT_SECRET_SSM_PATH: "/petroglyph/onedrive/client-secret",
+      GITHUB_CLIENT_ID_SSM_PATH: "/petroglyph/production/github/client-id",
+      GITHUB_CLIENT_SECRET_SSM_PATH: "/petroglyph/production/github/client-secret",
+      JWT_SIGNING_SECRET_SSM_PATH: "/petroglyph/production/jwt/signing-secret",
+      JWT_PRIVATE_KEY_SSM_PATH: "/petroglyph/production/jwt/private-key",
+      JWT_PUBLIC_KEY_SSM_PATH: "/petroglyph/production/jwt/public-key",
+      ONEDRIVE_CLIENT_ID_SSM_PATH: "/petroglyph/production/onedrive/client-id",
+      ONEDRIVE_CLIENT_SECRET_SSM_PATH: "/petroglyph/production/onedrive/client-secret",
     };
 
     await loadSSMParameters(mockClient, SSM_MAPPINGS, env);
