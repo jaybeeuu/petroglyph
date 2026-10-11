@@ -5,7 +5,7 @@ import { DynamoDBClient, CreateTableCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { SyncProfile } from "@petroglyph/core";
 import {
-  createStagedIndexStoreDdb,
+  DynamoDBStagedIndexStore,
   S3StagedObjectStore,
   type StagedIndexStore,
   type StagedObjectStore,
@@ -82,7 +82,7 @@ describe("delivery surface /files against LocalStack S3 + DDB", () => {
         BillingMode: "PAY_PER_REQUEST",
       }),
     );
-    index = createStagedIndexStoreDdb({
+    index = new DynamoDBStagedIndexStore({
       client: DynamoDBDocumentClient.from(dynamoClient),
       tableName: RECORDS_TABLE,
     });
