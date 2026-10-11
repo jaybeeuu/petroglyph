@@ -191,6 +191,12 @@ fi
 
 info "Checking deploy managed policy ($DEPLOY_POLICY_NAME)..."
 POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${DEPLOY_POLICY_NAME}"
+# NOTE: LambdaProjectFunctions and ProjectQueues name every function/queue ARN
+# explicitly, matching DynamoDbProjectTables. LambdaEventSourceMappings is the
+# one documented exception: an event-source-mapping ARN embeds an AWS-generated
+# UUID that does not exist until the mapping is created, and the Lambda API does
+# not support resource-level scoping for Create/Get/ListEventSourceMappings. The
+# wildcard is therefore retained and justified in docs/ops.md.
 POLICY_DOC=$(cat << EOF
 {
   "Version": "2012-10-17",
@@ -317,7 +323,16 @@ POLICY_DOC=$(cat << EOF
         "lambda:UntagResource",
         "lambda:ListTags"
       ],
-      "Resource": "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-*"
+      "Resource": [
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-adapter-onedrive-production",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-api-production",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-ingest-onedrive-production",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-processor-production",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-delivery-production",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-forwarder-production",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-sync-relay-production",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-sync-worker-production"
+      ]
     },
     {
       "Sid": "LambdaEventSourceMappings",
@@ -393,7 +408,16 @@ POLICY_DOC=$(cat << EOF
         "sqs:UntagQueue",
         "sqs:ListQueueTags"
       ],
-      "Resource": "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-*"
+      "Resource": [
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-delta-trigger-dlq-production.fifo",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-delta-trigger-production.fifo",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-ingest-dlq-production",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-ingest-production",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-staged-events-dlq-production.fifo",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-staged-events-production.fifo",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-sync-jobs-dlq-production",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-sync-jobs-production"
+      ]
     },
     {
       "Sid": "ProjectSsmParameters",
