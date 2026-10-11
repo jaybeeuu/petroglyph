@@ -19,7 +19,7 @@ Gathered from the code.
 - **The existing integration suites exercise libraries, not deployed handlers.** `processChange`, `applyStaged`, and the Hono router are driven directly; the handler shells and composition roots (`buildDeltaRunner`, `createAdapterHandler`, `createForwarderHandler`) are largely tested with mocked dependencies.
 - **The cross-service contract already exists as code.** `fileStagedEvent`/`fileDeletedEvent` ([`staging-contracts/src/events.ts`](../../packages/staging-contracts/src/events.ts)) are used by the producer ([`ingest-onedrive/src/land/emit.ts`](../../packages/ingest-onedrive/src/land/emit.ts)) and re-parsed by the consumer ([`staging-consumer/src/forwarder.ts`](../../packages/staging-consumer/src/forwarder.ts)). Drift fails `pnpm -r typecheck` in the same commit, so no separate contract suite is needed ([pact-contract-tests.md](pact-contract-tests.md)).
 - **Microsoft Graph has no emulator.** The adapter reads `GRAPH_BASE_URL` ([`lambda_staging.tf`](../../packages/infra/lambda_staging.tf)), so a deployed run can be pointed at a stub.
-- **A missing component is invisible to LocalStack.** The `staged_events` FIFO queue has no deployed consumer (`6ra.5.2.3`, Delivery 2). Only a deployed run can observe that.
+- **A missing component is invisible to LocalStack.** When this was written the `staged_events` FIFO had no deployed consumer — the forwarder published and nothing applied, so `staged_records` stayed empty (`6ra.5.2.3`; wired by `j1gn.55`). Only a deployed run observes a gap of that kind.
 - **The infrastructure is one `production` workspace.** Resource names are workspace-suffixed, but SSM parameter names are global (`/petroglyph/...`, [`ssm.tf`](../../packages/infra/ssm.tf)) and the deploy role trusts `environment:production` ([`bootstrap.sh`](../../packages/infra/scripts/bootstrap.sh)). The deploy pipeline is single-environment and runs on push to `main`.
 
 ## Options considered
@@ -59,7 +59,7 @@ The deploy pipeline promotes through QA: build → package → deploy QA → smo
 - A persistent QA environment to maintain: SSM names must be namespaced and the deploy-role trust extended. Real infra work.
 - No dedicated contract suite: the shared zod schema plus `pnpm -r typecheck` is the drift gate, so a producer→consumer round-trip package would duplicate the contract for no additional failure mode.
 - The deployed smoke mocks Graph, so it proves our path, not Microsoft's. Live Graph stays an occasional manual check.
-- Until the QA smoke exists, the deployed proof for `j1gn.52` is a human run-through, and the missing `staged_events` consumer is visible only there.
+- Until the QA smoke exists, the deployed proof for `j1gn.52` is a human run-through; the `staged_events` consumer gap that motivated this strategy was visible only there (`6ra.5.2.3`, since wired by `j1gn.55`).
 
 ## Validation plan
 
