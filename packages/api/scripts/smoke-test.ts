@@ -1,5 +1,7 @@
 import { pathToFileURL } from "node:url";
 
+import pRetry from "p-retry";
+
 interface UnknownObject {
   readonly [key: string]: unknown;
 }
@@ -19,7 +21,6 @@ export interface SmokeTestSettings {
 export interface SmokeTestOptions {
   readonly lambdaFunctionUrl: string;
   readonly fetchFn: typeof fetch;
-  readonly sleep: (delayMs: number) => Promise<void>;
   readonly log: (message: string) => void;
   readonly settings: SmokeTestSettings;
 }
@@ -173,27 +174,26 @@ async function fetchJson(
   };
 }
 
-async function fetchWithRetry(
+function fetchWithRetry(
   path: string,
   options: SmokeTestOptions,
 ): Promise<{ readonly body: unknown; readonly durationMs: number }> {
   const { retryAttempts, retryDelayMs } = options.settings;
 
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await fetchJson(path, options);
-    } catch (error) {
-      if (attempt >= retryAttempts || !isRetryableError(error)) {
-        throw error;
+  return pRetry(() => fetchJson(path, options), {
+    retries: retryAttempts - 1,
+    minTimeout: retryDelayMs,
+    factor: 2,
+    randomize: true,
+    shouldRetry: ({ error }) => isRetryableError(error),
+    onFailedAttempt: ({ error, attemptNumber, retriesLeft, retryDelay }) => {
+      if (retriesLeft > 0 && isRetryableError(error)) {
+        options.log(
+          `Retrying ${path} after attempt ${attemptNumber} failed: ${getErrorMessage(error)} (waiting ${retryDelay}ms)`,
+        );
       }
-
-      const delayMs = retryDelayMs * 2 ** (attempt - 1);
-      options.log(
-        `Retrying ${path} after attempt ${attempt} failed: ${getErrorMessage(error)} (waiting ${delayMs}ms)`,
-      );
-      await options.sleep(delayMs);
-    }
-  }
+    },
+  });
 }
 
 export async function runSmokeTest(
@@ -237,7 +237,6 @@ async function main(): Promise<void> {
   const options: SmokeTestOptions = {
     lambdaFunctionUrl,
     fetchFn: fetch,
-    sleep: (delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)),
     log: (message: string) => {
       console.log(message);
     },
