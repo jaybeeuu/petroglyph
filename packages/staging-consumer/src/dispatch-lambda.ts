@@ -1,7 +1,7 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { SQSBatchResponse, SQSEvent } from "aws-lambda";
-import { createStagedIndexStoreDdb, S3StagedObjectStore } from "@petroglyph/staging-contracts";
+import { DynamoDBStagedIndexStore, S3StagedObjectStore } from "@petroglyph/staging-contracts";
 import { createDispatchHandler, type DispatchDependencies } from "./dispatch.js";
 
 const docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -26,7 +26,7 @@ function stagedRetentionSeconds(): number | undefined {
 function createDependencies(): DispatchDependencies {
   const ttlSeconds = stagedRetentionSeconds();
   return {
-    index: createStagedIndexStoreDdb({
+    index: new DynamoDBStagedIndexStore({
       client: docClient,
       tableName: requiredEnv("FILE_RECORDS_TABLE"),
     }),

@@ -330,6 +330,7 @@ POLICY_DOC=$(cat << EOF
         "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-ingest-onedrive-production",
         "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-processor-production",
         "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-delivery-production",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-dispatch-production",
         "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-forwarder-production",
         "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-sync-relay-production",
         "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-sync-worker-production"
