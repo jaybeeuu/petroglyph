@@ -415,6 +415,68 @@ resource "aws_iam_role_policy" "petroglyph_staging_forwarder_policy" {
 }
 
 # ---------------------------------------------------------------------------
+# Staging dispatch role (6.5.2.3): staged-events read → index write + object
+# delete. Consumes the queue the forwarder writes; owns record expiry TTL.
+# ---------------------------------------------------------------------------
+
+resource "aws_iam_role" "petroglyph_staging_dispatch_role" {
+  name               = "petroglyph-staging-dispatch-${terraform.workspace}"
+  assume_role_policy = local.lambda_assume_role_policy
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+resource "aws_iam_role_policy" "petroglyph_staging_dispatch_policy" {
+  name = "petroglyph-staging-dispatch-policy"
+  role = aws_iam_role.petroglyph_staging_dispatch_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "SQSReadStagedEvents"
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+        ]
+        Resource = aws_sqs_queue.staged_events.arn
+      },
+      {
+        Sid    = "DynamoDBIndexWrite"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "dynamodb:Scan",
+        ]
+        Resource = aws_dynamodb_table.staged_records.arn
+      },
+      {
+        Sid      = "S3DeleteStagedObjects"
+        Effect   = "Allow"
+        Action   = "s3:DeleteObject"
+        Resource = "${local.staged_bucket_arn}/*"
+      },
+      {
+        Sid    = "CloudWatchLogsWrite"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "${local.lambda_log_group_arn_prefix}/petroglyph-staging-dispatch-${terraform.workspace}:*"
+      },
+    ]
+  })
+}
+
+# ---------------------------------------------------------------------------
 # OneDrive adapter role (6.5.1.1): vault + delta state + profiles + event log,
 # S3 put for landing, delta-trigger queue read, onedrive SSM secrets
 # ---------------------------------------------------------------------------
