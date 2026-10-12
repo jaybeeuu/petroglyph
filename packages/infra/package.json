@@ -6,6 +6,7 @@
   "scripts": {
     "bootstrap": "./scripts/bootstrap.sh",
     "tf:apply": "./scripts/tf-apply.sh",
+    "migrate-ssm": "./scripts/migrate-ssm-namespace.sh",
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsc -p tsconfig.build.json --watch",
     "lint": "eslint .",

@@ -7,7 +7,7 @@ data "aws_ssm_parameter" "onedrive_client_id" {
 }
 
 resource "aws_ssm_parameter" "github_client_id" {
-  name  = "/petroglyph/github/client-id"
+  name  = "${local.ssm_parameter_prefix}/github/client-id"
   type  = "SecureString"
   value = "PLACEHOLDER"
 
@@ -22,7 +22,7 @@ resource "aws_ssm_parameter" "github_client_id" {
 }
 
 resource "aws_ssm_parameter" "github_client_secret" {
-  name  = "/petroglyph/github/client-secret"
+  name  = "${local.ssm_parameter_prefix}/github/client-secret"
   type  = "SecureString"
   value = "PLACEHOLDER"
 
@@ -37,7 +37,7 @@ resource "aws_ssm_parameter" "github_client_secret" {
 }
 
 resource "aws_ssm_parameter" "jwt_signing_secret" {
-  name  = "/petroglyph/jwt/signing-secret"
+  name  = "${local.ssm_parameter_prefix}/jwt/signing-secret"
   type  = "SecureString"
   value = "PLACEHOLDER"
 
@@ -52,7 +52,7 @@ resource "aws_ssm_parameter" "jwt_signing_secret" {
 }
 
 resource "aws_ssm_parameter" "jwt_private_key" {
-  name  = "/petroglyph/jwt/private-key"
+  name  = "${local.ssm_parameter_prefix}/jwt/private-key"
   type  = "SecureString"
   value = "PLACEHOLDER"
 
@@ -66,7 +66,7 @@ resource "aws_ssm_parameter" "jwt_private_key" {
 }
 
 resource "aws_ssm_parameter" "jwt_public_key" {
-  name  = "/petroglyph/jwt/public-key"
+  name  = "${local.ssm_parameter_prefix}/jwt/public-key"
   type  = "SecureString"
   value = "PLACEHOLDER"
 
@@ -80,7 +80,7 @@ resource "aws_ssm_parameter" "jwt_public_key" {
 }
 
 resource "aws_ssm_parameter" "onedrive_client_id" {
-  name  = "/petroglyph/onedrive/client-id"
+  name  = "${local.ssm_parameter_prefix}/onedrive/client-id"
   type  = "SecureString"
   value = "PLACEHOLDER"
 
@@ -95,7 +95,7 @@ resource "aws_ssm_parameter" "onedrive_client_id" {
 }
 
 resource "aws_ssm_parameter" "onedrive_client_secret" {
-  name  = "/petroglyph/onedrive/client-secret"
+  name  = "${local.ssm_parameter_prefix}/onedrive/client-secret"
   type  = "SecureString"
   value = "PLACEHOLDER"
 
@@ -110,7 +110,7 @@ resource "aws_ssm_parameter" "onedrive_client_secret" {
 }
 
 resource "aws_ssm_parameter" "onedrive_access_token" {
-  name  = "/petroglyph/onedrive/access-token"
+  name  = "${local.ssm_parameter_prefix}/onedrive/access-token"
   type  = "SecureString"
   value = "PLACEHOLDER"
 
@@ -125,7 +125,7 @@ resource "aws_ssm_parameter" "onedrive_access_token" {
 }
 
 resource "aws_ssm_parameter" "onedrive_refresh_token" {
-  name  = "/petroglyph/onedrive/refresh-token"
+  name  = "${local.ssm_parameter_prefix}/onedrive/refresh-token"
   type  = "SecureString"
   value = "PLACEHOLDER"
 
@@ -140,7 +140,7 @@ resource "aws_ssm_parameter" "onedrive_refresh_token" {
 }
 
 resource "aws_ssm_parameter" "onedrive_token_expiry" {
-  name  = "/petroglyph/onedrive/token-expiry"
+  name  = "${local.ssm_parameter_prefix}/onedrive/token-expiry"
   type  = "SecureString"
   value = "PLACEHOLDER"
 
@@ -155,7 +155,7 @@ resource "aws_ssm_parameter" "onedrive_token_expiry" {
 }
 
 resource "aws_ssm_parameter" "graph_subscription_id" {
-  name  = "/petroglyph/graph/subscription-id"
+  name  = "${local.ssm_parameter_prefix}/graph/subscription-id"
   type  = "SecureString"
   value = "PLACEHOLDER"
 
@@ -170,7 +170,7 @@ resource "aws_ssm_parameter" "graph_subscription_id" {
 }
 
 resource "aws_ssm_parameter" "config_target_branch" {
-  name  = "/petroglyph/config/target-branch"
+  name  = "${local.ssm_parameter_prefix}/config/target-branch"
   type  = "SecureString"
   value = "PLACEHOLDER"
 
@@ -185,7 +185,7 @@ resource "aws_ssm_parameter" "config_target_branch" {
 }
 
 resource "aws_ssm_parameter" "config_initial_sync" {
-  name  = "/petroglyph/config/initial-sync"
+  name  = "${local.ssm_parameter_prefix}/config/initial-sync"
   type  = "SecureString"
   value = "PLACEHOLDER"
 
@@ -200,7 +200,7 @@ resource "aws_ssm_parameter" "config_initial_sync" {
 }
 
 resource "aws_ssm_parameter" "config_retention_days" {
-  name  = "/petroglyph/config/retention-days"
+  name  = "${local.ssm_parameter_prefix}/config/retention-days"
   type  = "SecureString"
   value = "90"
 

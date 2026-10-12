@@ -79,13 +79,31 @@ Before running `terraform apply` for the first time, the bootstrap resources mus
 
 This creates and verifies the following (bucket names embed your AWS account ID to guarantee global S3 uniqueness):
 
-| Resource           | Name pattern                                  | Purpose                                                                                |
-| ------------------ | --------------------------------------------- | -------------------------------------------------------------------------------------- |
-| S3 bucket          | `petroglyph-terraform-state-<ACCOUNT_ID>`     | Terraform remote state storage                                                         |
-| DynamoDB table     | `petroglyph-terraform-locks`                  | Terraform state locking                                                                |
-| S3 bucket          | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`    | Lambda deployment ZIP artifacts                                                        |
-| IAM managed policy | `petroglyph-github-actions-deploy-production` | Deploy role permissions; bootstrap.sh converges it to the checked-in document on drift |
-| IAM role           | `petroglyph-github-actions-plan`              | Read-only role assumed by the PR-time terraform plan workflow                          |
+| Resource           | Name pattern                                     | Purpose                                                                                                         |
+| ------------------ | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| S3 bucket          | `petroglyph-terraform-state-<ACCOUNT_ID>`        | Terraform remote state storage                                                                                  |
+| DynamoDB table     | `petroglyph-terraform-locks`                     | Terraform state locking                                                                                         |
+| S3 bucket          | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`       | Lambda deployment ZIP artifacts                                                                                 |
+| IAM managed policy | `petroglyph-github-actions-deploy-<ENVIRONMENT>` | Deploy permissions, one policy per environment; bootstrap.sh converges each to the checked-in document on drift |
+| IAM role           | `petroglyph-github-actions-deploy-<ENVIRONMENT>` | OIDC deploy role for the `production` and `qa` GitHub environments                                              |
+| IAM role           | `petroglyph-github-actions-plan`                 | Read-only role assumed by the PR-time terraform plan workflow                                                   |
+
+### Environments
+
+The stack runs in two persistent Terraform workspaces on the same S3 backend key (`petroglyph/terraform.tfstate`; workspaces namespace the state under `env:/<workspace>/…`):
+
+| Environment  | Terraform workspace | GitHub environment | Custom domain           | Purpose                                                      |
+| ------------ | ------------------- | ------------------ | ----------------------- | ------------------------------------------------------------ |
+| `production` | `production`        | `production`       | `api.petroglyph.page`   | The live tier. Main-only; the PR merge is the deploy gate.   |
+| `qa`         | `qa`                | `qa`               | (raw `execute-api` URL) | The deployed-smoke tier; carries the Graph stub in `up9y.4`. |
+
+`.github/workflows/deploy.yml` runs both deploy jobs from the shared build/package artifacts. Each job takes its GitHub environment, Terraform workspace and `api_custom_domain` from job-level values, so the production job is unchanged and the QA job deploys its own workspace. The job creates the workspace if it does not exist (`terraform workspace select qa || terraform workspace new qa`).
+
+The QA tier's resources are provisioned once by an admin, exactly as production was: the deploy role's managed policy manages existing staged/serving resources but does not grant bucket creation, so a first-time apply runs as `petroglyph-admin` (`./scripts/tf-apply.sh --workspace qa`). After that the `deploy-qa` job maintains the tier on each merge.
+
+### SSM parameter namespacing
+
+Every SSM parameter is namespaced by Terraform workspace: `/petroglyph/<workspace>/<category>/<leaf>`. Before the QA tier the parameters were global (`/petroglyph/<category>/<leaf>`), which two workspaces would fight over. The Lambda roles' `ssm:GetParameter` grants and `*_SSM_PATH` environment variables follow the workspace automatically. Production also has the values migrated once (see [SSM parameter migration](#ssm-parameter-migration-one-time)).
 
 ### Guardrails
 
@@ -94,18 +112,29 @@ This creates and verifies the following (bucket names embed your AWS account ID 
 - **Resource additions extend bootstrap.sh in the same change**: any work adding an AWS resource under `packages/infra/*.tf` must add the required ARNs/actions to `bootstrap.sh` in the same commit.
 - **Single source of truth**: `bootstrap.sh` is the source of truth for the deploy policy; the live policy converges to the checked-in document via the node drift-check (commit 4a888fb). Re-run `bootstrap.sh` after any policy change.
 - **Terraform checks run at PR time**: `.github/workflows/terraform.yml` runs on pull requests that touch `packages/infra/**/*.tf` and performs `terraform fmt -check`, `terraform init`, `terraform validate` and a read-only `terraform plan -refresh=false -lock=false -detailed-exitcode` with the same `-var` set as the CD apply (non-empty artifact bucket, placeholder keys). The plan diff is posted to the PR as a collapsed comment that is updated in place. The job fails only when the plan itself errors — exit code 2 (changes present) is the normal outcome for an infra PR. Formatting drift in files the PR does not touch is reported as a warning rather than a failure, so pre-existing drift does not block unrelated changes.
-- **Plan role is read-only**: the PR job assumes `petroglyph-github-actions-plan`, trusted for `repo:jaybeeuu/petroglyph:environment:terraform-plan`. Its permissions are read-only: the Terraform state bucket (`s3:GetObject`, `s3:ListBucket`), `ssm:GetParameter` on `/petroglyph/onedrive/client-id` with the matching `kms:Decrypt` scoped to `ssm.eu-west-2.amazonaws.com`, and `dynamodb:DescribeTable` on `table/petroglyph-*`. Those reads are forced by Terraform's plan phase even with `-refresh=false`: data sources are always read (`data.aws_ssm_parameter.onedrive_client_id` feeds two Lambda env vars), and the AWS provider's `aws_dynamodb_table` runs `validateTableAttributes` in `CustomizeDiff`, which calls `DescribeTable` for every table resource. No write or data-plane action is granted, so a pull request can never create, update or delete infrastructure, and it cannot assume the production deploy role. Because it holds no write permissions, the PR plan does not replace review: a dropped DLQ alarm or a widened IAM statement still plans cleanly.
+- **Plan role is read-only**: the PR job assumes `petroglyph-github-actions-plan`, trusted for `repo:jaybeeuu/petroglyph:environment:terraform-plan`. Its permissions are read-only: the Terraform state bucket (`s3:GetObject`, `s3:ListBucket`), `ssm:GetParameter` on `/petroglyph/production/onedrive/client-id` with the matching `kms:Decrypt` scoped to `ssm.eu-west-2.amazonaws.com`, and `dynamodb:DescribeTable` on `table/petroglyph-*`. Those reads are forced by Terraform's plan phase even with `-refresh=false`: data sources are always read (`data.aws_ssm_parameter.onedrive_client_id` feeds two Lambda env vars), and the AWS provider's `aws_dynamodb_table` runs `validateTableAttributes` in `CustomizeDiff`, which calls `DescribeTable` for every table resource. No write or data-plane action is granted, so a pull request can never create, update or delete infrastructure, and it cannot assume the production deploy role. Because it holds no write permissions, the PR plan does not replace review: a dropped DLQ alarm or a widened IAM statement still plans cleanly.
 - **PR plan skips without credentials**: fork PRs and PRs raised before the `terraform-plan` environment is configured have no plan secrets, so the job skips cleanly instead of failing.
 
-Once applied, the following values are needed as GitHub Actions secrets on the `production` environment for CD:
+Once applied, the following values are needed as GitHub Actions secrets on **each** deploy environment for CD. `production` and `qa` hold their own `AWS_ROLE_ARN` (each deploy job declares its environment, so the secret resolves per environment); the bucket names are shared.
 
-| Secret                   | Description                                          |
-| ------------------------ | ---------------------------------------------------- |
-| `AWS_ROLE_ARN`           | ARN of the IAM role assumed via OIDC for deployments |
-| `TF_STATE_BUCKET`        | `petroglyph-terraform-state-<ACCOUNT_ID>`            |
-| `LAMBDA_ARTIFACT_BUCKET` | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`           |
+| Secret                   | Description                                        |
+| ------------------------ | -------------------------------------------------- |
+| `AWS_ROLE_ARN`           | ARN of the environment's IAM role assumed via OIDC |
+| `TF_STATE_BUCKET`        | `petroglyph-terraform-state-<ACCOUNT_ID>`          |
+| `LAMBDA_ARTIFACT_BUCKET` | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`         |
 
-Configure the `production` environment so only `main` can deploy. There is no separate deployment-review gate on the environment: merging a PR to `main` deploys immediately, so **the PR review and merge is the deployment gate** — review the `.tf` diff knowing it will apply on merge. See [CONTRIBUTING.md](../CONTRIBUTING.md#cd-secrets) for how to configure these secrets.
+Configure the `production` environment so only `main` can deploy, and create a `qa` environment with the same secrets but `AWS_ROLE_ARN = arn:aws:iam::<ACCOUNT_ID>:role/petroglyph-github-actions-deploy-qa`. There is no separate deployment-review gate on the `production` environment: merging a PR to `main` deploys immediately, so **the PR review and merge is the deployment gate** — review the `.tf` diff knowing it will apply on merge. See [CONTRIBUTING.md](../CONTRIBUTING.md#cd-secrets) for how to configure these secrets.
+
+### SSM parameter migration (one-time)
+
+`aws_ssm_parameter.name` is `ForceNew`, so the namespace rename _replaces_ every parameter — destroying the hand-entered SecureString values. Run the one-time migration as `petroglyph-admin` before the first deploy that carries the namespaced `ssm.tf`:
+
+```sh
+cd packages/infra
+./scripts/migrate-ssm-namespace.sh --profile petroglyph-admin --workspace production
+```
+
+The script snapshots every legacy parameter (names, values and types) to a `chmod 600` JSON file under `packages/infra/`, applies the rename with `terraform apply -target` scoped to the `aws_ssm_parameter` resources, then writes the values back to `/petroglyph/production/…`. Verify the namespaced parameters, then delete the snapshot. The snapshot is the rollback artefact: the migration never re-keys a secret by hand, and re-running it is a no-op once nothing legacy remains.
 
 PR-time plans read their credentials from a separate `terraform-plan` environment. It must have **no branch restriction** (the job runs on pull requests from any branch) and hold the same state/artifact bucket names plus the read-only role ARN:
 
@@ -155,11 +184,11 @@ Used for user login (`GET /auth/url` → `GET /auth/callback`).
 
    ```sh
    aws ssm put-parameter --profile petroglyph-admin \
-     --name /petroglyph/github/client-id \
+     --name /petroglyph/production/github/client-id \
      --value "<client-id>" --type SecureString --overwrite
 
    aws ssm put-parameter --profile petroglyph-admin \
-     --name /petroglyph/github/client-secret \
+     --name /petroglyph/production/github/client-secret \
      --value "<client-secret>" --type SecureString --overwrite
    ```
 
@@ -194,11 +223,11 @@ Used for OneDrive connection (`GET /onedrive/auth-url` → `GET /onedrive/connec
 
    ```sh
    aws ssm put-parameter --profile petroglyph-admin \
-     --name /petroglyph/onedrive/client-id \
+     --name /petroglyph/production/onedrive/client-id \
      --value "<application-client-id>" --type SecureString --overwrite
 
    aws ssm put-parameter --profile petroglyph-admin \
-     --name /petroglyph/onedrive/client-secret \
+     --name /petroglyph/production/onedrive/client-secret \
      --value "<client-secret-value>" --type SecureString --overwrite
    ```
 

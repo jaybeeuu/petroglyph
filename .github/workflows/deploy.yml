@@ -91,13 +91,20 @@ jobs:
           name: staging-delivery-zip
           path: packages/staging-delivery/lambda.zip
 
-  deploy:
+  # Deploy jobs are identical apart from their GitHub environment, Terraform
+  # workspace and custom domain. `deploy-qa` defines the shared step list as a
+  # YAML anchor; `deploy-production` reuses it. Each job declares its own
+  # `environment`, so `secrets.AWS_ROLE_ARN` resolves to that environment's
+  # deploy role — `petroglyph-github-actions-deploy-qa` cannot deploy production.
+  deploy-qa:
     needs: [package]
-    environment: production
+    environment: qa
     runs-on: ubuntu-latest
     env:
       AWS_REGION: eu-west-2
-    steps:
+      TF_WORKSPACE: qa
+      API_CUSTOM_DOMAIN: ""
+    steps: &deploy_steps
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v5
         with:
@@ -248,7 +255,7 @@ jobs:
       - name: Terraform workspace
         working-directory: packages/infra
         run: |
-          terraform workspace select production || terraform workspace new production
+          terraform workspace select "${TF_WORKSPACE}" || terraform workspace new "${TF_WORKSPACE}"
       - name: Terraform apply
         working-directory: packages/infra
         run: |
@@ -267,7 +274,7 @@ jobs:
             -var="forwarder_zip_s3_key=forwarder-${{ steps.forwarder-artifact-hash.outputs.hash }}.zip" \
             -var="staging_delivery_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
             -var="staging_delivery_zip_s3_key=staging-delivery-${{ steps.delivery-artifact-hash.outputs.hash }}.zip" \
-            -var="api_custom_domain=api.petroglyph.page"
+            -var="api_custom_domain=${API_CUSTOM_DOMAIN}"
       - name: Capture API function URL
         id: api-function-url
         working-directory: packages/infra
@@ -277,3 +284,13 @@ jobs:
         env:
           LAMBDA_FUNCTION_URL: ${{ steps.api-function-url.outputs.url }}
         run: pnpm --filter @petroglyph/api smoke-test
+
+  deploy-production:
+    needs: [package]
+    environment: production
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: eu-west-2
+      TF_WORKSPACE: production
+      API_CUSTOM_DOMAIN: api.petroglyph.page
+    steps: *deploy_steps

@@ -18,7 +18,8 @@ locals {
   delta_tokens_table_name = "petroglyph-delta-tokens-${terraform.workspace}"
   delta_tokens_table_arn  = "arn:aws:dynamodb:${local.aws_region}:*:table/${local.delta_tokens_table_name}"
 
-  ssm_arn_prefix = "arn:aws:ssm:${local.aws_region}:*:parameter"
+  ssm_arn_prefix           = "arn:aws:ssm:${local.aws_region}:*:parameter"
+  ssm_parameter_arn_prefix = "${local.ssm_arn_prefix}${local.ssm_parameter_prefix}"
 
   lambda_log_group_arn_prefix = "arn:aws:logs:${local.aws_region}:*:log-group:/aws/lambda"
 }
@@ -87,10 +88,10 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
         Effect = "Allow"
         Action = ["ssm:GetParameter", "ssm:GetParameters"]
         Resource = [
-          "${local.ssm_arn_prefix}/petroglyph/github/*",
-          "${local.ssm_arn_prefix}/petroglyph/jwt/*",
-          "${local.ssm_arn_prefix}/petroglyph/onedrive/*",
-          "${local.ssm_arn_prefix}/petroglyph/config/*",
+          "${local.ssm_parameter_arn_prefix}/github/*",
+          "${local.ssm_parameter_arn_prefix}/jwt/*",
+          "${local.ssm_parameter_arn_prefix}/onedrive/*",
+          "${local.ssm_parameter_arn_prefix}/config/*",
         ]
       },
       {
@@ -137,8 +138,8 @@ resource "aws_iam_role_policy" "petroglyph_ingest_onedrive_policy" {
         Effect = "Allow"
         Action = "ssm:GetParameter"
         Resource = [
-          "${local.ssm_arn_prefix}/petroglyph/onedrive/*",
-          "${local.ssm_arn_prefix}/petroglyph/graph/*",
+          "${local.ssm_parameter_arn_prefix}/onedrive/*",
+          "${local.ssm_parameter_arn_prefix}/graph/*",
         ]
       },
       {
@@ -200,7 +201,7 @@ resource "aws_iam_role_policy" "petroglyph_processor_policy" {
           "ssm:GetParameter",
           "ssm:PutParameter",
         ]
-        Resource = "${local.ssm_arn_prefix}/petroglyph/onedrive/*"
+        Resource = "${local.ssm_parameter_arn_prefix}/onedrive/*"
       },
       {
         Sid    = "SQSReadIngestQueue"
@@ -346,7 +347,7 @@ resource "aws_iam_role_policy" "petroglyph_sync_worker_policy" {
           "ssm:GetParameter",
           "ssm:PutParameter",
         ]
-        Resource = "${local.ssm_arn_prefix}/petroglyph/onedrive/*"
+        Resource = "${local.ssm_parameter_arn_prefix}/onedrive/*"
       },
       {
         Sid    = "CloudWatchLogsWrite"
@@ -552,7 +553,7 @@ resource "aws_iam_role_policy" "petroglyph_adapter_onedrive_policy" {
         Sid      = "SSMReadOnedriveSecrets"
         Effect   = "Allow"
         Action   = "ssm:GetParameter"
-        Resource = "${local.ssm_arn_prefix}/petroglyph/onedrive/*"
+        Resource = "${local.ssm_parameter_arn_prefix}/onedrive/*"
       },
       {
         Sid    = "CloudWatchLogsWrite"
@@ -616,7 +617,7 @@ resource "aws_iam_role_policy" "petroglyph_staging_delivery_policy" {
         Sid      = "SSMReadJwtPublicKey"
         Effect   = "Allow"
         Action   = "ssm:GetParameter"
-        Resource = "${local.ssm_arn_prefix}/petroglyph/jwt/*"
+        Resource = "${local.ssm_parameter_arn_prefix}/jwt/*"
       },
       {
         Sid    = "CloudWatchLogsWrite"

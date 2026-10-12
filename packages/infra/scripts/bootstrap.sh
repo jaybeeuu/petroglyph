@@ -141,14 +141,13 @@ EOF
   success "Placeholder zip uploaded"
 fi
 
-# ── Step 6: GitHub Actions deploy role ───────────────────────────────────────
+# ── Step 6: GitHub Actions deploy roles ──────────────────────────────────────
 #
-# This role is assumed by GitHub Actions via OIDC. It is not managed by
-# Terraform (to avoid a chicken-and-egg problem where Terraform needs the role
-# to run). It must be created once via this script.
-
-GITHUB_ACTIONS_ROLE="petroglyph-github-actions-deploy-production"
-DEPLOY_POLICY_NAME="petroglyph-github-actions-deploy-production"
+# One deploy role per environment. Each is assumed by its own GitHub
+# environment via OIDC and trusts only that environment's subject, so a QA job
+# cannot assume the production deploy role. They are not managed by Terraform
+# (to avoid a chicken-and-egg problem where Terraform needs the role to run);
+# they must be created once via this script.
 
 info "Checking GitHub OIDC provider..."
 OIDC_PROVIDER_ARN="arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
@@ -162,6 +161,10 @@ else
     --thumbprint-list "6938fd4d98bab03faadb97b34396831e3780aea1"
   success "GitHub OIDC provider created"
 fi
+
+for DEPLOY_ENVIRONMENT in production qa; do
+GITHUB_ACTIONS_ROLE="petroglyph-github-actions-deploy-${DEPLOY_ENVIRONMENT}"
+DEPLOY_POLICY_NAME="petroglyph-github-actions-deploy-${DEPLOY_ENVIRONMENT}"
 
 info "Checking deploy role ($GITHUB_ACTIONS_ROLE)..."
 if $AWS iam get-role --role-name "$GITHUB_ACTIONS_ROLE" &>/dev/null; then
@@ -180,7 +183,7 @@ else
         \"Action\": \"sts:AssumeRoleWithWebIdentity\",
         \"Condition\": {
           \"StringEquals\": {
-            \"token.actions.githubusercontent.com:sub\": \"repo:jaybeeuu/petroglyph:environment:production\",
+            \"token.actions.githubusercontent.com:sub\": \"repo:jaybeeuu/petroglyph:environment:${DEPLOY_ENVIRONMENT}\",
             \"token.actions.githubusercontent.com:aud\": \"sts.amazonaws.com\"
           }
         }
@@ -239,7 +242,7 @@ POLICY_DOC=$(cat << EOF
       "Resource": [
         "arn:aws:s3:::petroglyph-terraform-state-${ACCOUNT_ID}",
         "arn:aws:s3:::petroglyph-lambda-artifacts-${ACCOUNT_ID}",
-        "arn:aws:s3:::petroglyph-staged-pdfs-production"
+        "arn:aws:s3:::petroglyph-staged-pdfs-${DEPLOY_ENVIRONMENT}"
       ]
     },
     {
@@ -255,7 +258,7 @@ POLICY_DOC=$(cat << EOF
       "Resource": [
         "arn:aws:s3:::petroglyph-terraform-state-${ACCOUNT_ID}/*",
         "arn:aws:s3:::petroglyph-lambda-artifacts-${ACCOUNT_ID}/*",
-        "arn:aws:s3:::petroglyph-staged-pdfs-production/*"
+        "arn:aws:s3:::petroglyph-staged-pdfs-${DEPLOY_ENVIRONMENT}/*"
       ]
     },
     {
@@ -283,16 +286,16 @@ POLICY_DOC=$(cat << EOF
       ],
       "Resource": [
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-terraform-locks",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-users-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-refresh-tokens-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-profiles-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-file-records-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-tokens-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-jobs-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-event-log-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-staged-records-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-token-vaults-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-states-production"
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-users-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-refresh-tokens-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-profiles-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-file-records-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-tokens-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-jobs-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-event-log-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-staged-records-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-token-vaults-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-states-${DEPLOY_ENVIRONMENT}"
       ]
     },
     {
@@ -534,6 +537,7 @@ else
     --policy-arn "$POLICY_ARN"
   success "Managed policy attached"
 fi
+done
 
 # ── Step 7: GitHub Actions read-only plan role ───────────────────────────────
 #
@@ -599,7 +603,7 @@ PLAN_POLICY_DOC=$(cat << EOF
       "Sid": "PlanTimeParameterRead",
       "Effect": "Allow",
       "Action": "ssm:GetParameter",
-      "Resource": "arn:aws:ssm:eu-west-2:${ACCOUNT_ID}:parameter/petroglyph/onedrive/client-id"
+      "Resource": "arn:aws:ssm:eu-west-2:${ACCOUNT_ID}:parameter/petroglyph/production/onedrive/client-id"
     },
     {
       "Sid": "PlanTimeParameterDecrypt",
@@ -668,11 +672,15 @@ echo "  Bootstrap complete."
 echo ""
 echo "  TF_STATE_BUCKET        = $TF_STATE_BUCKET"
 echo "  LAMBDA_ARTIFACT_BUCKET = $LAMBDA_ARTIFACT_BUCKET"
-echo "  DEPLOY_ROLE_ARN        = arn:aws:iam::${ACCOUNT_ID}:role/${GITHUB_ACTIONS_ROLE}"
 echo "  PLAN_ROLE_ARN          = arn:aws:iam::${ACCOUNT_ID}:role/${PLAN_ROLE}"
 echo ""
 echo "  Set these GitHub Actions secrets on the 'production' environment:"
-echo "    AWS_ROLE_ARN           = arn:aws:iam::${ACCOUNT_ID}:role/${GITHUB_ACTIONS_ROLE}"
+echo "    AWS_ROLE_ARN           = arn:aws:iam::${ACCOUNT_ID}:role/petroglyph-github-actions-deploy-production"
+echo "    TF_STATE_BUCKET        = $TF_STATE_BUCKET"
+echo "    LAMBDA_ARTIFACT_BUCKET = $LAMBDA_ARTIFACT_BUCKET"
+echo ""
+echo "  Set these GitHub Actions secrets on the 'qa' environment:"
+echo "    AWS_ROLE_ARN           = arn:aws:iam::${ACCOUNT_ID}:role/petroglyph-github-actions-deploy-qa"
 echo "    TF_STATE_BUCKET        = $TF_STATE_BUCKET"
 echo "    LAMBDA_ARTIFACT_BUCKET = $LAMBDA_ARTIFACT_BUCKET"
 echo ""
