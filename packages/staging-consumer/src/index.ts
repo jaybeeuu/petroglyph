@@ -1,4 +1,4 @@
-export { stagedRecordSchema, createStagedIndexStoreDdb } from "@petroglyph/staging-contracts";
+export { stagedRecordSchema, DynamoDBStagedIndexStore } from "@petroglyph/staging-contracts";
 export type { StagedRecord, StagedIndexStore, FeedPage } from "@petroglyph/staging-contracts";
 export { applyStaged, applyDeleted } from "./index-apply.js";
 export type { ApplyStagedOptions } from "./index-apply.js";

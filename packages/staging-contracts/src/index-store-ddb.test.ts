@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { createStagedIndexStoreDdb } from "./index-store-ddb.js";
+import { DynamoDBStagedIndexStore } from "./index-store-ddb.js";
 import type { StagedRecord } from "./record.js";
 
 function commandCall(
@@ -27,12 +27,12 @@ function createRecord(overrides: Partial<StagedRecord> = {}): StagedRecord {
   };
 }
 
-describe("createStagedIndexStoreDdb", () => {
+describe("DynamoDBStagedIndexStore", () => {
   const options = { tableName: "petroglyph-file-records" };
 
   it("upserts the record under the composite {profileId, itemId} key", async () => {
     const send = vi.fn().mockResolvedValue({});
-    const store = createStagedIndexStoreDdb({
+    const store = new DynamoDBStagedIndexStore({
       ...options,
       client: { send } as unknown as DynamoDBDocumentClient,
     });
@@ -51,7 +51,7 @@ describe("createStagedIndexStoreDdb", () => {
   it("reads a record back keyed by profileId+itemId, null when absent", async () => {
     const record = createRecord();
     const send = vi.fn().mockResolvedValueOnce({ Item: record }).mockResolvedValueOnce({});
-    const store = createStagedIndexStoreDdb({
+    const store = new DynamoDBStagedIndexStore({
       ...options,
       client: { send } as unknown as DynamoDBDocumentClient,
     });
@@ -67,7 +67,7 @@ describe("createStagedIndexStoreDdb", () => {
 
   it("removes a record idempotently", async () => {
     const send = vi.fn().mockResolvedValue({});
-    const store = createStagedIndexStoreDdb({
+    const store = new DynamoDBStagedIndexStore({
       ...options,
       client: { send } as unknown as DynamoDBDocumentClient,
     });
@@ -90,7 +90,7 @@ describe("createStagedIndexStoreDdb", () => {
         LastEvaluatedKey: { profileId: "p1", itemId: "item-1" },
       })
       .mockResolvedValueOnce({ Items: [] });
-    const store = createStagedIndexStoreDdb({
+    const store = new DynamoDBStagedIndexStore({
       ...options,
       client: { send } as unknown as DynamoDBDocumentClient,
     });
@@ -113,7 +113,7 @@ describe("createStagedIndexStoreDdb", () => {
 
   it("lists records under a path and removes them in one sweep", async () => {
     const send = vi.fn().mockResolvedValue({});
-    const store = createStagedIndexStoreDdb({
+    const store = new DynamoDBStagedIndexStore({
       ...options,
       client: { send } as unknown as DynamoDBDocumentClient,
     });

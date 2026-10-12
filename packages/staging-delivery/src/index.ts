@@ -1,5 +1,5 @@
 import { listProfiles } from "@petroglyph/core";
-import { createStagedIndexStoreDdb, S3StagedObjectStore } from "@petroglyph/staging-contracts";
+import { DynamoDBStagedIndexStore, S3StagedObjectStore } from "@petroglyph/staging-contracts";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { handle } from "hono/aws-lambda";
@@ -43,7 +43,7 @@ export function createApp(): Hono {
   app.route(
     "/",
     createFilesRouter({
-      index: createStagedIndexStoreDdb({
+      index: new DynamoDBStagedIndexStore({
         client: docClient,
         tableName: fileRecordsTableName(),
       }),
