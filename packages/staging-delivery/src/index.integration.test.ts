@@ -6,7 +6,7 @@ import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { PutParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import type { LambdaEvent, handle } from "hono/aws-lambda";
 import { putProfile, type SyncProfile } from "@petroglyph/core";
-import { createStagedIndexStoreDdb } from "@petroglyph/staging-contracts";
+import { DynamoDBStagedIndexStore } from "@petroglyph/staging-contracts";
 import { SignJWT, exportSPKI, generateKeyPair } from "jose";
 
 const REGION = "eu-west-2";
@@ -144,7 +144,7 @@ describe("delivery app handler against LocalStack S3 + staged records", () => {
       .sign(privateKey)}`;
 
     await putProfile(dynamo, PROFILES_TABLE, PROFILE);
-    const index = createStagedIndexStoreDdb({ client: dynamo, tableName: FILE_RECORDS_TABLE });
+    const index = new DynamoDBStagedIndexStore({ client: dynamo, tableName: FILE_RECORDS_TABLE });
     await index.upsert({
       profileId: "p1",
       itemId: ITEM_ID,
