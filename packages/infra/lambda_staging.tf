@@ -231,8 +231,8 @@ resource "aws_lambda_function" "petroglyph_adapter_onedrive" {
       STAGED_PDFS_BUCKET              = aws_s3_bucket.staged_pdfs.id
       ONEDRIVE_CLIENT_ID_SSM_PATH     = aws_ssm_parameter.onedrive_client_id.name
       ONEDRIVE_CLIENT_SECRET_SSM_PATH = aws_ssm_parameter.onedrive_client_secret.name
-      GRAPH_BASE_URL                  = var.graph_base_url
-      GRAPH_DRIVE_ROOT_DELTA_URL      = "${var.graph_base_url}/me/drive/root/delta?$select=id,name,eTag,parentReference,file,folder,deleted"
+      GRAPH_BASE_URL                  = local.adapter_graph_base_url
+      GRAPH_DRIVE_ROOT_DELTA_URL      = "${local.adapter_graph_base_url}/me/drive/root/delta?$select=id,name,eTag,parentReference,file,folder,deleted"
     }
   }
 
