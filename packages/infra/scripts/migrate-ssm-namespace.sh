@@ -113,6 +113,19 @@ AWS_PROFILE="$PROFILE" terraform init -reconfigure \
 AWS_PROFILE="$PROFILE" terraform workspace select "$WORKSPACE" 2>/dev/null \
   || AWS_PROFILE="$PROFILE" terraform workspace new "$WORKSPACE"
 
+# A -target plan must still include every instance whose state address has moved
+# in the current configuration, or Terraform aborts with "Moved resource
+# instances excluded by targeting". The four DLQ alarms gained
+# `count = terraform.workspace == "production" ? 1 : 0` in the same change that
+# namespaced SSM, so their addresses move to `[0]`. Include any that are still
+# at the unindexed address; the move itself is a state-only no-op.
+MOVED_RESOURCES=(
+  aws_cloudwatch_metric_alarm.delta_trigger_dlq_depth
+  aws_cloudwatch_metric_alarm.ingest_dlq_depth
+  aws_cloudwatch_metric_alarm.staged_events_dlq_depth
+  aws_cloudwatch_metric_alarm.sync_jobs_dlq_depth
+)
+
 TARGETS=()
 while IFS= read -r address; do
   [[ -n "$address" ]] && TARGETS+=("-target=$address")
@@ -121,11 +134,18 @@ done < <(AWS_PROFILE="$PROFILE" terraform state list | grep -E '^aws_ssm_paramet
 if [[ "${#TARGETS[@]}" -eq 0 ]]; then
   fail "No aws_ssm_parameter resources in the $WORKSPACE state — apply the stack first."
 fi
+SSM_TARGET_COUNT="${#TARGETS[@]}"
+
+for address in "${MOVED_RESOURCES[@]}"; do
+  if AWS_PROFILE="$PROFILE" terraform state list "$address" 2>/dev/null | grep -qx "$address"; then
+    TARGETS+=("-target=$address")
+  fi
+done
 
 AWS_PROFILE="$PROFILE" terraform apply -auto-approve -refresh=false "${TARGETS[@]}" \
   -var="api_zip_s3_bucket=unused" \
   -var="api_zip_s3_key=unused" >/dev/null
-success "Rename applied — ${#TARGETS[@]} namespaced parameters in place"
+success "Rename applied — $SSM_TARGET_COUNT namespaced parameters in place"
 
 # ── Step 4: Restore the values to the namespaced paths ────────────────────────
 

@@ -46,20 +46,25 @@ const TERRAFORM_STUB = `#!/usr/bin/env node
 const { appendFileSync } = require("node:fs");
 const args = process.argv.slice(2);
 if (args[0] === "state" && args[1] === "list") {
-  process.stdout.write(
-    [
-      "aws_ssm_parameter.github_client_id",
-      "aws_ssm_parameter.onedrive_client_secret",
-      "aws_ssm_parameter.jwt_private_key",
-    ].join("\\n") + "\\n",
-  );
+  const address = args[2];
+  if (address === undefined) {
+    process.stdout.write(
+      [
+        "aws_ssm_parameter.github_client_id",
+        "aws_ssm_parameter.onedrive_client_secret",
+        "aws_ssm_parameter.jwt_private_key",
+      ].join("\\n") + "\\n",
+    );
+  } else if ((process.env.PETROGLYPH_TEST_STATE_ALARMS ?? "").split(",").includes(address)) {
+    process.stdout.write(address + "\\n");
+  }
 } else if (args[0] === "apply") {
   appendFileSync(process.env.PETROGLYPH_TEST_CALLS, JSON.stringify(args) + "\\n");
 }
 `;
 
 /** Runs the migration script with `aws` and `terraform` replaced by recording stubs. */
-function runMigration(parameters: LegacyParameter[]): MigrationResult {
+function runMigration(parameters: LegacyParameter[], stateAlarms: string[] = []): MigrationResult {
   const workingDirectory = mkdtempSync(join(tmpdir(), "petroglyph-ssm-migration-"));
   const binDirectory = join(workingDirectory, "bin");
   const callsPath = join(workingDirectory, "calls.jsonl");
@@ -88,6 +93,7 @@ function runMigration(parameters: LegacyParameter[]): MigrationResult {
           ...process.env,
           PATH: `${binDirectory}:${process.env["PATH"] ?? ""}`,
           PETROGLYPH_TEST_PARAMETERS: JSON.stringify(parameters),
+          PETROGLYPH_TEST_STATE_ALARMS: stateAlarms.join(","),
           PETROGLYPH_TEST_CALLS: callsPath,
         },
         stdio: ["ignore", "pipe", "pipe"],
@@ -156,10 +162,12 @@ describe("migrate-ssm-namespace.sh", () => {
     ]);
   });
 
-  it("confines the rename apply to the SSM parameter resources", () => {
-    const { calls } = runMigration([
-      { Name: "/petroglyph/github/client-id", Value: "github-client-id", Type: "SecureString" },
-    ]);
+  it("targets the SSM parameters plus any instance whose address moved, and nothing else", () => {
+    const movedAlarm = "aws_cloudwatch_metric_alarm.staged_events_dlq_depth";
+    const { calls } = runMigration(
+      [{ Name: "/petroglyph/github/client-id", Value: "github-client-id", Type: "SecureString" }],
+      [movedAlarm],
+    );
 
     const applyCall = calls.find((call) => call[0] === "apply");
     expect(applyCall).toBeDefined();
@@ -167,6 +175,20 @@ describe("migrate-ssm-namespace.sh", () => {
       "-target=aws_ssm_parameter.github_client_id",
       "-target=aws_ssm_parameter.onedrive_client_secret",
       "-target=aws_ssm_parameter.jwt_private_key",
+      `-target=${movedAlarm}`,
     ]);
+  });
+
+  it("leaves the DLQ alarms untargeted when they are not at the unindexed address", () => {
+    const { calls } = runMigration([
+      { Name: "/petroglyph/github/client-id", Value: "github-client-id", Type: "SecureString" },
+    ]);
+
+    const applyCall = calls.find((call) => call[0] === "apply");
+    expect(
+      (applyCall ?? []).filter((argument) =>
+        argument.startsWith("-target=aws_cloudwatch_metric_alarm"),
+      ),
+    ).toEqual([]);
   });
 });
