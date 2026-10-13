@@ -114,7 +114,12 @@ function runMigration(parameters: LegacyParameter[], stateAlarms: string[] = [])
 
 function restoredParameter(call: string[]): { name: string; value: string; type: string } {
   const valueOf = (flag: string): string => call[call.indexOf(flag) + 1] ?? "";
-  return { name: valueOf("--name"), value: valueOf("--value"), type: valueOf("--type") };
+  const inlineValue = call.find((argument) => argument.startsWith("--value="));
+  return {
+    name: valueOf("--name"),
+    value: inlineValue?.slice("--value=".length) ?? "",
+    type: valueOf("--type"),
+  };
 }
 
 describe("migrate-ssm-namespace.sh", () => {
@@ -160,6 +165,20 @@ describe("migrate-ssm-namespace.sh", () => {
         type: "SecureString",
       },
     ]);
+  });
+
+  it("passes a value beginning with a hyphen as a single argument", () => {
+    const secret = "-AbC123~xyz_def";
+    const { calls } = runMigration([
+      { Name: "/petroglyph/onedrive/client-secret", Value: secret, Type: "SecureString" },
+    ]);
+
+    const putCall = calls.find((call) => call.includes("put-parameter"));
+    expect(putCall).toBeDefined();
+    // Passed as `--value <secret>`, the AWS CLI argparser reads the secret as an
+    // option and fails with "argument --value: expected one argument".
+    expect(putCall).toContain(`--value=${secret}`);
+    expect(putCall).not.toContain("--value");
   });
 
   it("targets the SSM parameters plus any instance whose address moved, and nothing else", () => {

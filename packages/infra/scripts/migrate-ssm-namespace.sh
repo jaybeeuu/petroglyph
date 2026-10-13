@@ -165,7 +165,11 @@ for (const parameter of parameters) {
       "--region", process.env.REGION,
       "ssm", "put-parameter",
       "--name", prefix + suffix,
-      "--value", parameter.Value ?? "",
+      // Keep the value in the same argument as the flag: the AWS CLI argparser
+      // reads a separate `--value <v>` as an option when <v> starts with "-"
+      // and contains no space (an Azure client secret, say), and fails with
+      // "argument --value: expected one argument".
+      "--value=" + (parameter.Value ?? ""),
       "--type", parameter.Type,
       "--overwrite",
     ],
