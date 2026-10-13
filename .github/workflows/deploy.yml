@@ -369,7 +369,7 @@ jobs:
         run: |
           PRIVATE_PATH=/petroglyph/qa/jwt/private-key
           PUBLIC_PATH=/petroglyph/qa/jwt/public-key
-          current=$(aws ssm get-parameter --name "$PRIVATE_PATH" --query 'Parameter.Value' --output text 2>/dev/null || echo "")
+          current=$(aws ssm get-parameter --name "$PRIVATE_PATH" --with-decryption --query 'Parameter.Value' --output text 2>/dev/null || echo "")
           if [ "$current" = "PLACEHOLDER" ] || [ -z "$current" ]; then
             openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$RUNNER_TEMP/jwt-private.pem"
             openssl rsa -in "$RUNNER_TEMP/jwt-private.pem" -pubout -out "$RUNNER_TEMP/jwt-public.pem"
