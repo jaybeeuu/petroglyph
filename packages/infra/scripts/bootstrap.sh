@@ -328,15 +328,16 @@ POLICY_DOC=$(cat << EOF
         "lambda:ListTags"
       ],
       "Resource": [
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-adapter-onedrive-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-api-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-ingest-onedrive-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-processor-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-delivery-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-dispatch-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-forwarder-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-sync-relay-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-sync-worker-production"
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-adapter-onedrive-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-api-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-graph-stub-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-ingest-onedrive-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-processor-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-delivery-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-dispatch-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-forwarder-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-sync-relay-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-sync-worker-${DEPLOY_ENVIRONMENT}"
       ]
     },
     {
@@ -415,20 +416,21 @@ POLICY_DOC=$(cat << EOF
         "sqs:CreateQueue",
         "sqs:DeleteQueue",
         "sqs:GetQueueAttributes",
+        "sqs:SendMessage",
         "sqs:SetQueueAttributes",
         "sqs:TagQueue",
         "sqs:UntagQueue",
         "sqs:ListQueueTags"
       ],
       "Resource": [
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-delta-trigger-dlq-production.fifo",
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-delta-trigger-production.fifo",
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-ingest-dlq-production",
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-ingest-production",
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-staged-events-dlq-production.fifo",
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-staged-events-production.fifo",
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-sync-jobs-dlq-production",
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-sync-jobs-production"
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-delta-trigger-dlq-${DEPLOY_ENVIRONMENT}.fifo",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-delta-trigger-${DEPLOY_ENVIRONMENT}.fifo",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-ingest-dlq-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-ingest-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-staged-events-dlq-${DEPLOY_ENVIRONMENT}.fifo",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-staged-events-${DEPLOY_ENVIRONMENT}.fifo",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-sync-jobs-dlq-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-sync-jobs-${DEPLOY_ENVIRONMENT}"
       ]
     },
     {
@@ -448,6 +450,22 @@ POLICY_DOC=$(cat << EOF
         "arn:aws:ssm:eu-west-2:${ACCOUNT_ID}:parameter/petroglyph/*",
         "*"
       ]
+    },
+    {
+      "Sid": "ProjectSsmParameterCrypto",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:Encrypt",
+        "kms:GenerateDataKey",
+        "kms:DescribeKey"
+      ],
+      "Resource": "arn:aws:kms:eu-west-2:${ACCOUNT_ID}:key/*",
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": "ssm.eu-west-2.amazonaws.com"
+        }
+      }
     },
     {
       "Sid": "ProjectCloudWatchAlarms",

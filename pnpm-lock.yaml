@@ -269,6 +269,37 @@ importers:
         specifier: ^25.5.2
         version: 25.5.2
 
+  packages/e2e-tests:
+    dependencies:
+      '@aws-sdk/client-dynamodb':
+        specifier: ^3.1024.0
+        version: 3.1024.0
+      '@aws-sdk/client-sqs':
+        specifier: ^3.1029.0
+        version: 3.1029.0
+      '@aws-sdk/client-ssm':
+        specifier: ^3.1024.0
+        version: 3.1024.0
+      '@aws-sdk/lib-dynamodb':
+        specifier: ^3.1024.0
+        version: 3.1024.0(@aws-sdk/client-dynamodb@3.1024.0)
+      '@petroglyph/core':
+        specifier: workspace:*
+        version: link:../core
+      jose:
+        specifier: ^6.2.2
+        version: 6.2.2
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^25.5.2
+        version: 25.5.2
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+
   packages/events:
     dependencies:
       '@aws-sdk/lib-dynamodb':
@@ -290,6 +321,18 @@ importers:
       testcontainers:
         specifier: ^10.17.0
         version: 10.28.0(supports-color@10.2.2)
+
+  packages/graph-stub:
+    devDependencies:
+      '@types/aws-lambda':
+        specifier: ^8.10.145
+        version: 8.10.161
+      '@types/node':
+        specifier: ^25.5.2
+        version: 25.5.2
+      esbuild:
+        specifier: ^0.28.0
+        version: 0.28.0
 
   packages/infra:
     devDependencies:

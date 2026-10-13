@@ -67,3 +67,28 @@ output "files_feed_url" {
   description = "The /files delivery surface URL"
   value       = "${aws_apigatewayv2_api.petroglyph_api.api_endpoint}/files"
 }
+
+output "graph_stub_function_url" {
+  description = "Invoke URL of the QA Graph stub Lambda function URL (empty when the stub is not deployed)"
+  value       = local.graph_stub_base_url
+}
+
+output "staged_records_table_name" {
+  description = "Name of the staged-records index table the smoke polls"
+  value       = aws_dynamodb_table.staged_records.name
+}
+
+output "sync_profiles_table_name" {
+  description = "Name of the sync-profiles table the smoke seeds"
+  value       = aws_dynamodb_table.sync_profiles.name
+}
+
+output "token_vaults_table_name" {
+  description = "Name of the connection token-vault table the smoke seeds"
+  value       = aws_dynamodb_table.token_vaults.name
+}
+
+output "delta_states_table_name" {
+  description = "Name of the delta-state table the smoke resets before triggering"
+  value       = aws_dynamodb_table.delta_states.name
+}

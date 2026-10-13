@@ -41,7 +41,7 @@ Each layer proves what the one below it cannot.
 | ----------------------- | ---------------------------------------------------- | --------------------------------------------------- | ------------------- | ----------------------------------------------- |
 | Component / integration | a package's behaviour against real services          | LocalStack (Docker)                                 | Yes                 | In place                                        |
 | Service boundary        | a deployed handler wires its collaborators correctly | LocalStack (Docker)                                 | Yes                 | Adapter, forwarder, delivery, dispatch in place |
-| Deployed smoke          | the deployed path works end to end                   | QA environment (Graph stubbed via `GRAPH_BASE_URL`) | No                  | Planned                                         |
+| Deployed smoke          | the deployed path works end to end                   | QA environment (Graph stubbed via `GRAPH_BASE_URL`) | No                  | In place                                        |
 | Live Microsoft Graph    | behaviour against the real Microsoft edge            | Real Graph (throwaway account)                      | No                  | Opt-in, never scheduled                         |
 
 Boundary suites drive the real handler with a realistic trigger: adapter (`SQSEvent` -> Graph delta -> S3 + event log), forwarder (`DynamoDBStreamEvent` -> FIFO message), delivery (API Gateway v2 request -> feed + presigned GET), and dispatch (`SQSEvent` of staged CloudEvents -> `staged_records` rows + S3 object removal).

@@ -1,6 +1,6 @@
 # Technical Direction: QA Environment and Deployed Smoke
 
-**Status:** accepted · **Date:** 2026-10-11 · **Bead:** petroglyph-up9y.6 · **Context:** the third layer of the verification model ([verification-strategy.md](verification-strategy.md))
+**Status:** accepted · **Date:** 2026-10-11 · **Bead:** petroglyph-up9y.6 · **Implemented:** QA workspace `petroglyph-up9y.3`, deployed smoke `petroglyph-up9y.4` · **Context:** the third layer of the verification model ([verification-strategy.md](verification-strategy.md))
 
 **Decision in one line:** stand up a persistent **QA** Terraform workspace and gate production promotion on a deterministic **deployed smoke** that drives the real wired path with only Microsoft Graph stubbed; namespace every SSM parameter by environment (migrating production by a scripted copy) and give QA its own GitHub environment and deploy role.
 
@@ -62,7 +62,7 @@ Spin up a throwaway stack per pull request, smoke it, tear it down.
   - _Rejected: namespace non-production only._ Leaves production as a permanent exception to the naming convention every other resource follows, and leaves the code's fallback defaults wrong for every environment. Rejected: **hand re-entry** — avoidable risk of a production outage on a typo.
 - **Trust — per-environment deploy roles.** `bootstrap.sh` creates `petroglyph-github-actions-deploy-qa` (trusting `environment:qa`) alongside the production role, each trusting only its own GitHub environment. This mirrors the existing read-only plan role, which is already environment-pinned.
   - _Rejected: one role trusted for both environments._ A QA job could then assume the production deploy role; the isolation the plan role already has would be given up for less bootstrap.
-- **Graph stub — a deployed stub in the QA workspace.** A small stub service (Lambda + function URL) lives in the QA workspace; `GRAPH_BASE_URL` and the delta URL point at it. The smoke exercises the real HTTP path through a real Lambda.
+- **Graph stub — a deployed stub in the QA workspace.** A small stub service (Lambda + function URL) lives in the QA workspace; `GRAPH_BASE_URL` and the delta URL point at it. The smoke exercises the real HTTP path through a real Lambda. The stub serves the drive delta page, item content, and subscription lifecycle, but **not** the OAuth token endpoint: the smoke seeds an unexpired access token in the token vault, so the adapter never calls `login.microsoftonline.com` and no refresh flow is exercised.
   - _Rejected: runner-local mock + tunnel._ A deployed Lambda cannot reach a CI-local server without a tunnel; adds fragile networking. **Rejected: live Graph** — non-deterministic and destructive, so it cannot gate (it stays the separate opt-in tier).
 - **Cadence — QA on every merge, gating production.** `build → package → deploy QA → smoke → deploy production`; a failed smoke blocks the production job. This is what makes the smoke a _gate_ rather than a report.
   - _Rejected: on-demand QA smoke_ — a gate that does not run on a merge cannot block it. **Rejected: production on tag** — reintroduces a release step the project does not have.
@@ -104,7 +104,7 @@ Fastest de-risking order:
 
 1. **SSM migration spike** — run the snapshot/restore against a scratch workspace first; success = parameters land namespaced with values intact and the adapter still reads them. Failure = the copy cannot be made safe, which forces the non-prod-only namespace.
 2. **QA workspace apply/destroy** — success = a clean apply and destroy with no production impact. Failure = hidden global names (notably SSM) that the audit missed.
-3. **Stub reachability** — the deployed adapter resolves `GRAPH_BASE_URL` to the stub and completes a token + delta call. Failure = the delta URL is not fully env-derived, or IAM blocks the call.
+3. **Stub reachability** — the deployed adapter resolves `GRAPH_BASE_URL` to the stub and completes a delta + content call. Failure = the delta URL is not fully env-derived, or IAM blocks the call.
 4. **Smoke gate** — a deliberately broken build fails the smoke and blocks the production job. Failure = the smoke is non-deterministic, which argues for narrowing it to the stable AWS path.
 
 **Success signal for the whole decision:** on a merge, production is promoted only after the QA smoke is green; a broken env var is caught before production.
