@@ -1,12 +1,15 @@
 name: Validate
 
+# `pull_request` is deliberately unfiltered: every PR must run the full
+# validation suite regardless of its base branch. Filtering to `main` skipped
+# CI entirely for PRs stacked on an `epic/*` or feature branch, so a broken
+# change could look green until it reached `main`. `push` stays `main`-only so
+# merged history is validated once (no double run for a `main`-targeted PR).
 on:
   push:
     branches:
       - main
   pull_request:
-    branches:
-      - main
 
 jobs:
   install:

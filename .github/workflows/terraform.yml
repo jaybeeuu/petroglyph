@@ -8,10 +8,17 @@ name: Terraform
 # this job (and its OIDC assumption) to the very PR that introduces the role —
 # before the role exists in the account. `.tf` scoping keeps that PR green and
 # attaches the job only to genuine infrastructure changes.
+#
+# `branches` is unfiltered for the same reason as `validate.yml`: `.tf` changes
+# stacked on an `epic/*` or feature branch must get a plan, not just `main`
+# PRs. This is safe for arbitrary PRs:
+#   * the plan role is read-only (`-lock=false`, no apply), and
+#   * secrets are not exposed to fork PRs — the `preflight` step detects the
+#     missing values and skips init/plan (recording the skip as a notice)
+#     rather than failing.
+# Keep the `paths` filter: the job should only attach to genuine infra changes.
 on:
   pull_request:
-    branches:
-      - main
     paths:
       - "packages/infra/**/*.tf"
       - "packages/infra/*.tf"
