@@ -162,9 +162,96 @@ else
   success "GitHub OIDC provider created"
 fi
 
+# Create, update, or verify one managed policy and attach it to the deploy
+# role. IAM caps a managed policy document at 6144 characters, so the deploy
+# permissions are split across two policies (see docs/ops.md); converging each
+# independently means a future addition that overflows one is caught here.
+converge_managed_policy() {
+  local policy_name="$1"
+  local policy_doc="$2"
+  local policy_arn="arn:aws:iam::${ACCOUNT_ID}:policy/${policy_name}"
+
+  info "Checking deploy managed policy ($policy_name)..."
+  if $AWS iam get-policy --policy-arn "$policy_arn" &>/dev/null; then
+    local default_version_id
+    default_version_id=$($AWS iam get-policy \
+      --policy-arn "$policy_arn" \
+      --query 'Policy.DefaultVersionId' \
+      --output text)
+
+    local live_policy_doc
+    live_policy_doc=$($AWS iam get-policy-version \
+      --policy-arn "$policy_arn" \
+      --version-id "$default_version_id" \
+      --query 'PolicyVersion.Document' \
+      --output json)
+
+    # IAM may normalise whitespace and key order, so compare the documents
+    # semantically (as parsed JSON) rather than as raw text.
+    if ! node --input-type=commonjs -e '
+const { isDeepStrictEqual } = require("node:util");
+const { readFileSync } = require("node:fs");
+
+const generated = JSON.parse(process.argv[1]);
+let live = JSON.parse(readFileSync(0, "utf8"));
+if (typeof live === "string") live = JSON.parse(live);
+process.exit(isDeepStrictEqual(generated, live) ? 0 : 1);
+' "$policy_doc" <<< "$live_policy_doc"; then
+      info "Managed policy ${policy_name} drifted from bootstrap.sh — creating a new version..."
+
+      # IAM allows at most 5 versions per policy. Delete the oldest
+      # non-default versions until there is room for the new one.
+      local version_count
+      version_count=$($AWS iam list-policy-versions \
+        --policy-arn "$policy_arn" \
+        --query 'length(Versions)' \
+        --output text)
+      while [[ "$version_count" -ge 5 ]]; do
+        local oldest_version_id
+        oldest_version_id=$($AWS iam list-policy-versions \
+          --policy-arn "$policy_arn" \
+          --query 'sort_by(Versions[?IsDefaultVersion==`false`], &CreateDate)[0].VersionId' \
+          --output text)
+        $AWS iam delete-policy-version \
+          --policy-arn "$policy_arn" \
+          --version-id "$oldest_version_id"
+        info "Deleted old policy version $oldest_version_id"
+        version_count=$((version_count - 1))
+      done
+
+      $AWS iam create-policy-version \
+        --policy-arn "$policy_arn" \
+        --policy-document "$policy_doc" \
+        --set-as-default
+      success "Managed policy ${policy_name} updated to match bootstrap.sh"
+    else
+      success "Managed policy ${policy_name} already in sync with bootstrap.sh"
+    fi
+  else
+    info "Creating managed policy ${policy_name}..."
+    $AWS iam create-policy \
+      --policy-name "$policy_name" \
+      --policy-document "$policy_doc"
+    success "Managed policy ${policy_name} created"
+  fi
+
+  info "Checking managed policy ${policy_name} is attached to role ${GITHUB_ACTIONS_ROLE}..."
+  if $AWS iam list-attached-role-policies --role-name "$GITHUB_ACTIONS_ROLE" \
+      --query "AttachedPolicies[?PolicyArn=='${policy_arn}']" --output text | grep -q .; then
+    success "Managed policy ${policy_name} already attached"
+  else
+    info "Attaching managed policy ${policy_name} to role..."
+    $AWS iam attach-role-policy \
+      --role-name "$GITHUB_ACTIONS_ROLE" \
+      --policy-arn "$policy_arn"
+    success "Managed policy ${policy_name} attached"
+  fi
+}
+
 for DEPLOY_ENVIRONMENT in production qa; do
 GITHUB_ACTIONS_ROLE="petroglyph-github-actions-deploy-${DEPLOY_ENVIRONMENT}"
 DEPLOY_POLICY_NAME="petroglyph-github-actions-deploy-${DEPLOY_ENVIRONMENT}"
+DEPLOY_WORKLOADS_POLICY_NAME="${DEPLOY_POLICY_NAME}-workloads"
 
 info "Checking deploy role ($GITHUB_ACTIONS_ROLE)..."
 if $AWS iam get-role --role-name "$GITHUB_ACTIONS_ROLE" &>/dev/null; then
@@ -192,8 +279,6 @@ else
   success "Deploy role created"
 fi
 
-info "Checking deploy managed policy ($DEPLOY_POLICY_NAME)..."
-POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${DEPLOY_POLICY_NAME}"
 # NOTE: LambdaProjectFunctions and ProjectQueues name every function/queue ARN
 # explicitly, matching DynamoDbProjectTables. LambdaEventSourceMappings scopes
 # to the mapping ARNs, but lambda:CreateEventSourceMapping and
@@ -201,7 +286,14 @@ POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${DEPLOY_POLICY_NAME}"
 # they need "Resource": "*". Only CreateEventSourceMapping and
 # ListEventSourceMappings are non-scopable; GetEventSourceMapping and the other
 # mapping actions are scoped. This exception is justified in docs/ops.md.
-POLICY_DOC=$(cat << EOF
+#
+# The statements are authored once, then split into two managed policies below
+# because IAM rejects a managed policy document over 6144 characters. The
+# workload statements (DynamoDB tables, Lambda functions, SQS queues and their
+# event-source mappings) move to <name>-workloads; everything else stays on
+# <name>. Keeping every project ARN explicit is the guardrail in docs/ops.md,
+# so the fix is a split, not a wildcard.
+POLICY_DOC_ALL=$(cat << EOF
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -485,76 +577,28 @@ POLICY_DOC=$(cat << EOF
 EOF
 )
 
-if $AWS iam get-policy --policy-arn "$POLICY_ARN" &>/dev/null; then
-  DEFAULT_VERSION_ID=$($AWS iam get-policy \
-    --policy-arn "$POLICY_ARN" \
-    --query 'Policy.DefaultVersionId' \
-    --output text)
+# Split the authored statements into the two managed policies. The SID list is
+# the single place the boundary is declared.
+WORKLOAD_SIDS='["DynamoDbProjectTables","DynamoDbListTables","LambdaProjectFunctions","LambdaEventSourceMappingUnscopable","LambdaEventSourceMappings","ProjectQueues"]'
 
-  LIVE_POLICY_DOC=$($AWS iam get-policy-version \
-    --policy-arn "$POLICY_ARN" \
-    --version-id "$DEFAULT_VERSION_ID" \
-    --query 'PolicyVersion.Document' \
-    --output json)
+split_deploy_policy() {
+  node --input-type=commonjs -e '
+const sids = new Set(JSON.parse(process.argv[1]));
+const doc = JSON.parse(process.argv[2]);
+const keep = process.argv[3] === "workloads"
+  ? (statement) => sids.has(statement.Sid)
+  : (statement) => !sids.has(statement.Sid);
+process.stdout.write(JSON.stringify({ Version: doc.Version, Statement: doc.Statement.filter(keep) }, null, 2));
+' "$WORKLOAD_SIDS" "$POLICY_DOC_ALL" "$1"
+}
 
-  # IAM may normalise whitespace and key order, so compare the documents
-  # semantically (as parsed JSON) rather than as raw text.
-  if ! node --input-type=commonjs -e '
-const { isDeepStrictEqual } = require("node:util");
-const { readFileSync } = require("node:fs");
+POLICY_DOC=$(split_deploy_policy platform)
+POLICY_DOC_WORKLOADS=$(split_deploy_policy workloads)
 
-const generated = JSON.parse(process.argv[1]);
-let live = JSON.parse(readFileSync(0, "utf8"));
-if (typeof live === "string") live = JSON.parse(live);
-process.exit(isDeepStrictEqual(generated, live) ? 0 : 1);
-' "$POLICY_DOC" <<< "$LIVE_POLICY_DOC"; then
-    info "Deploy managed policy drifted from bootstrap.sh — creating a new version..."
-
-    # IAM allows at most 5 versions per policy. Delete the oldest
-    # non-default versions until there is room for the new one.
-    VERSION_COUNT=$($AWS iam list-policy-versions \
-      --policy-arn "$POLICY_ARN" \
-      --query 'length(Versions)' \
-      --output text)
-    while [[ "$VERSION_COUNT" -ge 5 ]]; do
-      OLDEST_VERSION_ID=$($AWS iam list-policy-versions \
-        --policy-arn "$POLICY_ARN" \
-        --query 'sort_by(Versions[?IsDefaultVersion==`false`], &CreateDate)[0].VersionId' \
-        --output text)
-      $AWS iam delete-policy-version \
-        --policy-arn "$POLICY_ARN" \
-        --version-id "$OLDEST_VERSION_ID"
-      info "Deleted old policy version $OLDEST_VERSION_ID"
-      VERSION_COUNT=$((VERSION_COUNT - 1))
-    done
-
-    $AWS iam create-policy-version \
-      --policy-arn "$POLICY_ARN" \
-      --policy-document "$POLICY_DOC" \
-      --set-as-default
-    success "Deploy managed policy updated to match bootstrap.sh"
-  else
-    success "Deploy managed policy already in sync with bootstrap.sh"
-  fi
-else
-  info "Creating deploy managed policy..."
-  $AWS iam create-policy \
-    --policy-name "$DEPLOY_POLICY_NAME" \
-    --policy-document "$POLICY_DOC"
-  success "Deploy managed policy created"
-fi
-
-info "Checking managed policy is attached to role..."
-if $AWS iam list-attached-role-policies --role-name "$GITHUB_ACTIONS_ROLE" \
-    --query "AttachedPolicies[?PolicyArn=='${POLICY_ARN}']" --output text | grep -q .; then
-  success "Managed policy already attached"
-else
-  info "Attaching managed policy to role..."
-  $AWS iam attach-role-policy \
-    --role-name "$GITHUB_ACTIONS_ROLE" \
-    --policy-arn "$POLICY_ARN"
-  success "Managed policy attached"
-fi
+# Workloads first: its policy is attached before the platform policy drops the
+# workload statements, so the role never loses a permission mid-converge.
+converge_managed_policy "$DEPLOY_WORKLOADS_POLICY_NAME" "$POLICY_DOC_WORKLOADS"
+converge_managed_policy "$DEPLOY_POLICY_NAME" "$POLICY_DOC"
 done
 
 # ── Step 7: GitHub Actions read-only plan role ───────────────────────────────

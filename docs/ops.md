@@ -79,14 +79,15 @@ Before running `terraform apply` for the first time, the bootstrap resources mus
 
 This creates and verifies the following (bucket names embed your AWS account ID to guarantee global S3 uniqueness):
 
-| Resource           | Name pattern                                     | Purpose                                                                                                         |
-| ------------------ | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| S3 bucket          | `petroglyph-terraform-state-<ACCOUNT_ID>`        | Terraform remote state storage                                                                                  |
-| DynamoDB table     | `petroglyph-terraform-locks`                     | Terraform state locking                                                                                         |
-| S3 bucket          | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`       | Lambda deployment ZIP artifacts                                                                                 |
-| IAM managed policy | `petroglyph-github-actions-deploy-<ENVIRONMENT>` | Deploy permissions, one policy per environment; bootstrap.sh converges each to the checked-in document on drift |
-| IAM role           | `petroglyph-github-actions-deploy-<ENVIRONMENT>` | OIDC deploy role for the `production` and `qa` GitHub environments                                              |
-| IAM role           | `petroglyph-github-actions-plan`                 | Read-only role assumed by the PR-time terraform plan workflow                                                   |
+| Resource           | Name pattern                                               | Purpose                                                                                                                                                            |
+| ------------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| S3 bucket          | `petroglyph-terraform-state-<ACCOUNT_ID>`                  | Terraform remote state storage                                                                                                                                     |
+| DynamoDB table     | `petroglyph-terraform-locks`                               | Terraform state locking                                                                                                                                            |
+| S3 bucket          | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`                 | Lambda deployment ZIP artifacts                                                                                                                                    |
+| IAM managed policy | `petroglyph-github-actions-deploy-<ENVIRONMENT>`           | Deploy permissions (platform half), one policy per environment; bootstrap.sh converges each to the checked-in document on drift                                    |
+| IAM managed policy | `petroglyph-github-actions-deploy-<ENVIRONMENT>-workloads` | Deploy permissions (DynamoDB tables, Lambda functions, SQS queues and their event-source mappings); split out because IAM caps a managed policy at 6144 characters |
+| IAM role           | `petroglyph-github-actions-deploy-<ENVIRONMENT>`           | OIDC deploy role for the `production` and `qa` GitHub environments                                                                                                 |
+| IAM role           | `petroglyph-github-actions-plan`                           | Read-only role assumed by the PR-time terraform plan workflow                                                                                                      |
 
 ### Environments
 
@@ -107,7 +108,7 @@ Every SSM parameter is namespaced by Terraform workspace: `/petroglyph/<workspac
 
 ### Guardrails
 
-- **Granular policy**: the deploy managed policy (`petroglyph-github-actions-deploy-production`) is explicit-actions-only. Never add `"Action": "*"`, and name the ARN of every project resource by hand in `packages/infra/scripts/bootstrap.sh` (e.g. `DynamoDbProjectTables`, `LambdaProjectFunctions`, `ProjectQueues`). Statements whose actions cannot be resource-scoped (for example `dynamodb:ListTables`, `logs:DescribeLogGroups`) use `"Resource": "*"`, which is unavoidable.
+- **Granular policy**: the deploy managed policies (`petroglyph-github-actions-deploy-production` and its `-workloads` sibling) are explicit-actions-only. Never add `"Action": "*"`, and name the ARN of every project resource by hand in `packages/infra/scripts/bootstrap.sh` (e.g. `DynamoDbProjectTables`, `LambdaProjectFunctions`, `ProjectQueues`). Statements whose actions cannot be resource-scoped (for example `dynamodb:ListTables`, `logs:DescribeLogGroups`) use `"Resource": "*"`, which is unavoidable. The authored permission set exceeds IAM's 6144-character managed-policy limit, so `bootstrap.sh` splits it across the two policies by SID (`WORKLOAD_SIDS`); a new statement lands on the platform policy unless its SID is added there.
 - **Event-source-mapping ARNs are mostly scoped, with two unscopable actions**: `LambdaProjectFunctions` and `ProjectQueues` name each function and queue ARN explicitly. `LambdaEventSourceMappings` scopes to `arn:aws:lambda:eu-west-2:<ACCOUNT_ID>:event-source-mapping:*` for `DeleteEventSourceMapping`, `GetEventSourceMapping`, `ListTags`, `TagResource`, `UntagResource` and `UpdateEventSourceMapping`. The Lambda API does not support resource-level permissions for `CreateEventSourceMapping` or `ListEventSourceMappings`, so those two actions live in the separate `LambdaEventSourceMappingUnscopable` statement under `"Resource": "*"`. Revisit it if AWS adds a resource-level or tag condition for create.
 - **Resource additions extend bootstrap.sh in the same change**: any work adding an AWS resource under `packages/infra/*.tf` must add the required ARNs/actions to `bootstrap.sh` in the same commit.
 - **Single source of truth**: `bootstrap.sh` is the source of truth for the deploy policy; the live policy converges to the checked-in document via the node drift-check (commit 4a888fb). Re-run `bootstrap.sh` after any policy change.
