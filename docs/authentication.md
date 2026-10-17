@@ -119,7 +119,7 @@ All authenticated API routes are protected by `authMiddleware` (`packages/api/sr
 
 1. Reads the `Authorization: Bearer <token>` header. Returns `401` if absent or malformed.
 2. Calls `verifyJwt` (`packages/api/src/jwt.ts`), which:
-   - Reads the RS256 public key from the `JWT_PUBLIC_KEY` environment variable, or falls back to SSM at `JWT_PUBLIC_KEY_SSM_PATH` (default: `/petroglyph/jwt/public-key`).
+   - Reads the RS256 public key from the `JWT_PUBLIC_KEY` environment variable, or falls back to the SSM parameter at `JWT_PUBLIC_KEY_SSM_PATH` (deployed as `/petroglyph/<workspace>/jwt/public-key`).
    - Caches the imported `CryptoKey` at module level so subsequent requests within the same Lambda process skip the fetch and import.
    - Verifies the token signature, algorithm (`RS256`), and required claims (`sub`, `username`).
 3. On success, injects `userId` (from `sub`) and `username` into the Hono context variables, making them available to downstream route handlers as `c.var.userId` and `c.var.username`.
@@ -426,19 +426,24 @@ The adapter's per-connection Graph delta state (Delivery 1), superseding the per
 
 ## 5. SSM Parameter Store Layout
 
-All parameters use the prefix `/petroglyph/`.
+Parameters are namespaced by Terraform workspace under `/petroglyph/<workspace>/`, so the `production` and `qa` tiers cannot collide. Sweep one tier with `aws ssm get-parameters-by-path --path /petroglyph/<workspace>/ --recursive`.
 
-| Parameter                                   | Type         | Description                                                                   |
-| ------------------------------------------- | ------------ | ----------------------------------------------------------------------------- |
-| `/petroglyph/github/oauth/client-id`        | String       | GitHub OAuth App client ID                                                    |
-| `/petroglyph/github/oauth/client-secret`    | SecureString | GitHub OAuth App client secret                                                |
-| `/petroglyph/jwt/public-key`                | String       | RS256 public key (PEM) for verifying JWTs                                     |
-| `/petroglyph/microsoft/entra/client-id`     | String       | Entra ID app client ID                                                        |
-| `/petroglyph/microsoft/entra/client-secret` | SecureString | Entra ID app client secret                                                    |
-| `/petroglyph/onedrive/subscription-id`      | String       | Microsoft Graph subscription ID                                               |
-| `/petroglyph/config/target-branch`          | String       | Git branch to commit to (e.g. `main`)                                         |
-| `/petroglyph/config/initial-sync`           | String       | `true` \| `false` — return all existing files when plugin has no change token |
-| `/petroglyph/config/retention-days`         | String       | Days to retain S3 objects after staging (default: `90`)                       |
+| Parameter                                        | Type         | Description                                                                       |
+| ------------------------------------------------ | ------------ | --------------------------------------------------------------------------------- |
+| `/petroglyph/<workspace>/github/client-id`       | SecureString | GitHub OAuth App client ID                                                        |
+| `/petroglyph/<workspace>/github/client-secret`   | SecureString | GitHub OAuth App client secret                                                    |
+| `/petroglyph/<workspace>/jwt/signing-secret`     | SecureString | Secret loaded as `JWT_SIGNING_SECRET`                                             |
+| `/petroglyph/<workspace>/jwt/private-key`        | SecureString | RS256 private key (PEM) used to issue JWTs                                        |
+| `/petroglyph/<workspace>/jwt/public-key`         | SecureString | RS256 public key (PEM) for verifying JWTs                                         |
+| `/petroglyph/<workspace>/onedrive/client-id`     | SecureString | Entra ID app client ID                                                            |
+| `/petroglyph/<workspace>/onedrive/client-secret` | SecureString | Entra ID app client secret                                                        |
+| `/petroglyph/<workspace>/onedrive/access-token`  | SecureString | Current OneDrive access token                                                     |
+| `/petroglyph/<workspace>/onedrive/refresh-token` | SecureString | OneDrive refresh token                                                            |
+| `/petroglyph/<workspace>/onedrive/token-expiry`  | SecureString | Access-token expiry                                                               |
+| `/petroglyph/<workspace>/graph/subscription-id`  | SecureString | Microsoft Graph change-notification subscription ID                               |
+| `/petroglyph/<workspace>/config/target-branch`   | SecureString | Git branch to commit to (e.g. `main`)                                             |
+| `/petroglyph/<workspace>/config/initial-sync`    | SecureString | `true` \| `false` — return all existing files when the plugin has no change token |
+| `/petroglyph/<workspace>/config/retention-days`  | SecureString | Days to retain S3 objects after staging (default: `90`)                           |
 
 > **Note:** Per-user OneDrive token state is stored in DynamoDB (`refresh_tokens` table). SSM stores only system-level configuration/secrets.
 
@@ -449,6 +454,6 @@ All parameters use the prefix `/petroglyph/`.
 - **Client secrets** never leave the cloud service. The Entra ID client secret and GitHub OAuth client secret are stored in SSM and only accessed by Lambda functions. The plugin never sees them.
 - **PKCE** is used for the OneDrive OAuth flow, preventing authorisation code interception attacks even though the app is a public client.
 - **Refresh token rotation** detects replay attacks: using a superseded refresh token immediately purges all active tokens for the user. The superseded flag is set via an atomic DynamoDB `UpdateItem` with a `ConditionExpression`, preventing a TOCTOU race where two concurrent requests with the same token could each pass a read-then-check validation.
-- **JWT key pair** uses RS256 (asymmetric). The public key is stored in SSM at `/petroglyph/jwt/public-key` (or overridden via `JWT_PUBLIC_KEY` env var) and is imported once at module level (cached for the lifetime of the Lambda process). Rotation of the key pair invalidates all active JWTs; users re-authenticate on the next API call via the refresh token.
+- **JWT key pair** uses RS256 (asymmetric). The public key is stored in SSM at `/petroglyph/<workspace>/jwt/public-key` (or overridden via `JWT_PUBLIC_KEY` env var) and is imported once at module level (cached for the lifetime of the Lambda process). Rotation of the key pair invalidates all active JWTs; users re-authenticate on the next API call via the refresh token.
 - **SSM SecureString** parameters are encrypted at rest using AWS KMS. Access is restricted to the Lambda execution roles via IAM.
 - **CSRF protection via server-side state tokens**: `GET /auth/url` requires a non-empty `returnUri`, generates a UUID state token, stores both in DynamoDB (`refresh_tokens` table, `type=oauth_state`, TTL 10 minutes), and includes the state in the GitHub OAuth URL. The callback handler validates the state against DynamoDB and **deletes it before exchanging the code** (one-time-use), so the token cannot be replayed even if intercepted after the redirect. Keeping `returnUri` on the same short-lived state record means the server can trust the caller's intended return target without accepting it later as a separate callback input. Validation survives any plugin restart or context loss during the OAuth redirect.

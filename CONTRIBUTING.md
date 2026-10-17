@@ -143,7 +143,7 @@ signatures, so pointing that test at a real bucket in an opt-in run is how the g
 
 ## CD Secrets
 
-The Deploy workflow (`.github/workflows/deploy.yml`) requires three GitHub Actions secrets to be configured on the `production` environment. For full deployment and infrastructure setup instructions, see [docs/ops.md](docs/ops.md).
+The Deploy workflow (`.github/workflows/deploy.yml`) runs a deploy job per environment (`deploy-qa` and `deploy-production`). Each requires three GitHub Actions secrets on its own GitHub environment (`qa` and `production`). For full deployment and infrastructure setup instructions, see [docs/ops.md](docs/ops.md).
 
 | Secret                   | Description                                                  |
 | ------------------------ | ------------------------------------------------------------ |
@@ -153,7 +153,7 @@ The Deploy workflow (`.github/workflows/deploy.yml`) requires three GitHub Actio
 
 `TF_STATE_BUCKET` and `LAMBDA_ARTIFACT_BUCKET` may point to the same bucket or separate buckets depending on your infrastructure setup.
 
-The `deploy` job targets the `production` GitHub Actions environment. Configure that environment so only `main` can deploy, and add any required reviewers or other protection rules there.
+Each deploy job targets its own GitHub Actions environment. Configure `production` so only `main` can deploy, and add any required reviewers or other protection rules there; `qa` holds its own deploy role, so a job in that environment cannot deploy production.
 
 ## CD Artifact Versioning
 

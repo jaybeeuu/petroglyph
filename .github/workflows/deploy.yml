@@ -9,6 +9,18 @@ permissions:
   id-token: write
   contents: read
 
+# One deploy at a time, across every ref. Merge bursts are normal — four merges
+# landed inside seven minutes on 2026-10-12, and three Deploy runs overlapped —
+# and with no concurrency group each run applies to the same Terraform workspace
+# and the same Lambda functions. That lets a run's smoke exercise a later
+# commit's stack and takes promotion out of commit order. `cancel-in-progress`
+# stays false: cancelling mid-`terraform apply` is worse than queueing. GitHub
+# keeps one run running and one pending, so a burst collapses onto the newest
+# commit, which already contains the superseded ones.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -90,14 +102,35 @@ jobs:
         with:
           name: staging-delivery-zip
           path: packages/staging-delivery/lambda.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: graph-stub-zip
+          path: packages/graph-stub/lambda.zip
 
-  deploy:
+  # Deploy jobs are identical apart from their GitHub environment, Terraform
+  # workspace, custom domain and whether the QA Graph stub is deployed.
+  # `deploy-qa` defines the shared step list as a YAML anchor; `deploy-production`
+  # reuses it. Each job declares its own `environment`, so `secrets.AWS_ROLE_ARN`
+  # resolves to that environment's deploy role — `petroglyph-github-actions-deploy-qa`
+  # cannot deploy production. `GRAPH_STUB_BUCKET` is empty for production, so the
+  # stub resources are not provisioned there.
+  deploy-qa:
     needs: [package]
-    environment: production
+    environment: qa
     runs-on: ubuntu-latest
     env:
       AWS_REGION: eu-west-2
-    steps:
+      TF_WORKSPACE: qa
+      API_CUSTOM_DOMAIN: ""
+      GRAPH_STUB_BUCKET: ${{ secrets.LAMBDA_ARTIFACT_BUCKET }}
+    outputs:
+      api_endpoint: ${{ steps.smoke-context.outputs.api_endpoint }}
+      delta_trigger_queue_url: ${{ steps.smoke-context.outputs.delta_trigger_queue_url }}
+      staged_records_table: ${{ steps.smoke-context.outputs.staged_records_table }}
+      sync_profiles_table: ${{ steps.smoke-context.outputs.sync_profiles_table }}
+      token_vaults_table: ${{ steps.smoke-context.outputs.token_vaults_table }}
+      delta_states_table: ${{ steps.smoke-context.outputs.delta_states_table }}
+    steps: &deploy_steps
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v5
         with:
@@ -140,6 +173,11 @@ jobs:
         with:
           name: staging-delivery-zip
           path: packages/staging-delivery
+      - uses: actions/download-artifact@v4
+        if: env.GRAPH_STUB_BUCKET != ''
+        with:
+          name: graph-stub-zip
+          path: packages/graph-stub
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -178,6 +216,12 @@ jobs:
         id: delivery-artifact-hash
         run: |
           HASH=$(sha256sum packages/staging-delivery/lambda.zip | cut -d' ' -f1)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+      - name: Compute graph-stub lambda content hash
+        id: graph-stub-artifact-hash
+        if: env.GRAPH_STUB_BUCKET != ''
+        run: |
+          HASH=$(sha256sum packages/graph-stub/lambda.zip | cut -d' ' -f1)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
       - name: Upload lambda zip to S3
         run: |
@@ -235,6 +279,15 @@ jobs:
           else
             aws s3 cp packages/staging-delivery/lambda.zip s3://${{ secrets.LAMBDA_ARTIFACT_BUCKET }}/$KEY
           fi
+      - name: Upload graph-stub lambda zip to S3
+        if: env.GRAPH_STUB_BUCKET != ''
+        run: |
+          KEY="graph-stub-${{ steps.graph-stub-artifact-hash.outputs.hash }}.zip"
+          if aws s3api head-object --bucket ${{ secrets.LAMBDA_ARTIFACT_BUCKET }} --key "$KEY" 2>/dev/null; then
+            echo "Artifact already exists at $KEY — skipping upload"
+          else
+            aws s3 cp packages/graph-stub/lambda.zip s3://${{ secrets.LAMBDA_ARTIFACT_BUCKET }}/$KEY
+          fi
       - uses: hashicorp/setup-terraform@v4
       - name: Terraform init
         working-directory: packages/infra
@@ -248,7 +301,7 @@ jobs:
       - name: Terraform workspace
         working-directory: packages/infra
         run: |
-          terraform workspace select production || terraform workspace new production
+          terraform workspace select "${TF_WORKSPACE}" || terraform workspace new "${TF_WORKSPACE}"
       - name: Terraform apply
         working-directory: packages/infra
         run: |
@@ -267,13 +320,85 @@ jobs:
             -var="forwarder_zip_s3_key=forwarder-${{ steps.forwarder-artifact-hash.outputs.hash }}.zip" \
             -var="staging_delivery_zip_s3_bucket=${{ secrets.LAMBDA_ARTIFACT_BUCKET }}" \
             -var="staging_delivery_zip_s3_key=staging-delivery-${{ steps.delivery-artifact-hash.outputs.hash }}.zip" \
-            -var="api_custom_domain=api.petroglyph.page"
+            -var="graph_stub_zip_s3_bucket=${GRAPH_STUB_BUCKET}" \
+            -var="graph_stub_zip_s3_key=graph-stub-${{ steps.graph-stub-artifact-hash.outputs.hash }}.zip" \
+            -var="api_custom_domain=${API_CUSTOM_DOMAIN}"
       - name: Capture API function URL
         id: api-function-url
         working-directory: packages/infra
         run: |
           echo "url=$(terraform output -raw api_function_url)" >> "$GITHUB_OUTPUT"
+      - name: Capture deployed-smoke context
+        id: smoke-context
+        working-directory: packages/infra
+        run: |
+          echo "api_endpoint=$(terraform output -raw api_endpoint)" >> "$GITHUB_OUTPUT"
+          echo "delta_trigger_queue_url=$(terraform output -raw delta_trigger_queue_url)" >> "$GITHUB_OUTPUT"
+          echo "staged_records_table=$(terraform output -raw staged_records_table_name)" >> "$GITHUB_OUTPUT"
+          echo "sync_profiles_table=$(terraform output -raw sync_profiles_table_name)" >> "$GITHUB_OUTPUT"
+          echo "token_vaults_table=$(terraform output -raw token_vaults_table_name)" >> "$GITHUB_OUTPUT"
+          echo "delta_states_table=$(terraform output -raw delta_states_table_name)" >> "$GITHUB_OUTPUT"
       - name: Smoke test deployed API
         env:
           LAMBDA_FUNCTION_URL: ${{ steps.api-function-url.outputs.url }}
         run: pnpm --filter @petroglyph/api smoke-test
+
+  # The deployed-smoke gate: drives the QA environment end to end with only
+  # Microsoft Graph stubbed. A failure here blocks `deploy-production`.
+  smoke-qa:
+    needs: [deploy-qa]
+    environment: qa
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: eu-west-2
+      SMOKE_API_BASE_URL: ${{ needs.deploy-qa.outputs.api_endpoint }}
+      SMOKE_DELTA_TRIGGER_QUEUE_URL: ${{ needs.deploy-qa.outputs.delta_trigger_queue_url }}
+      SMOKE_STAGED_RECORDS_TABLE: ${{ needs.deploy-qa.outputs.staged_records_table }}
+      SMOKE_SYNC_PROFILES_TABLE: ${{ needs.deploy-qa.outputs.sync_profiles_table }}
+      SMOKE_TOKEN_VAULTS_TABLE: ${{ needs.deploy-qa.outputs.token_vaults_table }}
+      SMOKE_DELTA_STATES_TABLE: ${{ needs.deploy-qa.outputs.delta_states_table }}
+      SMOKE_JWT_PRIVATE_KEY_SSM_PATH: /petroglyph/qa/jwt/private-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v5
+        with:
+          version: "12.9.1"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/pnpm/store
+            node_modules
+            packages/*/node_modules
+          key: deps-${{ hashFiles('pnpm-lock.yaml') }}
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Ensure the QA JWT keypair exists
+        run: |
+          PRIVATE_PATH=/petroglyph/qa/jwt/private-key
+          PUBLIC_PATH=/petroglyph/qa/jwt/public-key
+          current=$(aws ssm get-parameter --name "$PRIVATE_PATH" --with-decryption --query 'Parameter.Value' --output text 2>/dev/null || echo "")
+          if [ "$current" = "PLACEHOLDER" ] || [ -z "$current" ]; then
+            openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$RUNNER_TEMP/jwt-private.pem"
+            openssl rsa -in "$RUNNER_TEMP/jwt-private.pem" -pubout -out "$RUNNER_TEMP/jwt-public.pem"
+            aws ssm put-parameter --name "$PRIVATE_PATH" --type SecureString --value "$(cat "$RUNNER_TEMP/jwt-private.pem")" --overwrite
+            aws ssm put-parameter --name "$PUBLIC_PATH" --type SecureString --value "$(cat "$RUNNER_TEMP/jwt-public.pem")" --overwrite
+          fi
+      - run: pnpm install --frozen-lockfile
+      - name: Run deployed smoke against QA
+        run: pnpm --filter @petroglyph/e2e-tests smoke
+
+  deploy-production:
+    needs: [smoke-qa]
+    environment: production
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: eu-west-2
+      TF_WORKSPACE: production
+      API_CUSTOM_DOMAIN: api.petroglyph.page
+      GRAPH_STUB_BUCKET: ""
+    steps: *deploy_steps

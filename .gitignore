@@ -33,6 +33,9 @@ test-output.txt
 
 # Terraform
 **/.vitest-terraform/
+
+# SSM migration snapshot (holds plaintext SecureString values)
+packages/infra/ssm-namespace-snapshot-*.json
 **/.terraform/
 *.tfstate
 *.tfstate.backup

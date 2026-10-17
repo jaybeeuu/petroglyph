@@ -1,0 +1,19 @@
+{
+  "name": "@petroglyph/graph-stub",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "lint": "eslint .",
+    "package": "bash scripts/package.sh",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^25.5.2",
+    "esbuild": "^0.28.0"
+  }
+}

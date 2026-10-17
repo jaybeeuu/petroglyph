@@ -59,7 +59,7 @@ The deploy pipeline promotes through QA: build → package → deploy QA → smo
 - A persistent QA environment to maintain: SSM names must be namespaced and the deploy-role trust extended. Real infra work.
 - No dedicated contract suite: the shared zod schema plus `pnpm -r typecheck` is the drift gate, so a producer→consumer round-trip package would duplicate the contract for no additional failure mode.
 - The deployed smoke mocks Graph, so it proves our path, not Microsoft's. Live Graph stays an occasional manual check.
-- Until the QA smoke exists, the deployed proof for `j1gn.52` is a human run-through; the `staged_events` consumer gap that motivated this strategy was visible only there (`6ra.5.2.3`, since wired by `j1gn.55`).
+- Before the QA smoke (`petroglyph-up9y.4`), the deployed proof for `j1gn.52` was a human run-through; the smoke now provides that proof, deterministic and gating. The `staged_events` consumer gap that motivated this strategy was visible only there (`6ra.5.2.3`, since wired by `j1gn.55`).
 
 ## Validation plan
 

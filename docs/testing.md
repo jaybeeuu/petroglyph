@@ -37,12 +37,14 @@ signatures, not because an environment is missing.
 
 Each layer proves what the one below it cannot.
 
-| Layer                   | Proves                                               | Infrastructure                                      | Runs in `pnpm test` | Status                                         |
-| ----------------------- | ---------------------------------------------------- | --------------------------------------------------- | ------------------- | ---------------------------------------------- |
-| Component / integration | a package's behaviour against real services          | LocalStack (Docker)                                 | Yes                 | In place                                       |
-| Service boundary        | a deployed handler wires its collaborators correctly | LocalStack (Docker)                                 | Yes                 | Partial — handler tests exist with mocked deps |
-| Deployed smoke          | the deployed path works end to end                   | QA environment (Graph stubbed via `GRAPH_BASE_URL`) | No                  | Planned                                        |
-| Live Microsoft Graph    | behaviour against the real Microsoft edge            | Real Graph (throwaway account)                      | No                  | Opt-in, never scheduled                        |
+| Layer                   | Proves                                               | Infrastructure                                      | Runs in `pnpm test` | Status                                          |
+| ----------------------- | ---------------------------------------------------- | --------------------------------------------------- | ------------------- | ----------------------------------------------- |
+| Component / integration | a package's behaviour against real services          | LocalStack (Docker)                                 | Yes                 | In place                                        |
+| Service boundary        | a deployed handler wires its collaborators correctly | LocalStack (Docker)                                 | Yes                 | Adapter, forwarder, delivery, dispatch in place |
+| Deployed smoke          | the deployed path works end to end                   | QA environment (Graph stubbed via `GRAPH_BASE_URL`) | No                  | In place                                        |
+| Live Microsoft Graph    | behaviour against the real Microsoft edge            | Real Graph (throwaway account)                      | No                  | Opt-in, never scheduled                         |
+
+Boundary suites drive the real handler with a realistic trigger: adapter (`SQSEvent` -> Graph delta -> S3 + event log), forwarder (`DynamoDBStreamEvent` -> FIFO message), delivery (API Gateway v2 request -> feed + presigned GET), and dispatch (`SQSEvent` of staged CloudEvents -> `staged_records` rows + S3 object removal).
 
 Cross-service payload drift is pinned by the shared `@petroglyph/staging-contracts` zod schema and `pnpm -r typecheck`, which fail in the same commit as the change; there is no separate contract layer ([technical-direction/pact-contract-tests.md](technical-direction/pact-contract-tests.md)).
 

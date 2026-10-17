@@ -26,6 +26,8 @@ resource "aws_sqs_queue" "ingest" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "ingest_dlq_depth" {
+  count = terraform.workspace == "production" ? 1 : 0
+
   alarm_name          = "petroglyph-ingest-dlq-depth-${terraform.workspace}"
   alarm_description   = "Alerts when the OneDrive ingest processor sends messages to the DLQ."
   comparison_operator = "GreaterThanThreshold"
@@ -138,11 +140,11 @@ resource "aws_lambda_function" "petroglyph_processor" {
 
   environment {
     variables = {
-      FILE_RECORDS_TABLE  = local.file_records_table_name
+      FILE_RECORDS_TABLE   = local.file_records_table_name
       REFRESH_TOKENS_TABLE = aws_dynamodb_table.refresh_tokens.name
-      MICROSOFT_CLIENT_ID = data.aws_ssm_parameter.onedrive_client_id.value
-      STAGED_PDFS_BUCKET  = aws_s3_bucket.staged_pdfs.bucket
-      STAGED_PDF_PREFIX   = "handwritten"
+      MICROSOFT_CLIENT_ID  = data.aws_ssm_parameter.onedrive_client_id.value
+      STAGED_PDFS_BUCKET   = aws_s3_bucket.staged_pdfs.bucket
+      STAGED_PDF_PREFIX    = "handwritten"
     }
   }
 

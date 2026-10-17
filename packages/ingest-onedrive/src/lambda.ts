@@ -102,9 +102,11 @@ export function buildDeltaRunner(): (connection: {
 }) => Promise<DeltaSyncResult> {
   return async (connection) => {
     const [clientId, clientSecret] = await Promise.all([
-      readSsmParameter(env("ONEDRIVE_CLIENT_ID_SSM_PATH", "/petroglyph/onedrive/client-id")),
       readSsmParameter(
-        env("ONEDRIVE_CLIENT_SECRET_SSM_PATH", "/petroglyph/onedrive/client-secret"),
+        env("ONEDRIVE_CLIENT_ID_SSM_PATH", "/petroglyph/production/onedrive/client-id"),
+      ),
+      readSsmParameter(
+        env("ONEDRIVE_CLIENT_SECRET_SSM_PATH", "/petroglyph/production/onedrive/client-secret"),
       ),
     ]);
     const tokenClient = new OAuthTokenClient({ clientId, clientSecret });

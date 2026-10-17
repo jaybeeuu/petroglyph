@@ -57,6 +57,36 @@ describe("infra script workflow split", () => {
       expect(script).toMatch(/list-policy-versions/);
       expect(script).toMatch(/delete-policy-version/);
     });
+
+    it("creates a deploy role per environment, each trusting its own GitHub environment", () => {
+      const script = readScript("bootstrap.sh");
+      expect(script).toMatch(/for DEPLOY_ENVIRONMENT in production qa; do/);
+      expect(script).toMatch(/petroglyph-github-actions-deploy-\$\{DEPLOY_ENVIRONMENT\}/);
+      expect(script).toMatch(/environment:\$\{DEPLOY_ENVIRONMENT\}/);
+    });
+
+    it("scopes the plan role's SSM read to the namespaced production parameter", () => {
+      const script = readScript("bootstrap.sh");
+      expect(script).toMatch(/parameter\/petroglyph\/production\/onedrive\/client-id/);
+    });
+  });
+
+  describe("SSM parameter namespacing", () => {
+    it("names every parameter by the active workspace", () => {
+      const main = readInfraFile("main.tf");
+      const ssm = readInfraFile("ssm.tf");
+      expect(main).toMatch(/ssm_parameter_prefix\s*=\s*"\/petroglyph\/\$\{terraform\.workspace\}"/);
+      expect(ssm).toMatch(/local\.ssm_parameter_prefix/);
+      expect(ssm).not.toMatch(/name\s*=\s*"\/petroglyph\//);
+    });
+
+    it("scopes the Lambda SSM read grants to the active workspace", () => {
+      const iam = readInfraFile("iam.tf");
+      expect(iam).toMatch(
+        /ssm_parameter_arn_prefix\s*=\s*"\$\{local\.ssm_arn_prefix\}\$\{local\.ssm_parameter_prefix\}"/,
+      );
+      expect(iam).not.toMatch(/ssm_arn_prefix\}\/petroglyph\//);
+    });
   });
 
   describe("tf-apply.sh", () => {
@@ -104,6 +134,14 @@ describe("infra script workflow split", () => {
       };
       expect(pkg.scripts).toHaveProperty("tf:apply");
       expect(pkg.scripts["tf:apply"]).toMatch(/tf-apply\.sh/);
+    });
+
+    it("exposes a migrate-ssm script", () => {
+      const pkg = JSON.parse(readInfraFile("package.json")) as {
+        scripts: { [key: string]: string };
+      };
+      expect(pkg.scripts).toHaveProperty("migrate-ssm");
+      expect(pkg.scripts["migrate-ssm"]).toMatch(/migrate-ssm-namespace\.sh/);
     });
   });
 });

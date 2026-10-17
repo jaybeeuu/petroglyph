@@ -31,6 +31,8 @@ resource "aws_sqs_queue" "staged_events" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "staged_events_dlq_depth" {
+  count = terraform.workspace == "production" ? 1 : 0
+
   alarm_name          = "petroglyph-staged-events-dlq-depth-${terraform.workspace}"
   alarm_description   = "Alerts when staging dispatch messages land on the DLQ."
   comparison_operator = "GreaterThanThreshold"
@@ -80,6 +82,8 @@ resource "aws_sqs_queue" "delta_trigger" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "delta_trigger_dlq_depth" {
+  count = terraform.workspace == "production" ? 1 : 0
+
   alarm_name          = "petroglyph-delta-trigger-dlq-depth-${terraform.workspace}"
   alarm_description   = "Alerts when delta-trigger bells land on the DLQ (adapter failures)."
   comparison_operator = "GreaterThanThreshold"
@@ -227,8 +231,8 @@ resource "aws_lambda_function" "petroglyph_adapter_onedrive" {
       STAGED_PDFS_BUCKET              = aws_s3_bucket.staged_pdfs.id
       ONEDRIVE_CLIENT_ID_SSM_PATH     = aws_ssm_parameter.onedrive_client_id.name
       ONEDRIVE_CLIENT_SECRET_SSM_PATH = aws_ssm_parameter.onedrive_client_secret.name
-      GRAPH_BASE_URL                  = "https://graph.microsoft.com/v1.0"
-      GRAPH_DRIVE_ROOT_DELTA_URL      = "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,eTag,parentReference,file,folder,deleted"
+      GRAPH_BASE_URL                  = local.adapter_graph_base_url
+      GRAPH_DRIVE_ROOT_DELTA_URL      = "${local.adapter_graph_base_url}/me/drive/root/delta?$select=id,name,eTag,parentReference,file,folder,deleted"
     }
   }
 

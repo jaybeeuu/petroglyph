@@ -141,14 +141,13 @@ EOF
   success "Placeholder zip uploaded"
 fi
 
-# ── Step 6: GitHub Actions deploy role ───────────────────────────────────────
+# ── Step 6: GitHub Actions deploy roles ──────────────────────────────────────
 #
-# This role is assumed by GitHub Actions via OIDC. It is not managed by
-# Terraform (to avoid a chicken-and-egg problem where Terraform needs the role
-# to run). It must be created once via this script.
-
-GITHUB_ACTIONS_ROLE="petroglyph-github-actions-deploy-production"
-DEPLOY_POLICY_NAME="petroglyph-github-actions-deploy-production"
+# One deploy role per environment. Each is assumed by its own GitHub
+# environment via OIDC and trusts only that environment's subject, so a QA job
+# cannot assume the production deploy role. They are not managed by Terraform
+# (to avoid a chicken-and-egg problem where Terraform needs the role to run);
+# they must be created once via this script.
 
 info "Checking GitHub OIDC provider..."
 OIDC_PROVIDER_ARN="arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
@@ -162,6 +161,97 @@ else
     --thumbprint-list "6938fd4d98bab03faadb97b34396831e3780aea1"
   success "GitHub OIDC provider created"
 fi
+
+# Create, update, or verify one managed policy and attach it to the deploy
+# role. IAM caps a managed policy document at 6144 characters, so the deploy
+# permissions are split across two policies (see docs/ops.md); converging each
+# independently means a future addition that overflows one is caught here.
+converge_managed_policy() {
+  local policy_name="$1"
+  local policy_doc="$2"
+  local policy_arn="arn:aws:iam::${ACCOUNT_ID}:policy/${policy_name}"
+
+  info "Checking deploy managed policy ($policy_name)..."
+  if $AWS iam get-policy --policy-arn "$policy_arn" &>/dev/null; then
+    local default_version_id
+    default_version_id=$($AWS iam get-policy \
+      --policy-arn "$policy_arn" \
+      --query 'Policy.DefaultVersionId' \
+      --output text)
+
+    local live_policy_doc
+    live_policy_doc=$($AWS iam get-policy-version \
+      --policy-arn "$policy_arn" \
+      --version-id "$default_version_id" \
+      --query 'PolicyVersion.Document' \
+      --output json)
+
+    # IAM may normalise whitespace and key order, so compare the documents
+    # semantically (as parsed JSON) rather than as raw text.
+    if ! node --input-type=commonjs -e '
+const { isDeepStrictEqual } = require("node:util");
+const { readFileSync } = require("node:fs");
+
+const generated = JSON.parse(process.argv[1]);
+let live = JSON.parse(readFileSync(0, "utf8"));
+if (typeof live === "string") live = JSON.parse(live);
+process.exit(isDeepStrictEqual(generated, live) ? 0 : 1);
+' "$policy_doc" <<< "$live_policy_doc"; then
+      info "Managed policy ${policy_name} drifted from bootstrap.sh — creating a new version..."
+
+      # IAM allows at most 5 versions per policy. Delete the oldest
+      # non-default versions until there is room for the new one.
+      local version_count
+      version_count=$($AWS iam list-policy-versions \
+        --policy-arn "$policy_arn" \
+        --query 'length(Versions)' \
+        --output text)
+      while [[ "$version_count" -ge 5 ]]; do
+        local oldest_version_id
+        oldest_version_id=$($AWS iam list-policy-versions \
+          --policy-arn "$policy_arn" \
+          --query 'sort_by(Versions[?IsDefaultVersion==`false`], &CreateDate)[0].VersionId' \
+          --output text)
+        $AWS iam delete-policy-version \
+          --policy-arn "$policy_arn" \
+          --version-id "$oldest_version_id"
+        info "Deleted old policy version $oldest_version_id"
+        version_count=$((version_count - 1))
+      done
+
+      $AWS iam create-policy-version \
+        --policy-arn "$policy_arn" \
+        --policy-document "$policy_doc" \
+        --set-as-default
+      success "Managed policy ${policy_name} updated to match bootstrap.sh"
+    else
+      success "Managed policy ${policy_name} already in sync with bootstrap.sh"
+    fi
+  else
+    info "Creating managed policy ${policy_name}..."
+    $AWS iam create-policy \
+      --policy-name "$policy_name" \
+      --policy-document "$policy_doc"
+    success "Managed policy ${policy_name} created"
+  fi
+
+  info "Checking managed policy ${policy_name} is attached to role ${GITHUB_ACTIONS_ROLE}..."
+  if $AWS iam list-attached-role-policies --role-name "$GITHUB_ACTIONS_ROLE" \
+      --query "AttachedPolicies[?PolicyArn=='${policy_arn}']" --output text | grep -q .; then
+    success "Managed policy ${policy_name} already attached"
+  else
+    info "Attaching managed policy ${policy_name} to role..."
+    $AWS iam attach-role-policy \
+      --role-name "$GITHUB_ACTIONS_ROLE" \
+      --policy-arn "$policy_arn"
+    success "Managed policy ${policy_name} attached"
+  fi
+}
+
+for DEPLOY_ENVIRONMENT in production qa; do
+GITHUB_ACTIONS_ROLE="petroglyph-github-actions-deploy-${DEPLOY_ENVIRONMENT}"
+DEPLOY_POLICY_NAME="petroglyph-github-actions-deploy-${DEPLOY_ENVIRONMENT}"
+DEPLOY_WORKLOADS_POLICY_NAME="${DEPLOY_POLICY_NAME}-workloads"
 
 info "Checking deploy role ($GITHUB_ACTIONS_ROLE)..."
 if $AWS iam get-role --role-name "$GITHUB_ACTIONS_ROLE" &>/dev/null; then
@@ -180,7 +270,7 @@ else
         \"Action\": \"sts:AssumeRoleWithWebIdentity\",
         \"Condition\": {
           \"StringEquals\": {
-            \"token.actions.githubusercontent.com:sub\": \"repo:jaybeeuu/petroglyph:environment:production\",
+            \"token.actions.githubusercontent.com:sub\": \"repo:jaybeeuu/petroglyph:environment:${DEPLOY_ENVIRONMENT}\",
             \"token.actions.githubusercontent.com:aud\": \"sts.amazonaws.com\"
           }
         }
@@ -189,8 +279,6 @@ else
   success "Deploy role created"
 fi
 
-info "Checking deploy managed policy ($DEPLOY_POLICY_NAME)..."
-POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${DEPLOY_POLICY_NAME}"
 # NOTE: LambdaProjectFunctions and ProjectQueues name every function/queue ARN
 # explicitly, matching DynamoDbProjectTables. LambdaEventSourceMappings scopes
 # to the mapping ARNs, but lambda:CreateEventSourceMapping and
@@ -198,7 +286,14 @@ POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${DEPLOY_POLICY_NAME}"
 # they need "Resource": "*". Only CreateEventSourceMapping and
 # ListEventSourceMappings are non-scopable; GetEventSourceMapping and the other
 # mapping actions are scoped. This exception is justified in docs/ops.md.
-POLICY_DOC=$(cat << EOF
+#
+# The statements are authored once, then split into two managed policies below
+# because IAM rejects a managed policy document over 6144 characters. The
+# workload statements (DynamoDB tables, Lambda functions, SQS queues and their
+# event-source mappings) move to <name>-workloads; everything else stays on
+# <name>. Keeping every project ARN explicit is the guardrail in docs/ops.md,
+# so the fix is a split, not a wildcard.
+POLICY_DOC_ALL=$(cat << EOF
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -239,7 +334,7 @@ POLICY_DOC=$(cat << EOF
       "Resource": [
         "arn:aws:s3:::petroglyph-terraform-state-${ACCOUNT_ID}",
         "arn:aws:s3:::petroglyph-lambda-artifacts-${ACCOUNT_ID}",
-        "arn:aws:s3:::petroglyph-staged-pdfs-production"
+        "arn:aws:s3:::petroglyph-staged-pdfs-${DEPLOY_ENVIRONMENT}"
       ]
     },
     {
@@ -255,7 +350,7 @@ POLICY_DOC=$(cat << EOF
       "Resource": [
         "arn:aws:s3:::petroglyph-terraform-state-${ACCOUNT_ID}/*",
         "arn:aws:s3:::petroglyph-lambda-artifacts-${ACCOUNT_ID}/*",
-        "arn:aws:s3:::petroglyph-staged-pdfs-production/*"
+        "arn:aws:s3:::petroglyph-staged-pdfs-${DEPLOY_ENVIRONMENT}/*"
       ]
     },
     {
@@ -283,16 +378,16 @@ POLICY_DOC=$(cat << EOF
       ],
       "Resource": [
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-terraform-locks",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-users-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-refresh-tokens-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-profiles-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-file-records-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-tokens-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-jobs-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-event-log-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-staged-records-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-token-vaults-production",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-states-production"
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-users-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-refresh-tokens-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-profiles-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-file-records-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-tokens-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-sync-jobs-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-event-log-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-staged-records-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-token-vaults-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-states-${DEPLOY_ENVIRONMENT}"
       ]
     },
     {
@@ -325,15 +420,16 @@ POLICY_DOC=$(cat << EOF
         "lambda:ListTags"
       ],
       "Resource": [
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-adapter-onedrive-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-api-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-ingest-onedrive-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-processor-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-delivery-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-dispatch-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-forwarder-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-sync-relay-production",
-        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-sync-worker-production"
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-adapter-onedrive-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-api-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-graph-stub-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-ingest-onedrive-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-processor-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-delivery-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-dispatch-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-staging-forwarder-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-sync-relay-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-sync-worker-${DEPLOY_ENVIRONMENT}"
       ]
     },
     {
@@ -412,20 +508,21 @@ POLICY_DOC=$(cat << EOF
         "sqs:CreateQueue",
         "sqs:DeleteQueue",
         "sqs:GetQueueAttributes",
+        "sqs:SendMessage",
         "sqs:SetQueueAttributes",
         "sqs:TagQueue",
         "sqs:UntagQueue",
         "sqs:ListQueueTags"
       ],
       "Resource": [
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-delta-trigger-dlq-production.fifo",
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-delta-trigger-production.fifo",
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-ingest-dlq-production",
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-ingest-production",
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-staged-events-dlq-production.fifo",
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-staged-events-production.fifo",
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-sync-jobs-dlq-production",
-        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-sync-jobs-production"
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-delta-trigger-dlq-${DEPLOY_ENVIRONMENT}.fifo",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-delta-trigger-${DEPLOY_ENVIRONMENT}.fifo",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-ingest-dlq-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-ingest-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-staged-events-dlq-${DEPLOY_ENVIRONMENT}.fifo",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-staged-events-${DEPLOY_ENVIRONMENT}.fifo",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-sync-jobs-dlq-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:sqs:eu-west-2:${ACCOUNT_ID}:petroglyph-sync-jobs-${DEPLOY_ENVIRONMENT}"
       ]
     },
     {
@@ -447,6 +544,22 @@ POLICY_DOC=$(cat << EOF
       ]
     },
     {
+      "Sid": "ProjectSsmParameterCrypto",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:Encrypt",
+        "kms:GenerateDataKey",
+        "kms:DescribeKey"
+      ],
+      "Resource": "arn:aws:kms:eu-west-2:${ACCOUNT_ID}:key/*",
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": "ssm.eu-west-2.amazonaws.com"
+        }
+      }
+    },
+    {
       "Sid": "ProjectCloudWatchAlarms",
       "Effect": "Allow",
       "Action": [
@@ -464,76 +577,29 @@ POLICY_DOC=$(cat << EOF
 EOF
 )
 
-if $AWS iam get-policy --policy-arn "$POLICY_ARN" &>/dev/null; then
-  DEFAULT_VERSION_ID=$($AWS iam get-policy \
-    --policy-arn "$POLICY_ARN" \
-    --query 'Policy.DefaultVersionId' \
-    --output text)
+# Split the authored statements into the two managed policies. The SID list is
+# the single place the boundary is declared.
+WORKLOAD_SIDS='["DynamoDbProjectTables","DynamoDbListTables","LambdaProjectFunctions","LambdaEventSourceMappingUnscopable","LambdaEventSourceMappings","ProjectQueues"]'
 
-  LIVE_POLICY_DOC=$($AWS iam get-policy-version \
-    --policy-arn "$POLICY_ARN" \
-    --version-id "$DEFAULT_VERSION_ID" \
-    --query 'PolicyVersion.Document' \
-    --output json)
+split_deploy_policy() {
+  node --input-type=commonjs -e '
+const sids = new Set(JSON.parse(process.argv[1]));
+const doc = JSON.parse(process.argv[2]);
+const keep = process.argv[3] === "workloads"
+  ? (statement) => sids.has(statement.Sid)
+  : (statement) => !sids.has(statement.Sid);
+process.stdout.write(JSON.stringify({ Version: doc.Version, Statement: doc.Statement.filter(keep) }, null, 2));
+' "$WORKLOAD_SIDS" "$POLICY_DOC_ALL" "$1"
+}
 
-  # IAM may normalise whitespace and key order, so compare the documents
-  # semantically (as parsed JSON) rather than as raw text.
-  if ! node --input-type=commonjs -e '
-const { isDeepStrictEqual } = require("node:util");
-const { readFileSync } = require("node:fs");
+POLICY_DOC=$(split_deploy_policy platform)
+POLICY_DOC_WORKLOADS=$(split_deploy_policy workloads)
 
-const generated = JSON.parse(process.argv[1]);
-let live = JSON.parse(readFileSync(0, "utf8"));
-if (typeof live === "string") live = JSON.parse(live);
-process.exit(isDeepStrictEqual(generated, live) ? 0 : 1);
-' "$POLICY_DOC" <<< "$LIVE_POLICY_DOC"; then
-    info "Deploy managed policy drifted from bootstrap.sh — creating a new version..."
-
-    # IAM allows at most 5 versions per policy. Delete the oldest
-    # non-default versions until there is room for the new one.
-    VERSION_COUNT=$($AWS iam list-policy-versions \
-      --policy-arn "$POLICY_ARN" \
-      --query 'length(Versions)' \
-      --output text)
-    while [[ "$VERSION_COUNT" -ge 5 ]]; do
-      OLDEST_VERSION_ID=$($AWS iam list-policy-versions \
-        --policy-arn "$POLICY_ARN" \
-        --query 'sort_by(Versions[?IsDefaultVersion==`false`], &CreateDate)[0].VersionId' \
-        --output text)
-      $AWS iam delete-policy-version \
-        --policy-arn "$POLICY_ARN" \
-        --version-id "$OLDEST_VERSION_ID"
-      info "Deleted old policy version $OLDEST_VERSION_ID"
-      VERSION_COUNT=$((VERSION_COUNT - 1))
-    done
-
-    $AWS iam create-policy-version \
-      --policy-arn "$POLICY_ARN" \
-      --policy-document "$POLICY_DOC" \
-      --set-as-default
-    success "Deploy managed policy updated to match bootstrap.sh"
-  else
-    success "Deploy managed policy already in sync with bootstrap.sh"
-  fi
-else
-  info "Creating deploy managed policy..."
-  $AWS iam create-policy \
-    --policy-name "$DEPLOY_POLICY_NAME" \
-    --policy-document "$POLICY_DOC"
-  success "Deploy managed policy created"
-fi
-
-info "Checking managed policy is attached to role..."
-if $AWS iam list-attached-role-policies --role-name "$GITHUB_ACTIONS_ROLE" \
-    --query "AttachedPolicies[?PolicyArn=='${POLICY_ARN}']" --output text | grep -q .; then
-  success "Managed policy already attached"
-else
-  info "Attaching managed policy to role..."
-  $AWS iam attach-role-policy \
-    --role-name "$GITHUB_ACTIONS_ROLE" \
-    --policy-arn "$POLICY_ARN"
-  success "Managed policy attached"
-fi
+# Workloads first: its policy is attached before the platform policy drops the
+# workload statements, so the role never loses a permission mid-converge.
+converge_managed_policy "$DEPLOY_WORKLOADS_POLICY_NAME" "$POLICY_DOC_WORKLOADS"
+converge_managed_policy "$DEPLOY_POLICY_NAME" "$POLICY_DOC"
+done
 
 # ── Step 7: GitHub Actions read-only plan role ───────────────────────────────
 #
@@ -599,7 +665,7 @@ PLAN_POLICY_DOC=$(cat << EOF
       "Sid": "PlanTimeParameterRead",
       "Effect": "Allow",
       "Action": "ssm:GetParameter",
-      "Resource": "arn:aws:ssm:eu-west-2:${ACCOUNT_ID}:parameter/petroglyph/onedrive/client-id"
+      "Resource": "arn:aws:ssm:eu-west-2:${ACCOUNT_ID}:parameter/petroglyph/production/onedrive/client-id"
     },
     {
       "Sid": "PlanTimeParameterDecrypt",
@@ -668,11 +734,15 @@ echo "  Bootstrap complete."
 echo ""
 echo "  TF_STATE_BUCKET        = $TF_STATE_BUCKET"
 echo "  LAMBDA_ARTIFACT_BUCKET = $LAMBDA_ARTIFACT_BUCKET"
-echo "  DEPLOY_ROLE_ARN        = arn:aws:iam::${ACCOUNT_ID}:role/${GITHUB_ACTIONS_ROLE}"
 echo "  PLAN_ROLE_ARN          = arn:aws:iam::${ACCOUNT_ID}:role/${PLAN_ROLE}"
 echo ""
 echo "  Set these GitHub Actions secrets on the 'production' environment:"
-echo "    AWS_ROLE_ARN           = arn:aws:iam::${ACCOUNT_ID}:role/${GITHUB_ACTIONS_ROLE}"
+echo "    AWS_ROLE_ARN           = arn:aws:iam::${ACCOUNT_ID}:role/petroglyph-github-actions-deploy-production"
+echo "    TF_STATE_BUCKET        = $TF_STATE_BUCKET"
+echo "    LAMBDA_ARTIFACT_BUCKET = $LAMBDA_ARTIFACT_BUCKET"
+echo ""
+echo "  Set these GitHub Actions secrets on the 'qa' environment:"
+echo "    AWS_ROLE_ARN           = arn:aws:iam::${ACCOUNT_ID}:role/petroglyph-github-actions-deploy-qa"
 echo "    TF_STATE_BUCKET        = $TF_STATE_BUCKET"
 echo "    LAMBDA_ARTIFACT_BUCKET = $LAMBDA_ARTIFACT_BUCKET"
 echo ""

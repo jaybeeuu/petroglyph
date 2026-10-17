@@ -1,7 +1,7 @@
 # Number of days before staged PDF objects are expired by the S3 lifecycle rule.
 # The canonical source of truth at runtime is the SSM parameter
-# /petroglyph/config/retention-days; this variable provides the default so that
-# `terraform plan` works without an AWS connection during CI validation.
+# /petroglyph/<workspace>/config/retention-days; this variable provides the default
+# so that `terraform plan` works without an AWS connection during CI validation.
 variable "api_zip_s3_bucket" {
   description = "S3 bucket containing the API Lambda deployment zip"
   type        = string
@@ -84,10 +84,28 @@ variable "staging_delivery_zip_s3_key" {
   default     = ""
 }
 
+variable "graph_stub_zip_s3_bucket" {
+  description = "S3 bucket containing the QA Graph stub Lambda deployment zip. Empty string disables the stub (production)."
+  type        = string
+  default     = ""
+}
+
+variable "graph_stub_zip_s3_key" {
+  description = "S3 key of the QA Graph stub Lambda deployment zip. Empty string disables the stub."
+  type        = string
+  default     = ""
+}
+
 variable "api_custom_domain" {
   description = "Custom domain name for the API (e.g. api.petroglyph.page). Empty string disables custom domain resources."
   type        = string
   default     = ""
+}
+
+variable "graph_base_url" {
+  description = "Microsoft Graph base URL the adapter calls. The deployed smoke points this (and the derived delta URL) at the QA Graph stub; production leaves it at the real Graph endpoint."
+  type        = string
+  default     = "https://graph.microsoft.com/v1.0"
 }
 
 variable "retention_days" {
