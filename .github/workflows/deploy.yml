@@ -9,6 +9,18 @@ permissions:
   id-token: write
   contents: read
 
+# One deploy at a time, across every ref. Merge bursts are normal — four merges
+# landed inside seven minutes on 2026-10-12, and three Deploy runs overlapped —
+# and with no concurrency group each run applies to the same Terraform workspace
+# and the same Lambda functions. That lets a run's smoke exercise a later
+# commit's stack and takes promotion out of commit order. `cancel-in-progress`
+# stays false: cancelling mid-`terraform apply` is worse than queueing. GitHub
+# keeps one run running and one pending, so a burst collapses onto the newest
+# commit, which already contains the superseded ones.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
