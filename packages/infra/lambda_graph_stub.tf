@@ -14,11 +14,17 @@ locals {
 
   # Only qa redirects Graph at the stub. Every other workspace keeps the real
   # endpoint even when a stub artifact is supplied (plan-time applies).
+  adapter_graph_uses_stub = terraform.workspace == "qa" && local.graph_stub_base_url != ""
   adapter_graph_base_url = (
-    terraform.workspace == "qa" && local.graph_stub_base_url != ""
+    local.adapter_graph_uses_stub
     ? local.graph_stub_base_url
     : var.graph_base_url
   )
+
+  # Lambda Function URLs reject a literal "$" in the query string with a 400,
+  # so percent-encode OData system options when the stub is the target. Real
+  # Microsoft Graph accepts the literal "$".
+  adapter_graph_query_prefix = local.adapter_graph_uses_stub ? "%24" : "$"
 }
 
 resource "aws_iam_role" "petroglyph_graph_stub_role" {

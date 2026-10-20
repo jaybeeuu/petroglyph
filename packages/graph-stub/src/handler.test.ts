@@ -39,14 +39,14 @@ describe("createGraphStubHandler", () => {
     expect(body.value).toMatchObject([
       { id: SMOKE_ITEM_ID, name: "smoke.pdf", parentReference: { path: SMOKE_ITEM_PARENT_PATH } },
     ]);
-    expect(body["@odata.deltaLink"]).toContain("$deltatoken=smoke");
+    expect(body["@odata.deltaLink"]).toContain("%24deltatoken=smoke");
   });
 
   it("returns no changes when the walk follows its deltaLink", async () => {
     const handler = createGraphStubHandler();
 
     const result = await handler(
-      createEvent("GET", "/me/drive/root/delta", { rawQueryString: "$deltatoken=smoke" }),
+      createEvent("GET", "/me/drive/root/delta", { rawQueryString: "%24deltatoken=smoke" }),
     );
 
     const body = JSON.parse(decodeBody(result)) as { value: unknown[] };
