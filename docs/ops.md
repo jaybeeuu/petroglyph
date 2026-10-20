@@ -168,6 +168,8 @@ When adding a new Lambda:
 
 Terraform creates SSM parameters with `value = "PLACEHOLDER"` on first apply (with `lifecycle { ignore_changes = [value] }` so CD never overwrites real values). After bootstrapping, the real credentials must be stored manually using the steps below.
 
+`ignore_changes` protects in-place updates only: `aws_ssm_parameter.name` is `ForceNew`, so a rename or other forced replacement recreates the parameter as `PLACEHOLDER` without failing the apply. Verify values after any apply that replaces parameters — see [Secret lifecycle and re-keying](#secret-lifecycle-and-re-keying).
+
 ### GitHub OAuth App
 
 Used for user login (`GET /auth/url` → `GET /auth/callback`).
@@ -194,11 +196,15 @@ Used for user login (`GET /auth/url` → `GET /auth/callback`).
    ```
 
 6. Force a Lambda cold start to pick up the new values:
+
    ```sh
    aws lambda update-function-configuration --profile petroglyph-admin \
      --function-name petroglyph-api-production \
      --description "force cold start $(date -u +%Y-%m-%dT%H:%M:%SZ)"
    ```
+
+   The API reads `github/*` from SSM at cold start, so this is enough for sign-in.
+   `MICROSOFT_CLIENT_ID` is different — it is baked at deploy time (see step 7 below).
 
 ### Microsoft Entra ID App (OneDrive)
 
@@ -232,4 +238,58 @@ Used for OneDrive connection (`GET /onedrive/auth-url` → `GET /onedrive/connec
      --value "<client-secret-value>" --type SecureString --overwrite
    ```
 
-7. Force a Lambda cold start (same command as step 6 in the GitHub section above).
+7. Cold start the API and **redeploy** the baked-env Lambdas. `onedrive/client-secret` is read
+   from SSM at cold start, but `MICROSOFT_CLIENT_ID` is baked into `ingest-onedrive` and
+   `sync-worker` at deploy time:
+
+   ```sh
+   aws lambda update-function-configuration --profile petroglyph-admin \
+     --function-name petroglyph-api-production \
+     --description "force cold start $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+   gh workflow run deploy.yml --ref main
+   ```
+
+   A cold start alone leaves `MICROSOFT_CLIENT_ID` at its old value.
+
+### Secret lifecycle and re-keying
+
+The seven live production parameters are hand-managed; Terraform never owns their values.
+
+| SSM path (`/petroglyph/production/…`) | Read by                                                        | How to re-key                                                                 |
+| ------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `github/client-id`                    | api (SSM, cold start)                                          | GitHub OAuth App settings — stable                                            |
+| `github/client-secret`                | api (SSM, cold start)                                          | GitHub OAuth App → Generate a new client secret                               |
+| `jwt/signing-secret`                  | api (SSM, cold start)                                          | `openssl rand -base64 48`                                                     |
+| `jwt/private-key`                     | api (SSM, cold start)                                          | `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048` (PKCS#8 PEM)   |
+| `jwt/public-key`                      | api + staging (SSM, cold start)                                | `openssl pkey -in private.pem -pubout` (SPKI PEM, must match the private key) |
+| `onedrive/client-id`                  | api (SSM) + ingest-onedrive, sync-worker (**baked at deploy**) | Entra app registration overview — stable                                      |
+| `onedrive/client-secret`              | api + staging (SSM, cold start)                                | Entra → Certificates & secrets → New client secret                            |
+
+The remaining `/petroglyph/production/…` parameters — `onedrive/access-token`,
+`onedrive/refresh-token`, `onedrive/token-expiry`, `graph/subscription-id`, `config/*` — are dead.
+Per-connection OneDrive tokens live in the `token_vaults` DynamoDB table
+(`packages/core/src/tokens/token-store.ts`). Do not re-key them; they are scheduled for removal.
+
+**No password-manager copy is kept** (decision 2026-10-20). Every value above is regenerable from
+its source system, so a backup would protect availability (time), not against irrecoverable loss.
+The accepted trade-off: if SSM is wiped again, re-key from this table and redeploy. The durable
+controls are this runbook and the post-apply check below — not secret duplication.
+
+**Wipe hazard.** Because `name` is `ForceNew` and `value` is under `ignore_changes`, a rename or
+forced replacement destroys the hand-entered value and recreates it as `PLACEHOLDER` **without the
+apply failing**. This is the 2026-10-13 incident: the namespace migration replaced all 14
+parameters before its restore step succeeded, and the next deploy recreated them from the `ssm.tf`
+default. After any apply that replaces parameters, check for reverted values:
+
+```sh
+aws ssm get-parameters-by-path --profile petroglyph-admin \
+  --path /petroglyph/production --recursive --with-decryption \
+  --query 'Parameters[].[Name,Value]' --output text |
+  awk -F'\t' '$2=="PLACEHOLDER" {print "STILL PLACEHOLDER:", $1}'
+```
+
+**Cold start vs redeploy.** `github/*` and `onedrive/*` are fetched from SSM at Lambda cold start,
+so a cold start picks them up. `MICROSOFT_CLIENT_ID` is baked into the `ingest-onedrive` and
+`sync-worker` environment at deploy time from `data.aws_ssm_parameter.onedrive_client_id`, so a
+change to `onedrive/client-id` requires a redeploy.
