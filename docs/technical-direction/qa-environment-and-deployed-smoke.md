@@ -9,7 +9,7 @@
 - The verification model has three layers — component, service boundary, and a deterministic deployed smoke ([verification-strategy.md](verification-strategy.md)). The first two are in place; the third has no home.
 - Deployed wiring — Lambda env vars, IAM, API Gateway routing, a missing event-source mapping — is invisible to LocalStack. The only deployed proof today is a one-shot human run-through (`petroglyph-j1gn.52`), which proves the path once and then rots.
 - **Target outcome:** a repeatable, deterministic smoke that runs against a non-production tier on every merge and blocks production promotion when it fails — without adding an external dependency to the PR-gated CI (that stays LocalStack + mocked seams).
-- **Cost outcome:** the QA tier must cost nothing at rest — no standing charge for an idle environment.
+- **Cost outcome:** the QA tier must cost nothing at rest — no standing charge for an idle environment. SQS polling is the one thing that would bill while idle, so QA's four event source mappings are quiesced outside CI runs ([Cost at rest](#cost-at-rest)).
 - **Decision horizon:** until a boundary becomes independently deployed or a release cadence splits QA from production (see [Revisit triggers](#revisit-triggers), and [pact-contract-tests.md](pact-contract-tests.md) for the same fork).
 
 ## Current-state constraints
@@ -70,7 +70,7 @@ Spin up a throwaway stack per pull request, smoke it, tear it down.
 - **Environments — GitHub environments `qa`, `production`, and the existing `terraform-plan`**, each holding its own `AWS_ROLE_ARN`. `production` stays main-only.
 - **Smoke home — a new `packages/e2e-tests`** package that drives the QA URL set, invoked as a step in the QA deploy job.
 - **Stub home — a new package** deployed in the QA workspace (name to be settled in `up9y.3`).
-- **Cost — zero standing cost at rest.** The four CloudWatch DLQ metric alarms were gated to `production`, so the QA workspace copied none of them; they have since been deleted outright ([Observability](../../ARCHITECTURE.md#observability)), and an SQS queue at rest is free.
+- **Cost — zero standing cost at rest.** The four CloudWatch DLQ metric alarms were gated to `production`, so the QA workspace copied none of them; they have since been deleted outright ([Observability](../../ARCHITECTURE.md#observability)). The four SQS event source mappings are the only remaining idle cost, and `var.qa_quiesced` disables them between CI runs ([Cost at rest](#cost-at-rest)).
 
 ## Tradeoffs accepted
 
@@ -84,18 +84,18 @@ Spin up a throwaway stack per pull request, smoke it, tear it down.
 
 Audit of what a `qa` workspace provisions, at idle (region `eu-west-2`):
 
-| Resource                                 | Count | Billing                        | Idle cost |
-| ---------------------------------------- | ----- | ------------------------------ | --------- |
-| DynamoDB tables                          | 10    | `PAY_PER_REQUEST`, no PITR     | $0        |
-| Lambda functions (incl. stub)            | 9     | per-invoke                     | $0        |
-| API Gateway HTTP API + function URLs     | 1–2   | per-request                    | $0        |
-| SQS queues (standard + FIFO)             | 6     | per-request                    | $0        |
-| S3 bucket (`AES256`)                     | 1     | storage only; lifecycle expiry | $0        |
-| SSM parameters (standard `SecureString`) | 14    | standard tier is free          | $0        |
-| CloudWatch log groups (14-day retention) | 9     | per ingested byte              | ~$0       |
-| IAM roles and policies                   | ~8    | free                           | $0        |
+| Resource                                 | Count | Billing                                            | Idle cost                                                        |
+| ---------------------------------------- | ----- | -------------------------------------------------- | ---------------------------------------------------------------- |
+| DynamoDB tables                          | 10    | `PAY_PER_REQUEST`, no PITR                         | $0                                                               |
+| Lambda functions (incl. stub)            | 9     | per-invoke                                         | $0                                                               |
+| API Gateway HTTP API + function URLs     | 1–2   | per-request                                        | $0                                                               |
+| SQS queues (standard + FIFO)             | 6     | per-request, **empty long-poll receives included** | $0 — the four event source mappings are quiesced between CI runs |
+| S3 bucket (`AES256`)                     | 1     | storage only; lifecycle expiry                     | $0                                                               |
+| SSM parameters (standard `SecureString`) | 14    | standard tier is free                              | $0                                                               |
+| CloudWatch log groups (14-day retention) | 9     | per ingested byte                                  | ~$0                                                              |
+| IAM roles and policies                   | ~8    | free                                               | $0                                                               |
 
-**Aggregate: $0 at rest.** Per-run usage — one smoke invocation set — is pennies, and CI is free because the repository is public. The classic standing-charge traps (NAT gateway, RDS, ALB, customer-managed KMS) are absent because the stack is serverless end to end.
+**Aggregate: $0 at rest — because the four SQS event source mappings are disabled whenever CI is not running.** A queue bills on receives, and a poller long-polls an empty queue, so the mappings are the one thing in this table that would carry a cost by existing rather than by being used: QA's four queues account for 213,641 of the 937,587 empty receives measured in the 30 days to 2026-10-24, and `var.qa_quiesced` (default `true`, applied by the `quiesce-qa` job) is what brings them to zero ([QA quiesce](../ops.md#qa-quiesce-sqs-event-source-mappings)). Per-run usage — one smoke invocation set — is pennies, and CI is free because the repository is public. The classic standing-charge traps (NAT gateway, RDS, ALB, customer-managed KMS) are absent because the stack is serverless end to end.
 
 ## Validation plan
 

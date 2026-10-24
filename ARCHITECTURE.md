@@ -300,18 +300,24 @@ tags:
 
 ## Cost Profile
 
-Designed to be **zero cost at rest**. All charges are usage-based:
+Almost everything here is free at rest. **SQS is not.** A Lambda SQS event source mapping long-polls its queue whether or not a message exists, and every empty receive is a billed request against the account's 1,000,000 requests/month free tier. The 30 days to 2026-10-24 measured **937,587 empty receives against 1 message sent and 4 received** — 93.8% of the free tier, produced by idle polling rather than by traffic ([`audit-sqs-idle-requests.sh`](packages/infra/scripts/audit-sqs-idle-requests.sh), [ops.md](docs/ops.md#auditing-idle-sqs-requests)). Production's four pollers are budgeted at **~425,000 requests/month** (~42% of the free tier; ~212,000 once `m0jc.3` retires the legacy ingestion path), and the audit script is what re-checks that budget. QA's four pollers cost **0**, because they are quiesced whenever CI is not running ([QA quiesce](docs/ops.md#qa-quiesce-sqs-event-source-mappings)).
 
-| Component              | Standing Cost | Usage Cost                  |
-| ---------------------- | ------------- | --------------------------- |
-| Lambda                 | $0            | Per invocation + GB-seconds |
-| API Gateway (HTTP API) | $0            | Per request                 |
-| SQS                    | $0            | Per request (1M free/month) |
-| DynamoDB (on-demand)   | $0            | Per read/write unit         |
-| S3                     | $0            | Per GB stored + requests    |
-| SSM Parameter Store    | $0            | Standard tier is free       |
+| Component              | Standing Cost | Usage Cost                                                                                                  |
+| ---------------------- | ------------- | ----------------------------------------------------------------------------------------------------------- |
+| Lambda                 | $0            | Per invocation + GB-seconds                                                                                 |
+| API Gateway (HTTP API) | $0            | Per request                                                                                                 |
+| SQS                    | $0            | Per request (1M free/month), **empty long-poll receives included** — ~425k/month at idle, 0 for QA quiesced |
+| DynamoDB (on-demand)   | $0            | Per read/write unit                                                                                         |
+| S3                     | $0            | Per GB stored + requests                                                                                    |
+| SSM Parameter Store    | $0            | Standard tier is free                                                                                       |
 
-At personal-project volume, total monthly cost is expected to be **< $1**.
+**Bills while idle:** SQS requests from the four production SQS event source mappings, ~425,000/month. No standing charge is left in the stack: the four DLQ metric alarms that added ~$0.40/month were deleted, and nothing replaced them ([Observability](#observability)). CloudWatch Logs bills on bytes ingested and stored, which is a separate decision from this model.
+
+**Does not bill while idle:** Lambda, API Gateway, DynamoDB on-demand, S3 within the lifecycle window, SSM Parameter Store, and the two DynamoDB-stream event source mappings — stream reads consumed through a Lambda trigger are free, which is why those stay enabled while the SQS mappings are quiesced.
+
+The poll-free transport that would delete the idle requests outright is **deferred, not rejected**: `m0jc.3` retires half the pollers for free, and a stream-per-consumer design would move head-of-line blocking from one FIFO message group to a whole stream shard. Revisit when `m0jc.3` lands, when idle requests pass ~500,000/month, or when a new SQS consumer is added.
+
+At personal-project volume, total monthly cost stays **< $1** — dominated by idle SQS requests, not by use.
 
 ---
 
