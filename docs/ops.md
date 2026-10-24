@@ -135,7 +135,7 @@ cd packages/infra
 ./scripts/migrate-ssm-namespace.sh --profile petroglyph-admin --workspace production
 ```
 
-The script snapshots every legacy parameter (names, values and types) to a `chmod 600` JSON file under `packages/infra/`, applies the rename with `terraform apply -target` scoped to the `aws_ssm_parameter` resources, then writes the values back to `/petroglyph/production/…`. Verify the namespaced parameters, then delete the snapshot. The snapshot is the rollback artefact: the migration never re-keys a secret by hand, and re-running it is a no-op once nothing legacy remains.
+The script snapshots every legacy parameter (names, values and types) to a `chmod 600` JSON file under `packages/infra/`, applies the rename with `terraform apply -target` scoped to the `aws_ssm_parameter` resources, then writes the values back to `/petroglyph/production/…`. Verify the namespaced parameters — the [wipe hazard check](#wipe-hazard) is the quickest way — then delete the snapshot. The snapshot is the rollback artefact: the migration never re-keys a secret by hand, and re-running it is a no-op once nothing legacy remains.
 
 PR-time plans read their credentials from a separate `terraform-plan` environment. It must have **no branch restriction** (the job runs on pull requests from any branch) and hold the same state/artifact bucket names plus the read-only role ARN:
 
@@ -193,6 +193,21 @@ aws lambda update-function-configuration --profile petroglyph-admin \
 ```
 
 Do not reach for `packages/infra/scripts/tf-apply.sh` to force that apply: against a live workspace it repoints Lambda code to `placeholder/lambda.zip` (`petroglyph-up9y.13`). Use the CD deploy, which applies with the real content-hash artifact keys.
+
+### Wipe hazard
+
+`name` is `ForceNew` and `value` sits under `ignore_changes`. That combination is a trap: `ignore_changes` protects an _update_ to a value, not a _replacement_ of the resource. A rename — or anything else that forces replacement — destroys the hand-entered value and recreates the parameter as `PLACEHOLDER`, and the apply succeeds. That is how the 2026-10-13 migration lost production secrets: the namespace rename replaced all 14 parameters before its restore step completed, and the next deploy recreated them from the `ssm.tf` default.
+
+After any apply that replaces a parameter, sweep for values that reverted:
+
+```sh
+aws ssm get-parameters-by-path --profile petroglyph-admin \
+  --path /petroglyph/production --recursive --with-decryption \
+  --query 'Parameters[].[Name,Value]' --output text |
+  awk -F'\t' '$2=="PLACEHOLDER" || $2=="" {print "REVERTED:", $1}'
+```
+
+Silence means nothing reverted. Anything printed must be regenerated with the steps below before a deploy depends on it.
 
 ### Regenerating each class
 
