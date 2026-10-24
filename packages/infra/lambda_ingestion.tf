@@ -25,25 +25,6 @@ resource "aws_sqs_queue" "ingest" {
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "ingest_dlq_depth" {
-  count = terraform.workspace == "production" ? 1 : 0
-
-  alarm_name          = "petroglyph-ingest-dlq-depth-${terraform.workspace}"
-  alarm_description   = "Alerts when the OneDrive ingest processor sends messages to the DLQ."
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "ApproximateNumberOfMessagesVisible"
-  namespace           = "AWS/SQS"
-  period              = 60
-  statistic           = "Maximum"
-  threshold           = 0
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    QueueName = aws_sqs_queue.ingest_dlq.name
-  }
-}
-
 # ---------------------------------------------------------------------------
 # Webhook receiver Lambda function
 # Microsoft Graph expects webhook POST acknowledgements to return HTTP 200 quickly.

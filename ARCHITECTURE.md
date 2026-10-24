@@ -127,17 +127,17 @@ Exactly one sync profile per user is `active` at any time. The first profile cre
 
 Two independent dispatch systems share the account: the **legacy ingestion/sync path** (webhook → processor; sync-jobs outbox → sync-worker) and **Delivery 1's staging path** (delta-trigger bells → adapter; event-log stream → staged-events FIFO). The legacy SQS rows below are being superseded by the new FIFO queues.
 
-| Service                         | Purpose                                                                                                                                                                                                                                                 |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **SQS Ingestion Queue**         | Decouples webhook receiver from processor. Allows Graph notification to be acknowledged immediately.                                                                                                                                                    |
-| **SQS Sync-Jobs Queue**         | Decouples dispatch from processing. The sync-relay puts one message per job row; the sync worker consumes asynchronously. `POST /sync/run` itself only writes the job record — see the outbox flow below.                                               |
-| **SQS Dead-Letter Queue (DLQ)** | Captures failed processor and sync-worker invocations for inspection and replay.                                                                                                                                                                        |
-| **SQS Delta-Trigger FIFO**      | Decouples bells (webhook notifications, Sync-Now) from the adapter. `MessageGroupId = connection key`, so racing bells for one connection collapse and the adapter walks at most once per trigger. Redrive to a DLQ (3 attempts) with a depth alarm.    |
-| **SQS Staged-Events FIFO**      | The staging domain's internal queue: the forwarder pushes validated business events here and the staging dispatch Lambda applies them to the staged index. `MessageGroupId = profileId` keeps one profile's events ordered. DLQ + depth alarm as above. |
+| Service                         | Purpose                                                                                                                                                                                                                                   |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **SQS Ingestion Queue**         | Decouples webhook receiver from processor. Allows Graph notification to be acknowledged immediately.                                                                                                                                      |
+| **SQS Sync-Jobs Queue**         | Decouples dispatch from processing. The sync-relay puts one message per job row; the sync worker consumes asynchronously. `POST /sync/run` itself only writes the job record — see the outbox flow below.                                 |
+| **SQS Dead-Letter Queue (DLQ)** | Captures failed processor and sync-worker invocations for inspection and replay.                                                                                                                                                          |
+| **SQS Delta-Trigger FIFO**      | Decouples bells (webhook notifications, Sync-Now) from the adapter. `MessageGroupId = connection key`, so racing bells for one connection collapse and the adapter walks at most once per trigger. Redrive to a DLQ (3 attempts).         |
+| **SQS Staged-Events FIFO**      | The staging domain's internal queue: the forwarder pushes validated business events here and the staging dispatch Lambda applies them to the staged index. `MessageGroupId = profileId` keeps one profile's events ordered. DLQ as above. |
 
 **DynamoDB-stream outbox (sync dispatch)**: `POST /sync/run` performs a single write to the stream-enabled `sync_jobs` table. A DynamoDB event source mapping invokes the **Sync Relay** Lambda on INSERT records with status `queued`, which pushes the job message (same payload as before) to the sync-jobs queue. This replaces the previous direct API→SQS push (PR #92) and its dual-write hazard — there is no window where the job row exists but no message is enqueued, or vice versa. Stream redelivery can still duplicate messages, which the sync-worker's status claim absorbs. Stream reads are free when consumed via a Lambda trigger.
 
-The Processor Lambda is triggered by the ingestion queue via an SQS event source mapping. The queue is configured with a visibility timeout that safely exceeds the processor Lambda timeout, ensuring failed jobs are not double-processed. Failed deliveries are automatically sent to the DLQ, which is monitored by a CloudWatch alarm. When a message lands in the DLQ, the alarm fires and sends an SNS email notification, providing the operational signal for stuck ingest work. The processor Lambda's environment is wired with `MICROSOFT_CLIENT_ID`, `STAGED_PDFS_BUCKET`, and `STAGED_PDF_PREFIX`; it reuses the existing SSM token contract for lazy OneDrive refresh. Webhook route and output updates are reflected in the Terraform configuration.
+The Processor Lambda is triggered by the ingestion queue via an SQS event source mapping. The queue is configured with a visibility timeout that safely exceeds the processor Lambda timeout, ensuring failed jobs are not double-processed. Failed deliveries are automatically sent to the DLQ. Nothing watches that queue — no CloudWatch alarm, alarm action, or SNS topic is configured — so a poison message waits there until someone checks the depth ([Checking for stuck messages](docs/ops.md#checking-for-stuck-messages)). The processor Lambda's environment is wired with `MICROSOFT_CLIENT_ID`, `STAGED_PDFS_BUCKET`, and `STAGED_PDF_PREFIX`; it reuses the existing SSM token contract for lazy OneDrive refresh. Webhook route and output updates are reflected in the Terraform configuration.
 
 #### Events Registry & Staging Contracts
 
@@ -158,8 +158,15 @@ The staging data path speaks **CloudEvents 1.0.2** (structured JSON mode). `pack
 #### Observability
 
 - **CloudWatch Logs** on all Lambda functions.
-- **CloudWatch Alarm** on DLQ depth — fires when a message lands in the DLQ.
-- **SNS** sends email notification when the alarm fires.
+- **DLQ depth is a metric, not an alert.** Every dead-letter queue publishes `ApproximateNumberOfMessagesVisible` under the `AWS/SQS` namespace, dimensioned by `QueueName`. Nothing watches it: `packages/infra` defines no `aws_cloudwatch_metric_alarm` and no `aws_sns_topic`, so no alarm fires, no action runs, and there is no email. A poison message waits in the DLQ silently until someone reads the metric — see [Checking for stuck messages](docs/ops.md#checking-for-stuck-messages).
+
+**Re-adding the alert** takes three resources and ~$0.10/alarm/month:
+
+1. `aws_sns_topic` — the notification target.
+2. `aws_sns_topic_subscription` with `protocol = "email"` — the human who receives it. AWS emails a confirmation link to that address, and nothing is delivered until it is clicked.
+3. One `aws_cloudwatch_metric_alarm` per DLQ — `ApproximateNumberOfMessagesVisible`, dimensioned by `QueueName`, with threshold `0` so any message in the queue alarms — and `alarm_actions = [aws_sns_topic.<name>.arn]`.
+
+The action is the part that carries the signal: an alarm without `alarm_actions` costs the same and notifies nobody, which is why the previous four were deleted. No IAM change goes with the re-add: `bootstrap.sh` keeps the alarm actions for exactly this (see [Guardrails](docs/ops.md#guardrails)).
 
 #### Infrastructure as Code
 
@@ -268,7 +275,7 @@ tags:
 
 ### Phase 1 — PDF Sync (current scope)
 
-- Webhook-driven ingestion: OneDrive → SQS → S3, with a DLQ and alarm for failed processor runs. Staged S3 keys preserve the OneDrive folder structure beneath the configured prefix.
+- Webhook-driven ingestion: OneDrive → SQS → S3, with a DLQ for failed processor runs. Staged S3 keys preserve the OneDrive folder structure beneath the configured prefix.
 - Plugin polls API, downloads PDFs, writes to vault.
 - Markdown companion with frontmatter from PDF metadata.
 - Manual sync CLI as safety net.
@@ -295,16 +302,14 @@ tags:
 
 Designed to be **zero cost at rest**. All charges are usage-based:
 
-| Component              | Standing Cost      | Usage Cost                  |
-| ---------------------- | ------------------ | --------------------------- |
-| Lambda                 | $0                 | Per invocation + GB-seconds |
-| API Gateway (HTTP API) | $0                 | Per request                 |
-| SQS                    | $0                 | Per request (1M free/month) |
-| DynamoDB (on-demand)   | $0                 | Per read/write unit         |
-| S3                     | $0                 | Per GB stored + requests    |
-| SSM Parameter Store    | $0                 | Standard tier is free       |
-| CloudWatch Alarm       | ~$0.10/alarm/month | —                           |
-| SNS email              | $0                 | First 1K emails/month free  |
+| Component              | Standing Cost | Usage Cost                  |
+| ---------------------- | ------------- | --------------------------- |
+| Lambda                 | $0            | Per invocation + GB-seconds |
+| API Gateway (HTTP API) | $0            | Per request                 |
+| SQS                    | $0            | Per request (1M free/month) |
+| DynamoDB (on-demand)   | $0            | Per read/write unit         |
+| S3                     | $0            | Per GB stored + requests    |
+| SSM Parameter Store    | $0            | Standard tier is free       |
 
 At personal-project volume, total monthly cost is expected to be **< $1**.
 
@@ -326,7 +331,7 @@ At personal-project volume, total monthly cost is expected to be **< $1**.
 | IaC                   | Terraform                                                                                | Already in use in this repo                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Runtime               | Node.js 24 / TypeScript                                                                  | Consistent with monorepo                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Subscription renewal  | Reactive via Graph lifecycle notifications                                               | No standing scheduler; `reauthorizationRequired` triggers auto-renewal attempt; `subscriptionRemoved` prompts user reconnect via plugin                                                                                                                                                                                                                                                                                                                                                                                            |
-| Error alerting        | SQS DLQ + CW Alarm + SNS email                                                           | Robust failure capture with near-zero cost                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Failure capture       | SQS DLQ, no alarm or notification                                                        | Failed deliveries are kept for inspection and replay, and a DLQ at rest is free. Nothing watches the depth, though: reading `ApproximateNumberOfMessagesVisible` by hand is the only signal ([ops.md](docs/ops.md#checking-for-stuck-messages)). An alarm that notifies someone needs an SNS topic, an email subscription and `alarm_actions` — ~$0.10/alarm/month.                                                                                                                                                                |
 | Lambda packaging      | `cp -rL` to dereference symlinks before zip                                              | pnpm stores dependencies as symlinks; Lambda cannot resolve them. The `package` script in `packages/api` stages a fully dereferenced copy before zipping.                                                                                                                                                                                                                                                                                                                                                                          |
 | Environment isolation | Terraform workspaces in a single AWS account                                             | Separate AWS accounts per environment add significant operational overhead for a personal project. Workspace-based resource naming (e.g. `petroglyph-users-production`) provides sufficient isolation at this scale.                                                                                                                                                                                                                                                                                                               |
 | Async sync dispatch   | `POST /sync/run` returns 201 + jobId; DynamoDB-stream outbox                             | Synchronous delta walk timed out the Lambda at 30+ s with many files; async dispatch decouples API response time from Graph query duration and enables job-status tracking. Dispatch uses a DynamoDB-stream outbox — the API performs one write to the stream-enabled `sync_jobs` table and a relay Lambda fans records into the sync-jobs queue — instead of a dual API→SQS write, so job creation and dispatch cannot diverge.                                                                                                   |

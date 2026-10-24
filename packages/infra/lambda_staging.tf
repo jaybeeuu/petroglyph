@@ -30,25 +30,6 @@ resource "aws_sqs_queue" "staged_events" {
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "staged_events_dlq_depth" {
-  count = terraform.workspace == "production" ? 1 : 0
-
-  alarm_name          = "petroglyph-staged-events-dlq-depth-${terraform.workspace}"
-  alarm_description   = "Alerts when staging dispatch messages land on the DLQ."
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "ApproximateNumberOfMessagesVisible"
-  namespace           = "AWS/SQS"
-  period              = 60
-  statistic           = "Maximum"
-  threshold           = 0
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    QueueName = aws_sqs_queue.staged_events_dlq.name
-  }
-}
-
 # ---------------------------------------------------------------------------
 # Delta-trigger FIFO queue (bell → adapter) and DLQ
 # Webhook bells and Sync-Now requests enqueue per-connection triggers here;
@@ -78,25 +59,6 @@ resource "aws_sqs_queue" "delta_trigger" {
 
   tags = {
     environment = terraform.workspace
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "delta_trigger_dlq_depth" {
-  count = terraform.workspace == "production" ? 1 : 0
-
-  alarm_name          = "petroglyph-delta-trigger-dlq-depth-${terraform.workspace}"
-  alarm_description   = "Alerts when delta-trigger bells land on the DLQ (adapter failures)."
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "ApproximateNumberOfMessagesVisible"
-  namespace           = "AWS/SQS"
-  period              = 60
-  statistic           = "Maximum"
-  threshold           = 0
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    QueueName = aws_sqs_queue.delta_trigger_dlq.name
   }
 }
 
