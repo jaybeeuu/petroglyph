@@ -163,10 +163,10 @@ The staging data path speaks **CloudEvents 1.0.2** (structured JSON mode). `pack
 **Re-adding the alert** takes three resources and ~$0.10/alarm/month:
 
 1. `aws_sns_topic` — the notification target.
-2. `aws_sns_topic_subscription` with `protocol = "email"` — the human who receives it.
-3. One `aws_cloudwatch_metric_alarm` per DLQ, with `alarm_actions = [aws_sns_topic.<name>.arn]`.
+2. `aws_sns_topic_subscription` with `protocol = "email"` — the human who receives it. AWS emails a confirmation link to that address, and nothing is delivered until it is clicked.
+3. One `aws_cloudwatch_metric_alarm` per DLQ — `ApproximateNumberOfMessagesVisible`, dimensioned by `QueueName`, with threshold `0` so any message in the queue alarms — and `alarm_actions = [aws_sns_topic.<name>.arn]`.
 
-The action is the part that carries the signal: an alarm without `alarm_actions` costs the same and notifies nobody, which is why the previous four were deleted.
+The action is the part that carries the signal: an alarm without `alarm_actions` costs the same and notifies nobody, which is why the previous four were deleted. No IAM change goes with the re-add: `bootstrap.sh` keeps the alarm actions for exactly this (see [Guardrails](docs/ops.md#guardrails)).
 
 #### Infrastructure as Code
 

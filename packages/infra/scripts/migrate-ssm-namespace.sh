@@ -119,6 +119,12 @@ AWS_PROFILE="$PROFILE" terraform workspace select "$WORKSPACE" 2>/dev/null \
 # `count = terraform.workspace == "production" ? 1 : 0` in the same change that
 # namespaced SSM, so their addresses move to `[0]`. Include any that are still
 # at the unindexed address; the move itself is a state-only no-op.
+#
+# The alarms were deleted afterwards (petroglyph-60ej.2) and this migration has
+# long since run, but the list stays. The loop below only adds an address the
+# workspace state actually carries, so against today's state — which holds no
+# alarm instance at all — it adds nothing and the script behaves exactly as if
+# the list were empty.
 MOVED_RESOURCES=(
   aws_cloudwatch_metric_alarm.delta_trigger_dlq_depth
   aws_cloudwatch_metric_alarm.ingest_dlq_depth
