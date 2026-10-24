@@ -52,8 +52,9 @@ Constraints on any replacement:
 
 ## Revisit triggers
 
-- `m0jc.3` lands — re-measure; the production figure should roughly halve, and what is left may no longer be worth a redesign.
-- Idle requests exceed ~500,000/month in production.
+- `m0jc.3` lands — re-measure; the production idle figure should roughly halve, and what is left may no longer be worth a redesign.
+- Measured idle load grows materially above the accepted 724,000/month baseline — a further ~10%, roughly 800,000/month, counts as material.
+- Idle load plus real traffic approaches the 1,000,000/month free-tier cap, so the free tier stops absorbing bursts.
 - A new SQS consumer is added.
 
 ## Priority
