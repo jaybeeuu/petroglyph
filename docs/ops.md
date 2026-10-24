@@ -102,6 +102,63 @@ The stack runs in two persistent Terraform workspaces on the same S3 backend key
 
 The QA tier's resources are provisioned once by an admin, exactly as production was: the deploy role's managed policy manages existing staged/serving resources but does not grant bucket creation, so a first-time apply runs as `petroglyph-admin` (`./scripts/tf-apply.sh --workspace qa`). After that the `deploy-qa` job maintains the tier on each merge.
 
+### QA quiesce (SQS event source mappings)
+
+An idle QA still costs money. A Lambda SQS event source mapping long-polls its queue whether or not a message exists, and **every empty receive is a billed request**: idle QA measured ~937,000 empty receives a month against a 1,000,000/month free tier. The mappings are therefore Terraform-managed state, not a manual afterthought — `enabled = local.sqs_esm_enabled`, which resolves to `false` in the `qa` workspace while `var.qa_quiesced` keeps its default of `true`. The local only honours the variable for the `qa` workspace, so production's four SQS mappings are enabled whatever the variable says.
+
+Four mappings are covered (`processor_ingest_queue`, `sync_worker_queue`, `adapter_delta_trigger_queue`, `staging_dispatch_staged_events`). The two DynamoDB-stream mappings are not: stream polling is not billed, and disabling it risks a stale iterator.
+
+**Normal operation is automatic.** `deploy-qa` applies with `-var="qa_quiesced=false"` so the deployed smoke runs against live mappings, then the `quiesce-qa` job re-applies the QA workspace with the default after `smoke-qa` (`if: always()`, so a failed smoke still leaves QA quiet). `quiesce-qa` does not gate `deploy-production`; it is cost hygiene, not correctness.
+
+A message sent to a quiesced mapping's queue simply waits — nothing is lost.
+
+#### Check which state QA is in
+
+```sh
+aws lambda list-event-source-mappings --region eu-west-2 --profile petroglyph-admin \
+  --query 'EventSourceMappings[?contains(EventSourceArn, `:sqs:`) && contains(EventSourceArn, `qa`)].{queue:EventSourceArn,state:State,reason:StateTransitionReason}' \
+  --output table
+```
+
+Quiesced QA shows all four `petroglyph-*-qa` queues `Disabled` with `StateTransitionReason` `USER`; during a deploy they read `Enabling`/`Enabled`. `Disabling`/`Enabling` are transient — re-run the command rather than re-applying. `packages/infra/scripts/audit-sqs-idle-requests.sh` prints the same states alongside per-queue `NumberOfEmptyReceives`, which is the number to watch after a quiesce: zero empty receives in the quiesced window.
+
+#### Quiesce or unquiesce by hand
+
+You only need this when QA has to be awake outside a deploy — a manual end-to-end test, for example. `scripts/tf-apply.sh` is not the tool for it: it passes only the API artifact variables, so its plan would propose destroying the other Lambdas and abort on the destroy guard. Apply the same `-var` set as the `Terraform apply` step of `.github/workflows/deploy.yml`, or target the four mappings:
+
+```sh
+cd packages/infra
+terraform init -reconfigure \
+  -backend-config="bucket=petroglyph-terraform-state-<ACCOUNT_ID>" \
+  -backend-config="key=petroglyph/terraform.tfstate" \
+  -backend-config="region=eu-west-2" \
+  -backend-config="dynamodb_table=petroglyph-terraform-locks" \
+  -backend-config="encrypt=true"
+terraform workspace select qa
+
+# `api_zip_s3_bucket` and `api_zip_s3_key` have no defaults, so they are required
+# even for a targeted apply. Read the deployed key from state rather than guessing:
+#   terraform state show aws_lambda_function.petroglyph_api | grep s3_key
+
+# Unquiesce: QA's four SQS mappings poll again.
+terraform apply -refresh=false -var="qa_quiesced=false" \
+  -var="api_zip_s3_bucket=<LAMBDA_ARTIFACT_BUCKET>" -var="api_zip_s3_key=<current key>" \
+  -target=aws_lambda_event_source_mapping.processor_ingest_queue \
+  -target=aws_lambda_event_source_mapping.sync_worker_queue \
+  -target=aws_lambda_event_source_mapping.adapter_delta_trigger_queue \
+  -target=aws_lambda_event_source_mapping.staging_dispatch_staged_events
+
+# Quiesce again when finished (the default, so dropping the flag is enough).
+terraform apply -refresh=false \
+  -var="api_zip_s3_bucket=<LAMBDA_ARTIFACT_BUCKET>" -var="api_zip_s3_key=<current key>" \
+  -target=aws_lambda_event_source_mapping.processor_ingest_queue \
+  -target=aws_lambda_event_source_mapping.sync_worker_queue \
+  -target=aws_lambda_event_source_mapping.adapter_delta_trigger_queue \
+  -target=aws_lambda_event_source_mapping.staging_dispatch_staged_events
+```
+
+Do not disable the mappings in the AWS console — that is drift the next `terraform apply` reverts. Change `var.qa_quiesced` through Terraform so the state and the account agree.
+
 ### SSM parameter namespacing
 
 Every SSM parameter is namespaced by Terraform workspace: `/petroglyph/<workspace>/<category>/<leaf>`. Before the QA tier the parameters were global (`/petroglyph/<category>/<leaf>`), which two workspaces would fight over. The Lambda roles' `ssm:GetParameter` grants and `*_SSM_PATH` environment variables follow the workspace automatically. Production also has the values migrated once (see [SSM parameter migration](#ssm-parameter-migration-one-time)). [Secrets](#secrets) covers who reads each value and how to regenerate one.

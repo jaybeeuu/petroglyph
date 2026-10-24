@@ -134,6 +134,18 @@ All resources also carry an `environment` tag set to `terraform.workspace`.
 
 The ingest infrastructure provisions an SQS queue for webhook-driven ingestion, a dead-letter queue (DLQ) for failed jobs, and a CloudWatch alarm on DLQ depth. The processor Lambda is triggered by the SQS queue, with a visibility timeout set longer than the Lambda timeout to avoid duplicate processing. Failed jobs are sent to the DLQ, and the alarm triggers an SNS email notification. The processor Lambda environment is wired with `MICROSOFT_CLIENT_ID` (for MS Graph requests) and has tightly scoped SQS IAM permissions. Both API Handler and Processor Lambdas also require `MICROSOFT_CLIENT_SECRET` (loaded from SSM via `ONEDRIVE_CLIENT_SECRET_SSM_PATH`) for token exchange requests to Microsoft. Webhook route and output changes are reflected in the Terraform configuration.
 
+### SQS event source mappings must use `local.sqs_esm_enabled`
+
+Every `aws_lambda_event_source_mapping` whose `event_source_arn` is an SQS queue sets:
+
+```hcl
+enabled = local.sqs_esm_enabled
+```
+
+A Lambda SQS poller long-polls its queue whether or not a message exists, and every empty receive is a billed request. The `qa` workspace is therefore quiesced by default (`var.qa_quiesced`, default `true`) and the deploy workflow un-quiesces it only for the deployed smoke. A mapping left without `enabled` re-enables on the next apply and restarts the idle spend, so the setting belongs to the resource, not to a manual step.
+
+Do not add the setting to DynamoDB-stream mappings. Stream polling is not billed, and disabling it risks a stale iterator across a trimmed stream.
+
 ---
 
 ## Troubleshooting

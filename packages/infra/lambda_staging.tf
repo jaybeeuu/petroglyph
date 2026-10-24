@@ -188,6 +188,7 @@ resource "aws_lambda_event_source_mapping" "staging_dispatch_staged_events" {
   event_source_arn        = aws_sqs_queue.staged_events.arn
   function_name           = aws_lambda_function.petroglyph_staging_dispatch[0].arn
   batch_size              = 10
+  enabled                 = local.sqs_esm_enabled
   function_response_types = ["ReportBatchItemFailures"]
 }
 
@@ -247,6 +248,7 @@ resource "aws_lambda_event_source_mapping" "adapter_delta_trigger_queue" {
   event_source_arn        = aws_sqs_queue.delta_trigger.arn
   function_name           = aws_lambda_function.petroglyph_adapter_onedrive[0].arn
   batch_size              = 5
+  enabled                 = local.sqs_esm_enabled
   function_response_types = ["ReportBatchItemFailures"]
 }
 
