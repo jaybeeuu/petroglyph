@@ -183,7 +183,16 @@ for queue in \
 done
 ```
 
-All zeros means nothing is stuck. A non-zero count is a message that failed three receives on its source queue: inspect it with `aws sqs receive-message --queue-url "$url" --max-number-of-messages 1`, then replay it to the source queue or delete it once the cause is fixed. A quiesced QA mapping does not drain its queue ([QA quiesce](#qa-quiesce-sqs-event-source-mappings)), so a QA count taken mid-quiesce either drains when the tier wakes or ages out at the DLQ's default four-day retention.
+All zeros means nothing is stuck. A non-zero count is a message that failed three receives on its source queue: read it with the snippet below, then replay it to the source queue or delete it once the cause is fixed. Nothing consumes a dead-letter queue — no event source mapping targets one — so a stuck message never clears itself; it expires at the four-day default retention, which is the whole window for acting on it. A quiesced QA mapping ([QA quiesce](#qa-quiesce-sqs-event-source-mappings)) stops consuming its source queue, so mid-quiesce messages pile up there instead of reaching the DLQ.
+
+```sh
+# Read one message from a queue: set its name, as printed in the loop's first column.
+queue=petroglyph-ingest-dlq-production
+url=$(aws sqs get-queue-url --region eu-west-2 --profile petroglyph-admin \
+  --queue-name "$queue" --query QueueUrl --output text)
+aws sqs receive-message --region eu-west-2 --profile petroglyph-admin \
+  --queue-url "$url" --max-number-of-messages 1
+```
 
 Re-adding an alarm that reaches someone is documented in [Observability](../ARCHITECTURE.md#observability).
 
