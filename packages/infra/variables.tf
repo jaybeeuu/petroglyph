@@ -113,3 +113,17 @@ variable "retention_days" {
   type        = number
   default     = 90
 }
+
+variable "qa_quiesced" {
+  description = <<-EOT
+    Disable the QA workspace's SQS event source mappings so an idle QA issues no
+    SQS requests. A Lambda SQS poller long-polls its queue whether or not a
+    message exists, and every empty receive is a billed request: idle QA alone
+    measured ~937,000 empty receives a month. QA is quiesced except while CI
+    exercises it (the deploy applies with qa_quiesced=false, then re-applies the
+    default). The variable is scoped to the `qa` workspace in the
+    local.sqs_esm_enabled local, so it cannot affect production.
+  EOT
+  type        = bool
+  default     = true
+}

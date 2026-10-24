@@ -84,6 +84,7 @@ resource "aws_lambda_event_source_mapping" "sync_worker_queue" {
   event_source_arn        = aws_sqs_queue.sync_jobs.arn
   function_name           = aws_lambda_function.petroglyph_sync_worker[0].arn
   batch_size              = 5
+  enabled                 = local.sqs_esm_enabled
   function_response_types = ["ReportBatchItemFailures"]
 }
 

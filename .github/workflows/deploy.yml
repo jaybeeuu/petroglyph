@@ -114,6 +114,12 @@ jobs:
   # resolves to that environment's deploy role — `petroglyph-github-actions-deploy-qa`
   # cannot deploy production. `GRAPH_STUB_BUCKET` is empty for production, so the
   # stub resources are not provisioned there.
+  #
+  # `QA_QUIESCED` is passed straight through as -var="qa_quiesced=…". QA sets it
+  # false so the deployed smoke runs against live SQS event source mappings;
+  # every other job leaves the default (true) so QA goes quiet again afterwards.
+  # The Terraform local only honours the variable in the `qa` workspace, so the
+  # production job's value cannot switch production processing off.
   deploy-qa:
     needs: [package]
     environment: qa
@@ -123,6 +129,7 @@ jobs:
       TF_WORKSPACE: qa
       API_CUSTOM_DOMAIN: ""
       GRAPH_STUB_BUCKET: ${{ secrets.LAMBDA_ARTIFACT_BUCKET }}
+      QA_QUIESCED: "false"
     outputs:
       api_endpoint: ${{ steps.smoke-context.outputs.api_endpoint }}
       delta_trigger_queue_url: ${{ steps.smoke-context.outputs.delta_trigger_queue_url }}
@@ -332,7 +339,8 @@ jobs:
             -var="staging_delivery_zip_s3_key=staging-delivery-${{ steps.delivery-artifact-hash.outputs.hash }}.zip" \
             -var="graph_stub_zip_s3_bucket=${GRAPH_STUB_BUCKET}" \
             -var="graph_stub_zip_s3_key=graph-stub-${{ steps.graph-stub-artifact-hash.outputs.hash }}.zip" \
-            -var="api_custom_domain=${API_CUSTOM_DOMAIN}"
+            -var="api_custom_domain=${API_CUSTOM_DOMAIN}" \
+            -var="qa_quiesced=${QA_QUIESCED}"
       - name: Capture API function URL
         id: api-function-url
         working-directory: packages/infra
@@ -402,6 +410,25 @@ jobs:
       - name: Run deployed smoke against QA
         run: pnpm --filter @petroglyph/e2e-tests smoke
 
+  # Cost hygiene, not correctness: re-apply the QA workspace with the default
+  # (quiesced) after the smoke, whatever the smoke did, so QA stops long-polling
+  # its four SQS queues until the next deploy. `if: always()` means a failed
+  # smoke still leaves QA quiet. It deliberately does not gate
+  # `deploy-production` — nothing lists it in `needs`, because a quiesce failure
+  # is a cost problem, not a reason to block a production deploy.
+  quiesce-qa:
+    needs: [deploy-qa, smoke-qa]
+    if: always()
+    environment: qa
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: eu-west-2
+      TF_WORKSPACE: qa
+      API_CUSTOM_DOMAIN: ""
+      GRAPH_STUB_BUCKET: ${{ secrets.LAMBDA_ARTIFACT_BUCKET }}
+      QA_QUIESCED: "true"
+    steps: *deploy_steps
+
   deploy-production:
     needs: [smoke-qa]
     environment: production
@@ -411,4 +438,5 @@ jobs:
       TF_WORKSPACE: production
       API_CUSTOM_DOMAIN: api.petroglyph.page
       GRAPH_STUB_BUCKET: ""
+      QA_QUIESCED: "true"
     steps: *deploy_steps

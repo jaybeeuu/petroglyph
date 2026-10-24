@@ -159,6 +159,7 @@ resource "aws_lambda_event_source_mapping" "processor_ingest_queue" {
   event_source_arn        = aws_sqs_queue.ingest.arn
   function_name           = aws_lambda_function.petroglyph_processor[0].arn
   batch_size              = 10
+  enabled                 = local.sqs_esm_enabled
   function_response_types = ["ReportBatchItemFailures"]
 }
 
