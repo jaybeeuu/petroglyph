@@ -25,7 +25,7 @@ Evidence from the code, not assumptions.
 - **Deploy-policy guardrails.** The deploy policy is explicit-action-only and `bootstrap.sh` is its source of truth; **any new AWS resource must extend `bootstrap.sh` in the same change** ([`docs/ops.md`](../ops.md)). Its SSM statement already grants `parameter/petroglyph/*`, so namespaced paths are covered; the read-only plan role's `PlanTimeParameterRead` is scoped to the exact old path and must move.
 - **The `production` environment is main-only and has no approval gate** — the PR merge _is_ the deploy gate. A QA tier inserts a job, not a human.
 - **No smoke home exists.** `packages/e2e-tests` does not exist; the only deployed check is `pnpm --filter @petroglyph/api smoke-test` in CD.
-- **The stack is serverless end to end, which makes idle cheap.** DynamoDB is `PAY_PER_REQUEST` with no PITR, and Lambda, SQS, and API Gateway are pay-per-use; there is no VPC, NAT gateway, RDS, ALB, Route 53 zone, Secrets Manager secret, or customer-managed KMS key anywhere in [`packages/infra`](https://github.com/jaybeeuu/petroglyph/tree/main/packages/infra). The only standing charge in the stack is four CloudWatch DLQ alarms — see [Cost at rest](#cost-at-rest).
+- **The stack is serverless end to end, which makes idle cheap.** DynamoDB is `PAY_PER_REQUEST` with no PITR, and Lambda, SQS, and API Gateway are pay-per-use; there is no VPC, NAT gateway, RDS, ALB, Route 53 zone, Secrets Manager secret, or customer-managed KMS key anywhere in [`packages/infra`](https://github.com/jaybeeuu/petroglyph/tree/main/packages/infra). The four CloudWatch DLQ alarms that used to be the only standing charge in the stack have been deleted, because they carried no `alarm_actions` and notified nobody — see [Observability](../../ARCHITECTURE.md#observability).
 - **Unknowns / risks:** the wall-clock and cost of a second `terraform apply` on every merge; the eventual surface area of the Graph stub once the smoke journey is written; and the one-time prod SSM migration window (below).
 
 ## Options considered
@@ -70,12 +70,12 @@ Spin up a throwaway stack per pull request, smoke it, tear it down.
 - **Environments — GitHub environments `qa`, `production`, and the existing `terraform-plan`**, each holding its own `AWS_ROLE_ARN`. `production` stays main-only.
 - **Smoke home — a new `packages/e2e-tests`** package that drives the QA URL set, invoked as a step in the QA deploy job.
 - **Stub home — a new package** deployed in the QA workspace (name to be settled in `up9y.3`).
-- **Cost — zero standing cost at rest.** Gate the four CloudWatch DLQ metric alarms to `production`; the QA workspace copies none of them, so an idle QA environment bills nothing.
+- **Cost — zero standing cost at rest.** The four CloudWatch DLQ metric alarms were gated to `production`, so the QA workspace copied none of them; they have since been deleted outright ([Observability](../../ARCHITECTURE.md#observability)), and an SQS queue at rest is free.
 
 ## Tradeoffs accepted
 
 - **A second `apply` and a persistent tier on every merge.** Accepted: it is the price of a repeatable deployed gate; Option C is deferred because the cost is not yet justified.
-- **No alerting in QA, to hold the standing cost at zero.** The four DLQ alarms are production-only. QA keeps the DLQ queues, so the smoke still exercises the failure path; it just does not pay for CloudWatch alarms.
+- **No alerting, to hold the standing cost at zero.** The four DLQ alarms were production-only while they existed and have since been deleted, so neither workspace alerts on a DLQ. QA keeps the DLQ queues, so the smoke still exercises the failure path; nothing reports it, and [Checking for stuck messages](../../docs/ops.md#checking-for-stuck-messages) is the manual substitute.
 - **A stub, not real Graph.** The smoke proves deployed _wiring_, not Microsoft behaviour; real-Graph behaviour stays the separate opt-in tier and never gates.
 - **A one-time production SSM migration window.** During the scripted copy the parameters are briefly absent; the operation is scheduled, admin-run, and reversible from the snapshot.
 - **QA drift is possible.** A partly-applied workspace can rot; the smoke running on every merge is the mitigation.
@@ -84,17 +84,16 @@ Spin up a throwaway stack per pull request, smoke it, tear it down.
 
 Audit of what a `qa` workspace provisions, at idle (region `eu-west-2`):
 
-| Resource                                 | Count          | Billing                        | Idle cost |
-| ---------------------------------------- | -------------- | ------------------------------ | --------- |
-| DynamoDB tables                          | 10             | `PAY_PER_REQUEST`, no PITR     | $0        |
-| Lambda functions (incl. stub)            | 9              | per-invoke                     | $0        |
-| API Gateway HTTP API + function URLs     | 1–2            | per-request                    | $0        |
-| SQS queues (standard + FIFO)             | 6              | per-request                    | $0        |
-| S3 bucket (`AES256`)                     | 1              | storage only; lifecycle expiry | $0        |
-| SSM parameters (standard `SecureString`) | 14             | standard tier is free          | $0        |
-| CloudWatch log groups (14-day retention) | 9              | per ingested byte              | ~$0       |
-| CloudWatch DLQ alarms                    | 4 (prod-gated) | $0.10/alarm/month              | $0        |
-| IAM roles and policies                   | ~8             | free                           | $0        |
+| Resource                                 | Count | Billing                        | Idle cost |
+| ---------------------------------------- | ----- | ------------------------------ | --------- |
+| DynamoDB tables                          | 10    | `PAY_PER_REQUEST`, no PITR     | $0        |
+| Lambda functions (incl. stub)            | 9     | per-invoke                     | $0        |
+| API Gateway HTTP API + function URLs     | 1–2   | per-request                    | $0        |
+| SQS queues (standard + FIFO)             | 6     | per-request                    | $0        |
+| S3 bucket (`AES256`)                     | 1     | storage only; lifecycle expiry | $0        |
+| SSM parameters (standard `SecureString`) | 14    | standard tier is free          | $0        |
+| CloudWatch log groups (14-day retention) | 9     | per ingested byte              | ~$0       |
+| IAM roles and policies                   | ~8    | free                           | $0        |
 
 **Aggregate: $0 at rest.** Per-run usage — one smoke invocation set — is pennies, and CI is free because the repository is public. The classic standing-charge traps (NAT gateway, RDS, ALB, customer-managed KMS) are absent because the stack is serverless end to end.
 

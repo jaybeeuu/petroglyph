@@ -159,6 +159,34 @@ terraform apply -refresh=false \
 
 Do not disable the mappings in the AWS console — that is drift the next `terraform apply` reverts. Change `var.qa_quiesced` through Terraform so the state and the account agree.
 
+### Checking for stuck messages
+
+Nothing alerts on a dead-letter queue. The four DLQ depth alarms were deleted because none carried `alarm_actions` and `packages/infra` holds no `aws_sns_topic`: they cost ~$0.10 each per month and could not notify anyone. The DLQs themselves stay — they are the failure sink for poison messages — so their depth has to be read by hand, after any deploy or change that touches ingestion, sync or staging.
+
+DLQ depth is the SQS metric `ApproximateNumberOfMessagesVisible`. One loop covers every queue in both workspaces:
+
+```sh
+for queue in \
+  petroglyph-ingest-dlq-production \
+  petroglyph-sync-jobs-dlq-production \
+  petroglyph-staged-events-dlq-production.fifo \
+  petroglyph-delta-trigger-dlq-production.fifo \
+  petroglyph-ingest-dlq-qa petroglyph-sync-jobs-dlq-qa \
+  petroglyph-staged-events-dlq-qa.fifo petroglyph-delta-trigger-dlq-qa.fifo; do
+  url=$(aws sqs get-queue-url --region eu-west-2 --profile petroglyph-admin \
+    --queue-name "$queue" --query QueueUrl --output text 2>/dev/null) \
+    || { echo "$queue absent"; continue; }
+  depth=$(aws sqs get-queue-attributes --region eu-west-2 --profile petroglyph-admin \
+    --queue-url "$url" --attribute-names ApproximateNumberOfMessages \
+    --query Attributes.ApproximateNumberOfMessages --output text)
+  echo "$queue $depth"
+done
+```
+
+All zeros means nothing is stuck. A non-zero count is a message that failed three receives on its source queue: inspect it with `aws sqs receive-message --queue-url "$url" --max-number-of-messages 1`, then replay it to the source queue or delete it once the cause is fixed. A quiesced QA mapping does not drain its queue ([QA quiesce](#qa-quiesce-sqs-event-source-mappings)), so a QA count taken mid-quiesce either drains when the tier wakes or ages out at the DLQ's default four-day retention.
+
+Re-adding an alarm that reaches someone is documented in [Observability](../ARCHITECTURE.md#observability).
+
 ### SSM parameter namespacing
 
 Every SSM parameter is namespaced by Terraform workspace: `/petroglyph/<workspace>/<category>/<leaf>`. Before the QA tier the parameters were global (`/petroglyph/<category>/<leaf>`), which two workspaces would fight over. The Lambda roles' `ssm:GetParameter` grants and `*_SSM_PATH` environment variables follow the workspace automatically. Production also has the values migrated once (see [SSM parameter migration](#ssm-parameter-migration-one-time)). [Secrets](#secrets) covers who reads each value and how to regenerate one.
@@ -170,7 +198,7 @@ Every SSM parameter is namespaced by Terraform workspace: `/petroglyph/<workspac
 - **Resource additions extend bootstrap.sh in the same change**: any work adding an AWS resource under `packages/infra/*.tf` must add the required ARNs/actions to `bootstrap.sh` in the same commit.
 - **Single source of truth**: `bootstrap.sh` is the source of truth for the deploy policy; the live policy converges to the checked-in document via the node drift-check (commit 4a888fb). Re-run `bootstrap.sh` after any policy change.
 - **Terraform checks run at PR time**: `.github/workflows/terraform.yml` runs on pull requests that touch `packages/infra/**/*.tf` and performs `terraform fmt -check`, `terraform init`, `terraform validate` and a read-only `terraform plan -refresh=false -lock=false -detailed-exitcode` with the same `-var` set as the CD apply (non-empty artifact bucket, placeholder keys). The plan diff is posted to the PR as a collapsed comment that is updated in place. The job fails only when the plan itself errors — exit code 2 (changes present) is the normal outcome for an infra PR. Formatting drift in files the PR does not touch is reported as a warning rather than a failure, so pre-existing drift does not block unrelated changes.
-- **Plan role is read-only**: the PR job assumes `petroglyph-github-actions-plan`, trusted for `repo:jaybeeuu/petroglyph:environment:terraform-plan`. Its permissions are read-only: the Terraform state bucket (`s3:GetObject`, `s3:ListBucket`), `ssm:GetParameter` on `/petroglyph/production/onedrive/client-id` with the matching `kms:Decrypt` scoped to `ssm.eu-west-2.amazonaws.com`, and `dynamodb:DescribeTable` on `table/petroglyph-*`. Those reads are forced by Terraform's plan phase even with `-refresh=false`: data sources are always read (`data.aws_ssm_parameter.onedrive_client_id` feeds two Lambda env vars), and the AWS provider's `aws_dynamodb_table` runs `validateTableAttributes` in `CustomizeDiff`, which calls `DescribeTable` for every table resource. No write or data-plane action is granted, so a pull request can never create, update or delete infrastructure, and it cannot assume the production deploy role. Because it holds no write permissions, the PR plan does not replace review: a dropped DLQ alarm or a widened IAM statement still plans cleanly.
+- **Plan role is read-only**: the PR job assumes `petroglyph-github-actions-plan`, trusted for `repo:jaybeeuu/petroglyph:environment:terraform-plan`. Its permissions are read-only: the Terraform state bucket (`s3:GetObject`, `s3:ListBucket`), `ssm:GetParameter` on `/petroglyph/production/onedrive/client-id` with the matching `kms:Decrypt` scoped to `ssm.eu-west-2.amazonaws.com`, and `dynamodb:DescribeTable` on `table/petroglyph-*`. Those reads are forced by Terraform's plan phase even with `-refresh=false`: data sources are always read (`data.aws_ssm_parameter.onedrive_client_id` feeds two Lambda env vars), and the AWS provider's `aws_dynamodb_table` runs `validateTableAttributes` in `CustomizeDiff`, which calls `DescribeTable` for every table resource. No write or data-plane action is granted, so a pull request can never create, update or delete infrastructure, and it cannot assume the production deploy role. Because it holds no write permissions, the PR plan does not replace review: a dropped DLQ queue or a widened IAM statement still plans cleanly.
 - **PR plan skips without credentials**: fork PRs and PRs raised before the `terraform-plan` environment is configured have no plan secrets, so the job skips cleanly instead of failing.
 
 Once applied, the following values are needed as GitHub Actions secrets on **each** deploy environment for CD. `production` and `qa` hold their own `AWS_ROLE_ARN` (each deploy job declares its environment, so the secret resolves per environment); the bucket names are shared.
