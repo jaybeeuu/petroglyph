@@ -445,6 +445,8 @@ Parameters are namespaced by Terraform workspace under `/petroglyph/<workspace>/
 | `/petroglyph/<workspace>/config/initial-sync`    | SecureString | `true` \| `false` — return all existing files when the plugin has no change token |
 | `/petroglyph/<workspace>/config/retention-days`  | SecureString | Days to retain S3 objects after staging (default: `90`)                           |
 
+The first seven rows are read by deployed code, though nothing consumes `jwt/signing-secret` yet. The remaining seven are provisioned with no consumer at all — [ops.md](ops.md#secrets) maps each live parameter to the service that reads it, and covers regeneration after a loss.
+
 > **Note:** Per-user OneDrive token state is stored in DynamoDB (`refresh_tokens` table). SSM stores only system-level configuration/secrets.
 
 ---

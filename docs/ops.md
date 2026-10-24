@@ -104,7 +104,7 @@ The QA tier's resources are provisioned once by an admin, exactly as production 
 
 ### SSM parameter namespacing
 
-Every SSM parameter is namespaced by Terraform workspace: `/petroglyph/<workspace>/<category>/<leaf>`. Before the QA tier the parameters were global (`/petroglyph/<category>/<leaf>`), which two workspaces would fight over. The Lambda roles' `ssm:GetParameter` grants and `*_SSM_PATH` environment variables follow the workspace automatically. Production also has the values migrated once (see [SSM parameter migration](#ssm-parameter-migration-one-time)).
+Every SSM parameter is namespaced by Terraform workspace: `/petroglyph/<workspace>/<category>/<leaf>`. Before the QA tier the parameters were global (`/petroglyph/<category>/<leaf>`), which two workspaces would fight over. The Lambda roles' `ssm:GetParameter` grants and `*_SSM_PATH` environment variables follow the workspace automatically. Production also has the values migrated once (see [SSM parameter migration](#ssm-parameter-migration-one-time)). [Secrets](#secrets) covers who reads each value and how to regenerate one.
 
 ### Guardrails
 
@@ -124,7 +124,7 @@ Once applied, the following values are needed as GitHub Actions secrets on **eac
 | `TF_STATE_BUCKET`        | `petroglyph-terraform-state-<ACCOUNT_ID>`          |
 | `LAMBDA_ARTIFACT_BUCKET` | `petroglyph-lambda-artifacts-<ACCOUNT_ID>`         |
 
-Configure the `production` environment so only `main` can deploy, and create a `qa` environment with the same secrets but `AWS_ROLE_ARN = arn:aws:iam::<ACCOUNT_ID>:role/petroglyph-github-actions-deploy-qa`. There is no separate deployment-review gate on the `production` environment: merging a PR to `main` deploys immediately, so **the PR review and merge is the deployment gate** — review the `.tf` diff knowing it will apply on merge. See [CONTRIBUTING.md](../CONTRIBUTING.md#cd-secrets) for how to configure these secrets.
+Configure the `production` environment so only `main` can deploy, and create a `qa` environment with the same secrets but `AWS_ROLE_ARN = arn:aws:iam::<ACCOUNT_ID>:role/petroglyph-github-actions-deploy-qa`. There is no separate deployment-review gate on the `production` environment: merging a PR to `main` deploys immediately, so **the PR review and merge is the deployment gate** — review the `.tf` diff knowing it will apply on merge. The credential model, and what is not a secret, is covered in [Secrets](#secrets).
 
 ### SSM parameter migration (one-time)
 
@@ -164,9 +164,71 @@ When adding a new Lambda:
 
 ---
 
+## Secrets
+
+`docs/authentication.md` §5 lists every parameter and what it is for. This section is the operational view: who reads each value, where it comes from, and what regenerating it requires.
+
+There is deliberately **no stored copy of any secret value** — not in a password manager, not in this repository, not in a snapshot left behind by a migration. A second copy of a live secret is another attack surface, so recovery means _regenerating_ at the source and writing the new value to SSM. Terraform creates each parameter with `value = "PLACEHOLDER"` and `ignore_changes = [value]`, so nothing in CD can overwrite a real value.
+
+### Who reads what
+
+| Parameter (`/petroglyph/<workspace>/…`) | Read by                                                                                                           | Source                                               | Rotation                                             |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
+| `github/client-id`                      | `api` at cold start                                                                                               | GitHub OAuth App                                     | SSM write, cold start                                |
+| `github/client-secret`                  | `api` at cold start                                                                                               | GitHub OAuth App → _Regenerate_                      | SSM write, cold start                                |
+| `jwt/private-key`                       | `api` at cold start; the QA smoke mints with it                                                                   | generated                                            | SSM write with `jwt/public-key`, cold start          |
+| `jwt/public-key`                        | `api` and `staging-delivery` at cold start                                                                        | derived from the private key                         | write **together** with `jwt/private-key`            |
+| `jwt/signing-secret`                    | loaded by `api`; nothing reads it yet                                                                             | generated                                            | SSM write, cold start                                |
+| `onedrive/client-id`                    | `api` at cold start; `adapter-onedrive` per invocation; **baked into `processor` and `sync-worker` at plan time** | Entra ID app registration                            | SSM write **and `terraform apply`**, then cold start |
+| `onedrive/client-secret`                | `api` at cold start; `adapter-onedrive` per invocation                                                            | Entra ID app registration → _Certificates & secrets_ | SSM write, cold start                                |
+
+**Read timing is the part that bites.** `api` loads its parameters once per cold start and `staging-delivery` caches the public key for the life of the process, so writing SSM without a cold start leaves the old value serving traffic. `adapter-onedrive` re-reads on every invocation, so it needs no cold start. `processor` and `sync-worker` never read SSM: Terraform bakes `MICROSOFT_CLIENT_ID` into their environment from a data source at plan time, which is why rotating `onedrive/client-id` needs an apply.
+
+Force a cold start with a no-op configuration update:
+
+```sh
+aws lambda update-function-configuration --profile petroglyph-admin \
+  --function-name petroglyph-api-production \
+  --description "force cold start $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+```
+
+Do not reach for `packages/infra/scripts/tf-apply.sh` to force that apply: against a live workspace it repoints Lambda code to `placeholder/lambda.zip` (`petroglyph-up9y.13`). Use the CD deploy, which applies with the real content-hash artifact keys.
+
+### Regenerating each class
+
+**JWT keypair.** Generate both from one run and write both — a private key without its matching public key fails verification on every request:
+
+```sh
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out jwt-private.pem
+openssl rsa -in jwt-private.pem -pubout -out jwt-public.pem
+aws ssm put-parameter --profile petroglyph-admin --type SecureString --overwrite \
+  --name /petroglyph/production/jwt/private-key --value "$(cat jwt-private.pem)"
+aws ssm put-parameter --profile petroglyph-admin --type SecureString --overwrite \
+  --name /petroglyph/production/jwt/public-key --value "$(cat jwt-public.pem)"
+rm jwt-private.pem jwt-public.pem
+```
+
+Every active session stops verifying and the plugin recovers on its next refresh. Rotate deliberately, not casually.
+
+**`jwt/signing-secret`.** `openssl rand -base64 48`. Nothing reads it today, so rotating it is safe.
+
+**OAuth client secrets** (GitHub, Entra ID). Regenerate in the provider console, write the new value to SSM, force the cold start, then delete the superseded secret in the console — the old value stays valid until you do. Creating either app from scratch is covered in [Third-party App Registration](#third-party-app-registration).
+
+### QA holds placeholders on purpose
+
+QA stores `PLACEHOLDER` for every parameter except the ones CI manages: the deployed smoke seeds its own token and talks to the Graph stub, so QA needs no real GitHub, Entra ID or Graph credentials. `deploy.yml` generates the QA `jwt/private-key` and `jwt/public-key` on first use, and only when the stored value is `PLACEHOLDER` or empty. Never copy production values into QA, and do not read a QA placeholder as a missing secret.
+
+### Seven parameters have no consumer
+
+`onedrive/access-token`, `onedrive/refresh-token`, `onedrive/token-expiry`, `graph/subscription-id`, `config/target-branch`, `config/initial-sync` and `config/retention-days` are provisioned and read by nothing. Per-connection OAuth tokens live in `petroglyph-token-vaults-<workspace>`, not in SSM. Do not spend recovery time on these, and note that `config/retention-days` reads as a runtime source of truth while Terraform actually uses `var.retention_days`.
+
+### AWS credentials
+
+There is no long-lived AWS credential to rotate. CI assumes `petroglyph-github-actions-deploy-<environment>` — and the read-only `petroglyph-github-actions-plan` for PR plans — through GitHub OIDC. The GitHub environment secrets (`AWS_ROLE_ARN`, `TF_STATE_BUCKET`, `LAMBDA_ARTIFACT_BUCKET`, `AWS_PLAN_ROLE_ARN`) are identifiers, not credentials.
+
 ## Third-party App Registration
 
-Terraform creates SSM parameters with `value = "PLACEHOLDER"` on first apply (with `lifecycle { ignore_changes = [value] }` so CD never overwrites real values). After bootstrapping, the real credentials must be stored manually using the steps below.
+Provisioning either app is a manual step; rotating a client secret afterwards is covered in [Secrets](#secrets).
 
 ### GitHub OAuth App
 
