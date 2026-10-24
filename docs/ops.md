@@ -180,6 +180,8 @@ The last line before the mapping table is the verdict:
 
 **Baseline (30 days to 2026-10-24):** 937,587 empty receives against 1 message sent and 4 received — 93.8% of the 1,000,000/month free tier. Production's four SQS mappings were 723,946 of it, QA's four were 213,641, and all eight DLQs were 0. After quiesce the shape to expect is QA at 0 empty receives for the quiesced window while production keeps producing them at the rate its four pollers set: that is the model working, not a fault.
 
+The redesign that would delete the idle requests outright is deferred; its measured attribution, the reasons and the revisit triggers are recorded in [Poll-free event delivery for zero cost at rest](ideas/poll-free-event-delivery-for-zero-cost-at-rest.md).
+
 ### Checking for stuck messages
 
 Nothing alerts on a dead-letter queue. The four DLQ depth alarms were deleted because none carried `alarm_actions` and `packages/infra` holds no `aws_sns_topic`: they cost ~$0.10 each per month and could not notify anyone. The DLQs themselves stay — they are the failure sink for poison messages — so their depth has to be read by hand, after any deploy or change that touches ingestion, sync or staging.
