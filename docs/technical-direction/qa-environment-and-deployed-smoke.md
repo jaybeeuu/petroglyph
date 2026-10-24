@@ -89,7 +89,7 @@ Audit of what a `qa` workspace provisions, at idle (region `eu-west-2`):
 | DynamoDB tables                          | 10    | `PAY_PER_REQUEST`, no PITR                         | $0                                                               |
 | Lambda functions (incl. stub)            | 9     | per-invoke                                         | $0                                                               |
 | API Gateway HTTP API + function URLs     | 1–2   | per-request                                        | $0                                                               |
-| SQS queues (standard + FIFO)             | 6     | per-request, **empty long-poll receives included** | $0 — the four event source mappings are quiesced between CI runs |
+| SQS queues (4 main + 4 DLQ)              | 8     | per-request, **empty long-poll receives included** | $0 — the four event source mappings are quiesced between CI runs |
 | S3 bucket (`AES256`)                     | 1     | storage only; lifecycle expiry                     | $0                                                               |
 | SSM parameters (standard `SecureString`) | 14    | standard tier is free                              | $0                                                               |
 | CloudWatch log groups (14-day retention) | 9     | per ingested byte                                  | ~$0                                                              |

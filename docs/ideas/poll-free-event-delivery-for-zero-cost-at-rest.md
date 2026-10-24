@@ -8,7 +8,7 @@
 
 Petroglyph is meant to be zero cost at rest, but every SQS consumer is a **poller**: a Lambda event source mapping long-polls its queue whether or not a message exists, and every empty receive is a billed request. The 30 days to 2026-10-24 measured **937,587 empty receives against 1 message sent and 4 received** — 93.8% of the 1,000,000/month free tier, all of it produced by idle polling.
 
-Nothing else in the stack bills while idle. DynamoDB on-demand, S3 at rest within lifecycle, API Gateway, Lambda and the two DynamoDB-stream event source mappings all cost nothing without traffic, so delivery is the only standing charge and a push-based transport is the only design change that removes it.
+Nothing else in the stack bills per request while idle. Lambda, API Gateway and the two DynamoDB-stream event source mappings charge nothing without traffic. Stored bytes bill per GB-month regardless of traffic — DynamoDB items and S3 objects alike, with staged PDFs expiring after 90 days — so what idleness produces is the delivery requests, and a push-based transport is the only design change that removes them. CloudWatch Logs is a retention cost that follows activity, a separate decision recorded below.
 
 ## Measured attribution
 
@@ -27,7 +27,7 @@ The production split is `ingest-production` 237,979, `sync-jobs-production` 237,
 
 Quiesce QA's four SQS event source mappings between CI runs — a disabled mapping does not poll, so QA costs 0 idle ([QA quiesce](../ops.md#qa-quiesce-sqs-event-source-mappings)) — and **accept the measured 723,946 requests/month in production** (72.4% of the free tier) until `m0jc.3` retires the legacy ingestion path. The redesign is deferred, not rejected.
 
-`m0jc.3` retires two of the four production pollers, so it should roughly halve the figure. That is a projection, not a measurement: the audit script re-measures once the legacy path is gone.
+`m0jc.3` retires two of the four production pollers — the two busiest, `ingest` 237,979 and `sync-jobs` 237,984, 475,963 of the 723,946 requests — so it should remove roughly two-thirds of the figure, leaving ~248,000. That is a projection, not a measurement: the audit script re-measures once the legacy path is gone.
 
 ## Why the redesign was not taken now
 
@@ -52,7 +52,7 @@ Constraints on any replacement:
 
 ## Revisit triggers
 
-- `m0jc.3` lands — re-measure; the production idle figure should roughly halve, and what is left may no longer be worth a redesign.
+- `m0jc.3` lands — re-measure; the production idle figure should drop by roughly two-thirds, to ~248,000, and what is left may no longer be worth a redesign.
 - Measured idle load grows materially above the accepted 724,000/month baseline — a further ~10%, roughly 800,000/month, counts as material.
 - Idle load plus real traffic approaches the 1,000,000/month free-tier cap, so the free tier stops absorbing bursts.
 - A new SQS consumer is added.
@@ -65,4 +65,3 @@ Deferred. The standing cost is inside the free tier with room for real traffic, 
 
 - Raised 2026-10-24 after an SQS usage notification of ~850k requests, and deferred the same day once the measurement showed it was idle polling. The baseline to compare against and how to read the audit script's verdict line are in [Auditing idle SQS requests](../ops.md#auditing-idle-sqs-requests).
 - Adjacent reading before designing: [event-transport.md](../technical-direction/event-transport.md) (transport seam, ownership boundary, delayed-void-call model) and the three-tier event analysis in [ARCHITECTURE.md](../../ARCHITECTURE.md#events-registry--staging-contracts).
-- A durable per-consumer buffer is also noted as a possible replacement for reconciliation in an untracked draft, `docs/ideas/event-log-reconciliation-job-for-lagging-consumers.md`. It may subsume the transport question, so read it before selecting a mechanism.

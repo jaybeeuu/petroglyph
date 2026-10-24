@@ -172,6 +172,8 @@ cd packages/infra
 
 `--days` caps at 63, which is how long CloudWatch keeps 1-hour datapoints. Queues are discovered from the CloudWatch metric dimensions rather than `sqs:ListQueues`, so history for a queue that no longer exists still appears — that is usually the point.
 
+An expired SSO session fails loudly here: the script runs under `set -euo pipefail`, so the first CloudWatch call aborts it with the AWS credential error on stderr. The script's account header prints empty in that case, so read the error rather than the header. The DLQ-depth loop in [Checking for stuck messages](#checking-for-stuck-messages) is not as kind — it sends `get-queue-url`'s stderr to `/dev/null` — so an expired session there reads as eight absent queues rather than an auth error. Confirm the session with `aws sts get-caller-identity` before believing either.
+
 The last line before the mapping table is the verdict:
 
 - `Verdict: empty receives dominate (N:1) — idle polling, not real traffic.` The bill is pollers long-polling empty queues. Quiesce or accept it; there is no bug to chase.
