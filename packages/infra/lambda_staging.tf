@@ -290,7 +290,7 @@ resource "aws_lambda_permission" "api_gateway_staging_delivery_feed" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.petroglyph_staging_delivery[0].function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.petroglyph_api.execution_arn}/*/*/files"
+  source_arn    = "${local.api_execution_arn}/*/*/files"
 }
 
 resource "aws_lambda_permission" "api_gateway_staging_delivery_item" {
@@ -300,7 +300,7 @@ resource "aws_lambda_permission" "api_gateway_staging_delivery_item" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.petroglyph_staging_delivery[0].function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.petroglyph_api.execution_arn}/*/*/files/*"
+  source_arn    = "${local.api_execution_arn}/*/*/files/*"
 }
 
 resource "aws_cloudwatch_log_group" "lambda_staging_delivery" {

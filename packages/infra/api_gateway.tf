@@ -86,7 +86,7 @@ resource "aws_lambda_permission" "api_gateway" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.petroglyph_api.function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.petroglyph_api.execution_arn}/*/*"
+  source_arn    = "${local.api_execution_arn}/*/*"
 }
 
 resource "aws_cloudwatch_log_group" "lambda_api" {
