@@ -87,7 +87,7 @@ resource "aws_lambda_permission" "api_gateway_ingest_onedrive" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.petroglyph_ingest_onedrive[0].function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.petroglyph_api.execution_arn}/*/*/webhooks/onedrive"
+  source_arn    = "${local.api_execution_arn}/*/*/webhooks/onedrive"
 }
 
 resource "aws_cloudwatch_log_group" "lambda_ingest_onedrive" {
