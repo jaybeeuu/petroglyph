@@ -81,7 +81,7 @@ Implement the OneDrive PKCE OAuth flow. The cloud API exposes `GET /onedrive/aut
 
 ### What to build
 
-Implement the Webhook Receiver Lambda (validates the Microsoft Graph change notification — including the initial validation token handshake — and enqueues a job to SQS) and the Processor Lambda (consumes SQS notifications, resolves DriveItem metadata, refreshes tokens via SSM, skips non-PDF/non-downloadable items, downloads PDFs from OneDrive, uploads to S3 under the configured prefix plus OneDrive folder path, and writes file-record status to DynamoDB). The staged-file contract and processing logic are documented in `packages/processor/src/index.ts`. The SQS ingestion queue is configured with a visibility timeout that exceeds the processor Lambda timeout, preventing duplicate processing. Failed processor invocations are sent to the DLQ, which is monitored by a CloudWatch alarm that triggers an SNS email notification on failure. The processor Lambda's environment includes `MICROSOFT_CLIENT_ID` and uses tightly scoped SQS IAM permissions. Webhook route and output updates are reflected in the Terraform configuration.
+Implement the Webhook Receiver Lambda (validates the Microsoft Graph change notification — including the initial validation token handshake — and enqueues a job to SQS) and the Processor Lambda (consumes SQS notifications, resolves DriveItem metadata, refreshes tokens via SSM, skips non-PDF/non-downloadable items, downloads PDFs from OneDrive, uploads to S3 under the configured prefix plus OneDrive folder path, and writes file-record status to DynamoDB). The staged-file contract and processing logic are documented in `packages/processor/src/index.ts`. The SQS ingestion queue is configured with a visibility timeout that exceeds the processor Lambda timeout, preventing duplicate processing. Failed processor invocations are sent to the DLQ, which nothing watches: `packages/infra` defines no alarm and no SNS topic, so depth is read by hand ([Checking for stuck messages](../docs/ops.md#checking-for-stuck-messages)). The processor Lambda's environment includes `MICROSOFT_CLIENT_ID` and uses tightly scoped SQS IAM permissions. Webhook route and output updates are reflected in the Terraform configuration.
 
 ### Acceptance criteria
 
@@ -90,7 +90,7 @@ Implement the Webhook Receiver Lambda (validates the Microsoft Graph change noti
 - [ ] The PDF appears in S3 under the correct key path
 - [ ] A `file_records` item exists in DynamoDB with status `pending`
 - [ ] A failed Processor invocation lands in the DLQ
-- [ ] A DLQ message triggers the CloudWatch alarm (verifiable via manual DLQ injection)
+- [ ] A DLQ message is visible in `ApproximateNumberOfMessagesVisible` after a manual injection (no alarm fires — see [Checking for stuck messages](../docs/ops.md#checking-for-stuck-messages))
 
 ---
 

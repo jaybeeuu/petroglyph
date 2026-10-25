@@ -104,7 +104,7 @@ The QA tier's resources are provisioned once by an admin, exactly as production 
 
 ### QA quiesce (SQS event source mappings)
 
-An idle QA still costs money. A Lambda SQS event source mapping long-polls its queue whether or not a message exists, and **every empty receive is a billed request**: idle QA measured ~937,000 empty receives a month against a 1,000,000/month free tier. The mappings are therefore Terraform-managed state, not a manual afterthought — `enabled = local.sqs_esm_enabled`, which resolves to `false` in the `qa` workspace while `var.qa_quiesced` keeps its default of `true`. The local only honours the variable for the `qa` workspace, so production's four SQS mappings are enabled whatever the variable says.
+An idle QA still costs money. A Lambda SQS event source mapping long-polls its queue whether or not a message exists, and **every empty receive is a billed request**: polling measured 937,587 empty receives a month across both workspaces against a 1,000,000/month free tier ([Auditing idle SQS requests](#auditing-idle-sqs-requests)). The mappings are therefore Terraform-managed state, not a manual afterthought — `enabled = local.sqs_esm_enabled`, which resolves to `false` in the `qa` workspace while `var.qa_quiesced` keeps its default of `true`. The local only honours the variable for the `qa` workspace, so production's four SQS mappings are enabled whatever the variable says.
 
 Four mappings are covered (`processor_ingest_queue`, `sync_worker_queue`, `adapter_delta_trigger_queue`, `staging_dispatch_staged_events`). The two DynamoDB-stream mappings are not: stream polling is not billed, and disabling it risks a stale iterator.
 
@@ -158,6 +158,31 @@ terraform apply -refresh=false \
 ```
 
 Do not disable the mappings in the AWS console — that is drift the next `terraform apply` reverts. Change `var.qa_quiesced` through Terraform so the state and the account agree.
+
+### Auditing idle SQS requests
+
+`packages/infra/scripts/audit-sqs-idle-requests.sh` answers one question: is the account's SQS request volume idle polling or real work, and which queues produced it. It sums four metrics per queue over the window — `NumberOfEmptyReceives` for the idles, `NumberOfMessagesSent`/`Received`/`Deleted` for the work — then prints the event source mapping states, so a queue that is still polling is visible beside the number it produced.
+
+Run it after any change to the poller set — quiescing or unquiescing QA, adding a consumer, retiring the legacy path — and whenever an SQS usage notification arrives:
+
+```sh
+cd packages/infra
+./scripts/audit-sqs-idle-requests.sh   # defaults: --profile petroglyph-admin --region eu-west-2 --days 30
+```
+
+`--days` caps at 63, which is how long CloudWatch keeps 1-hour datapoints. Queues are discovered from the CloudWatch metric dimensions rather than `sqs:ListQueues`, so history for a queue that no longer exists still appears — that is usually the point.
+
+An expired SSO session fails loudly here: the script runs under `set -euo pipefail`, so the first CloudWatch call aborts it with the AWS credential error on stderr. The script's account header prints empty in that case, so read the error rather than the header. The DLQ-depth loop in [Checking for stuck messages](#checking-for-stuck-messages) is not as kind — it sends `get-queue-url`'s stderr to `/dev/null` — so an expired session there reads as eight absent queues rather than an auth error. Confirm the session with `aws sts get-caller-identity` before believing either.
+
+The last line before the mapping table is the verdict:
+
+- `Verdict: empty receives dominate (N:1) — idle polling, not real traffic.` The bill is pollers long-polling empty queues. Quiesce or accept it; there is no bug to chase.
+- `Verdict: real traffic is comparable to empty receives — investigate before redesigning anything.` Something is producing or redelivering. Find the producer or the poison message ([Checking for stuck messages](#checking-for-stuck-messages)) before touching the transport.
+- `Verdict: zero messages in the window — every request was an empty receive.` The fully idle case.
+
+**Baseline (30 days to 2026-10-24):** 937,587 empty receives against 1 message sent and 4 received — 93.8% of the 1,000,000/month free tier. Production's four SQS mappings were 723,946 of it, QA's four were 213,641, and all eight DLQs were 0. After quiesce the shape to expect is QA at 0 empty receives for the quiesced window while production keeps producing them at the rate its four pollers set: that is the model working, not a fault.
+
+The redesign that would delete the idle requests outright is deferred; its measured attribution, the reasons and the revisit triggers are recorded in [Poll-free event delivery for zero cost at rest](ideas/poll-free-event-delivery-for-zero-cost-at-rest.md).
 
 ### Checking for stuck messages
 
