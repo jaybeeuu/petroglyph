@@ -57,7 +57,10 @@ function route(event: FunctionUrlEvent): FunctionUrlResult {
   }
 
   if (path === "/me/drive/root/delta" && verb === "GET") {
-    const deltaLink = `${baseUrl(event)}/me/drive/root/delta?$deltatoken=smoke`;
+    // Function URLs reject a literal "$" in the query string, so the
+    // deltaLink percent-encodes it; URLSearchParams decodes it back to
+    // "$deltatoken" when the walk follows it.
+    const deltaLink = `${baseUrl(event)}/me/drive/root/delta?%24deltatoken=smoke`;
     // First call enumerates the fixture item; a walk that follows the
     // deltaLink sees no further changes so the change token stabilises. The
     // eTag is fresh per enumeration so a repeat smoke run is a new revision —
