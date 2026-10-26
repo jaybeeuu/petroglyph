@@ -14,7 +14,9 @@ async function fetchPublicKeyPem(): Promise<string> {
 
   const paramName =
     process.env["JWT_PUBLIC_KEY_SSM_PATH"] ?? "/petroglyph/production/jwt/public-key";
-  const result = await ssmClient.send(new GetParameterCommand({ Name: paramName }));
+  const result = await ssmClient.send(
+    new GetParameterCommand({ Name: paramName, WithDecryption: true }),
+  );
   const key = result.Parameter?.Value;
   if (!key) throw new Error(`JWT public key not found at SSM path: ${paramName}`);
   return key;
