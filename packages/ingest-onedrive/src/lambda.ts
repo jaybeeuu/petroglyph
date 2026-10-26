@@ -68,7 +68,9 @@ const dynamoClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(dynamoClient);
 
 async function readSsmParameter(path: string): Promise<string> {
-  const result = await ssmClient.send(new GetParameterCommand({ Name: path }));
+  const result = await ssmClient.send(
+    new GetParameterCommand({ Name: path, WithDecryption: true }),
+  );
   const value = result.Parameter?.Value;
   if (!value) {
     throw new Error(`SSM parameter not found: ${path}`);
