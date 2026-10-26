@@ -170,7 +170,7 @@ The action is the part that carries the signal: an alarm without `alarm_actions`
 
 #### Infrastructure as Code
 
-All AWS resources are provisioned with **Terraform**, with state stored remotely in S3 (with DynamoDB locking). Each deployment environment is a separate Terraform workspace — the persistent tiers are `production` and `qa` — which isolates state and embeds the environment name into every resource name and tag. SSM parameters are namespaced by workspace too (`/petroglyph/<workspace>/…`), so two tiers cannot collide over the same parameter. The S3 bucket and DynamoDB table that back the remote state are a one-time manual bootstrap prerequisite — see [`packages/infra/README.md`](packages/infra/README.md). SSM parameters are defined as Terraform stubs with `PLACEHOLDER` values; real secrets must be written to each parameter manually after first `terraform apply` before the service will function. The exception is `config/retention-days`, which is pre-seeded to `90` as a safe default.
+All AWS resources are provisioned with **Terraform**, with state stored remotely in S3 (with DynamoDB locking). Each deployment environment is a separate Terraform workspace — the persistent tiers are `production` and `qa` — which isolates state and embeds the environment name into every resource name and tag. SSM parameters are namespaced by workspace too (`/petroglyph/<workspace>/…`), so two tiers cannot collide over the same parameter. The S3 bucket and DynamoDB table that back the remote state are a one-time manual bootstrap prerequisite — see [`packages/infra/README.md`](packages/infra/README.md). SSM parameters are defined as Terraform stubs with `PLACEHOLDER` values; real secrets must be written to each parameter manually after first `terraform apply` before the service will function.
 
 #### CD Pipeline
 
@@ -207,11 +207,11 @@ A TypeScript plugin that runs inside Obsidian, responsible for pulling staged fi
 
 - **File sync** — calls `GET /files/changes?after={token}` to retrieve a page of new files as `{ files, nextToken }`.
   - The `after` token is an opaque cursor, stored in plugin local settings per active profile, and advances after each successful vault write.
-  - If no token is stored, behaviour is controlled by the `initial-sync` config flag (see below).
+  - If no token is stored, behaviour is controlled by the active profile's `initialSyncEnabled` field (see below).
   - Each file record includes a presigned S3 URL for direct download.
   - Paging is cursor-based: the response includes a `nextToken` if more files remain, or `null` if at the end.
   - The endpoint enforces authentication and validates all parameters with Zod.
-  - On initial sync, if `initial-sync` is `true`, all files are returned from the beginning; if `false`, the first page is empty and only new files appear on subsequent syncs.
+  - On initial sync, if `initialSyncEnabled` is `true`, all files are returned from the beginning; if `false`, the first page is empty and only new files appear on subsequent syncs.
 - **Manual "Sync Now" command** — available via command palette and settings. Calls `POST /sync/run` first (dispatches an async Graph delta query — returns 201 with a `jobId`; the sync-worker Lambda processes the job in the background), then polls `GET /sync/jobs/:jobId` with exponential backoff (2s→30s) and a hard 5-minute timeout. On `completed` it pages through `GET /files/changes` (scoped to the active profile) and that flows into vault writes; on `failed` it shows an error Notice with the job's error message; on timeout it shows a timed-out Notice.
 - **Reset operations** — available via command palette and settings:
   - _Reset Plugin State_ (local only) — clears the local change token for the active profile; plugin re-downloads files still in S3. No server call.

@@ -298,7 +298,6 @@ There is deliberately **no stored copy of any secret value** — not in a passwo
 | `github/client-secret`                  | `api` at cold start                                                                                               | GitHub OAuth App → _Regenerate_                      | SSM write, cold start                                |
 | `jwt/private-key`                       | `api` at cold start; the QA smoke mints with it                                                                   | generated                                            | SSM write with `jwt/public-key`, cold start          |
 | `jwt/public-key`                        | `api` and `staging-delivery` at cold start                                                                        | derived from the private key                         | write **together** with `jwt/private-key`            |
-| `jwt/signing-secret`                    | loaded by `api`; nothing reads it yet                                                                             | generated                                            | SSM write, cold start                                |
 | `onedrive/client-id`                    | `api` at cold start; `adapter-onedrive` per invocation; **baked into `processor` and `sync-worker` at plan time** | Entra ID app registration                            | SSM write **and `terraform apply`**, then cold start |
 | `onedrive/client-secret`                | `api` at cold start; `adapter-onedrive` per invocation                                                            | Entra ID app registration → _Certificates & secrets_ | SSM write, cold start                                |
 
@@ -345,17 +344,11 @@ rm jwt-private.pem jwt-public.pem
 
 Every active session stops verifying and the plugin recovers on its next refresh. Rotate deliberately, not casually.
 
-**`jwt/signing-secret`.** `openssl rand -base64 48`. Nothing reads it today, so rotating it is safe.
-
 **OAuth client secrets** (GitHub, Entra ID). Regenerate in the provider console, write the new value to SSM, force the cold start, then delete the superseded secret in the console — the old value stays valid until you do. Creating either app from scratch is covered in [Third-party App Registration](#third-party-app-registration).
 
 ### QA holds placeholders on purpose
 
 QA stores `PLACEHOLDER` for every parameter except the ones CI manages: the deployed smoke seeds its own token and talks to the Graph stub, so QA needs no real GitHub, Entra ID or Graph credentials. `deploy.yml` generates the QA `jwt/private-key` and `jwt/public-key` on first use, and only when the stored value is `PLACEHOLDER` or empty. Never copy production values into QA, and do not read a QA placeholder as a missing secret.
-
-### Seven parameters have no consumer
-
-`onedrive/access-token`, `onedrive/refresh-token`, `onedrive/token-expiry`, `graph/subscription-id`, `config/target-branch`, `config/initial-sync` and `config/retention-days` are provisioned and read by nothing. Per-connection OAuth tokens live in `petroglyph-token-vaults-<workspace>`, not in SSM. Do not spend recovery time on these, and note that `config/retention-days` reads as a runtime source of truth while Terraform actually uses `var.retention_days`.
 
 ### AWS credentials
 

@@ -108,7 +108,7 @@ The API Handler Lambda exposes `GET /files/changes?after={token}&limit={pageSize
 - Returns `{ files: [...], nextToken: string | null }`.
 - Each file includes a presigned S3 URL for direct download.
 - Paging is cursor-based: use `nextToken` to fetch the next page; when `nextToken` is `null`, all files have been listed.
-- If no `after` token is provided, behaviour is controlled by the `initial-sync` SSM config flag:
+- If no `after` token is provided, behaviour is controlled by the active profile's `initialSyncEnabled` field:
   - If `true`, returns all files from the beginning.
   - If `false`, returns an empty first page; only new files appear on subsequent syncs.
 - The endpoint enforces authentication and validates all parameters and responses with Zod.

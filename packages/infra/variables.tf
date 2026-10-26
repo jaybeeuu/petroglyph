@@ -1,7 +1,3 @@
-# Number of days before staged PDF objects are expired by the S3 lifecycle rule.
-# The canonical source of truth at runtime is the SSM parameter
-# /petroglyph/<workspace>/config/retention-days; this variable provides the default
-# so that `terraform plan` works without an AWS connection during CI validation.
 variable "api_zip_s3_bucket" {
   description = "S3 bucket containing the API Lambda deployment zip"
   type        = string
@@ -108,6 +104,9 @@ variable "graph_base_url" {
   default     = "https://graph.microsoft.com/v1.0"
 }
 
+# Number of days before staged PDF objects are expired by the S3 lifecycle rule.
+# This variable is the source of truth: it is passed to the lifecycle rule at plan
+# time, so changing it takes a `terraform apply`.
 variable "retention_days" {
   description = "Number of days after which staged PDF objects are expired"
   type        = number
