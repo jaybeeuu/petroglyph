@@ -39,6 +39,8 @@ function ingestQueueUrl(): string {
   return url;
 }
 
+// DEPRECATED (6ra.6.1) — token lifecycle now lives in @petroglyph/core (token-resolver).
+// Do not modify. Dies with the sync-worker at 5.2.3.
 function refreshTokensTableName(): string {
   return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh-tokens-default";
 }

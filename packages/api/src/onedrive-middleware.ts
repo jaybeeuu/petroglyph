@@ -1,3 +1,5 @@
+// DEPRECATED (6ra.6.1) — token lifecycle now lives in @petroglyph/core (token-resolver).
+// Do not modify. Dies with the old api surface at 6.6.5 (old files-changes at 5.2.4).
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { MiddlewareHandler } from "hono";
 import type { AppVariables } from "./auth-middleware.js";
