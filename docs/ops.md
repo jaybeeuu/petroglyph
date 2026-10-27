@@ -102,6 +102,12 @@ The stack runs in two persistent Terraform workspaces on the same S3 backend key
 
 The QA tier's resources are provisioned once by an admin, exactly as production was: the deploy role's managed policy manages existing staged/serving resources but does not grant bucket creation, so a first-time apply runs as `petroglyph-admin` (`./scripts/tf-apply.sh --workspace qa`). After that the `deploy-qa` job maintains the tier on each merge.
 
+#### What the deploy workflow's tests prove
+
+`packages/infra/src/deploy-workflow.test.ts` runs each deploy job's own `run:` scripts against stub `terraform`, `aws` and `pnpm` binaries. It asserts what the steps do, not that particular lines exist: every zip is uploaded and applied under a key derived from its content hash, the upload is skipped when that key is already in the bucket, the workspace step selects or creates the workspace with `TF_WORKSPACE` unset, and each job's custom domain reaches `terraform apply`. Reverting the `TF_WORKSPACE` fix from #185 turns three of those tests red.
+
+The line drawn: a step is covered by executing it whenever it ends in a command this repository can stub. A structural assertion is kept only where GitHub owns the seam — a job's `environment`, which decides which deploy role `secrets.AWS_ROLE_ARN` resolves to — and even there it is asserted against the workspace the job actually selects, so the two cannot drift apart. Action versions, cache keys, `needs` and artifact download are not covered locally; a Deploy run is their proof.
+
 ### QA quiesce (SQS event source mappings)
 
 An idle QA still costs money. A Lambda SQS event source mapping long-polls its queue whether or not a message exists, and **every empty receive is a billed request**: polling measured 937,587 empty receives a month across both workspaces against a 1,000,000/month free tier ([Auditing idle SQS requests](#auditing-idle-sqs-requests)). The mappings are therefore Terraform-managed state, not a manual afterthought — `enabled = local.sqs_esm_enabled`, which resolves to `false` in the `qa` workspace while `var.qa_quiesced` keeps its default of `true`. The local only honours the variable for the `qa` workspace, so production's four SQS mappings are enabled whatever the variable says.

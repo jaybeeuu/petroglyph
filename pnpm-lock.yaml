@@ -361,6 +361,9 @@ importers:
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
+      yaml:
+        specifier: 2.8.3
+        version: 2.8.3
 
   packages/ingest-onedrive:
     dependencies:
