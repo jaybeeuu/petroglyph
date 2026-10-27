@@ -1,4 +1,4 @@
-import { DeleteCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DeleteCommand, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -159,6 +159,7 @@ describe("POST /onedrive/connect", () => {
     vi.stubEnv("GRAPH_LIFECYCLE_URL", "https://api.example.com/graph/lifecycle");
     vi.stubEnv("SYNC_PROFILES_TABLE", "petroglyph-sync-profiles-test");
     vi.stubEnv("REFRESH_TOKENS_TABLE", "petroglyph-refresh_tokens-test");
+    vi.stubEnv("TOKEN_VAULTS_TABLE", "petroglyph-token-vaults-test");
     vi.stubEnv("USERS_TABLE", "petroglyph-users-test");
     mockDbSend.mockClear();
     mockFetch.mockClear();
@@ -356,6 +357,39 @@ describe("POST /onedrive/connect", () => {
     expect(expirySeconds).toBeGreaterThanOrEqual(before + MS_EXPIRES_IN);
     expect(expirySeconds).toBeLessThanOrEqual(after + MS_EXPIRES_IN);
     expect(typeof tokenCmd.input.ExpressionAttributeValues[":now"]).toBe("string");
+  });
+
+  // ── Behaviour 6b: connection token vault seeded ─────────────────────────
+
+  it("writes the connection token vault the adapter resolves the grant from", async () => {
+    setupDynamoMock(makeStateItem());
+    setupFetchMock();
+
+    const before = Math.floor(Date.now() / 1000);
+    const res = await postConnect({ code: VALID_CODE, state: VALID_STATE });
+    const after = Math.floor(Date.now() / 1000);
+
+    expect(res.status).toBe(200);
+
+    const vaultPuts = mockDbSend.mock.calls.filter(
+      ([cmd]) =>
+        cmd instanceof PutCommand && cmd.input.TableName === "petroglyph-token-vaults-test",
+    );
+    expect(vaultPuts).toHaveLength(1);
+
+    const [vaultCmd] = vaultPuts[0] as [{ input: { Item: { [key: string]: unknown } } }];
+    const item = vaultCmd.input.Item;
+
+    expect(item["userId"]).toBe(USER_ID);
+    expect(item["provider"]).toBe("onedrive");
+    expect(item["accessToken"]).toBe(MS_ACCESS_TOKEN);
+    expect(item["refreshToken"]).toBe(MS_REFRESH_TOKEN);
+    expect(item["reconnectRequired"]).toBe(false);
+    expect(typeof item["updatedAt"]).toBe("string");
+
+    const expirySeconds = item["expirySeconds"] as number;
+    expect(expirySeconds).toBeGreaterThanOrEqual(before + MS_EXPIRES_IN);
+    expect(expirySeconds).toBeLessThanOrEqual(after + MS_EXPIRES_IN);
   });
 
   // ── Behaviour 7: Graph subscription registered ───────────────────────────

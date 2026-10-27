@@ -31,6 +31,7 @@ resource "aws_lambda_function" "petroglyph_api" {
       GRAPH_NOTIFICATION_URL          = "${local.api_base_url}/webhooks/onedrive"
       GRAPH_LIFECYCLE_URL             = "${local.api_base_url}/onedrive/lifecycle"
       REFRESH_TOKENS_TABLE            = aws_dynamodb_table.refresh_tokens.name
+      TOKEN_VAULTS_TABLE              = aws_dynamodb_table.token_vaults.name
       USERS_TABLE                     = aws_dynamodb_table.users.name
       SYNC_PROFILES_TABLE             = aws_dynamodb_table.sync_profiles.name
       FILE_RECORDS_TABLE              = aws_dynamodb_table.file_records.name
