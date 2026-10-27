@@ -50,4 +50,8 @@ Cross-service payload drift is pinned by the shared `@petroglyph/staging-contrac
 
 The deployed smoke is the release gate: the deploy pipeline promotes through QA (deploy QA → smoke → deploy production). The live-Graph tier is opt-in and never gates. See [technical-direction/verification-strategy.md](technical-direction/verification-strategy.md) for the decision and rationale.
 
+## Test timeouts
+
+Vitest gives every test 5000 ms unless it is handed a budget of its own. A test that does real I/O — an S3 put, a DynamoDB upsert, an HTTP fetch of a presigned URL — can exceed that once the full suite runs in parallel on a loaded runner, so such tests pass an explicit timeout sized to the work they do: `packages/staging-delivery/src/delivery.integration.test.ts` runs its presigned download under 30 s and its `beforeAll` under 180 s. The budget stays per test rather than a package-wide `testTimeout`, so the headroom goes only to the tests that need it and unit tests keep failing fast.
+
 [CONTRIBUTING.md](../CONTRIBUTING.md) holds the workspace commands and package script conventions.
