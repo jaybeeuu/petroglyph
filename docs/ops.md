@@ -290,6 +290,8 @@ When adding a new Lambda:
 
 There is deliberately **no stored copy of any secret value** — not in a password manager, not in this repository, not in a snapshot left behind by a migration. A second copy of a live secret is another attack surface, so recovery means _regenerating_ at the source and writing the new value to SSM. Terraform creates each parameter with `value = "PLACEHOLDER"` and `ignore_changes = [value]`, so nothing in CD can overwrite a real value.
 
+Every parameter in `packages/infra/ssm.tf` is read by deployed code, and the table below is the full inventory. Add one only when a service reads it, and delete it when the last reader goes: a parameter nothing reads is standing attack surface and noise during a recovery. Settings that only Terraform or the application consumes stay out of SSM — staged-PDF retention is the `retention_days` variable, initial sync is the profile's `initialSyncEnabled` field. `packages/infra/scripts/tf-apply.sh` asserts the live set by name and count after every apply, so add or drop a parameter there in the same change.
+
 ### Who reads what
 
 | Parameter (`/petroglyph/<workspace>/…`) | Read by                                                                                                           | Source                                               | Rotation                                             |
@@ -298,7 +300,6 @@ There is deliberately **no stored copy of any secret value** — not in a passwo
 | `github/client-secret`                  | `api` at cold start                                                                                               | GitHub OAuth App → _Regenerate_                      | SSM write, cold start                                |
 | `jwt/private-key`                       | `api` at cold start; the QA smoke mints with it                                                                   | generated                                            | SSM write with `jwt/public-key`, cold start          |
 | `jwt/public-key`                        | `api` and `staging-delivery` at cold start                                                                        | derived from the private key                         | write **together** with `jwt/private-key`            |
-| `jwt/signing-secret`                    | loaded by `api`; nothing reads it yet                                                                             | generated                                            | SSM write, cold start                                |
 | `onedrive/client-id`                    | `api` at cold start; `adapter-onedrive` per invocation; **baked into `processor` and `sync-worker` at plan time** | Entra ID app registration                            | SSM write **and `terraform apply`**, then cold start |
 | `onedrive/client-secret`                | `api` at cold start; `adapter-onedrive` per invocation                                                            | Entra ID app registration → _Certificates & secrets_ | SSM write, cold start                                |
 
@@ -345,17 +346,11 @@ rm jwt-private.pem jwt-public.pem
 
 Every active session stops verifying and the plugin recovers on its next refresh. Rotate deliberately, not casually.
 
-**`jwt/signing-secret`.** `openssl rand -base64 48`. Nothing reads it today, so rotating it is safe.
-
 **OAuth client secrets** (GitHub, Entra ID). Regenerate in the provider console, write the new value to SSM, force the cold start, then delete the superseded secret in the console — the old value stays valid until you do. Creating either app from scratch is covered in [Third-party App Registration](#third-party-app-registration).
 
 ### QA holds placeholders on purpose
 
 QA stores `PLACEHOLDER` for every parameter except the ones CI manages: the deployed smoke seeds its own token and talks to the Graph stub, so QA needs no real GitHub, Entra ID or Graph credentials. `deploy.yml` generates the QA `jwt/private-key` and `jwt/public-key` on first use, and only when the stored value is `PLACEHOLDER` or empty. Never copy production values into QA, and do not read a QA placeholder as a missing secret.
-
-### Seven parameters have no consumer
-
-`onedrive/access-token`, `onedrive/refresh-token`, `onedrive/token-expiry`, `graph/subscription-id`, `config/target-branch`, `config/initial-sync` and `config/retention-days` are provisioned and read by nothing. Per-connection OAuth tokens live in `petroglyph-token-vaults-<workspace>`, not in SSM. Do not spend recovery time on these, and note that `config/retention-days` reads as a runtime source of truth while Terraform actually uses `var.retention_days`.
 
 ### AWS credentials
 

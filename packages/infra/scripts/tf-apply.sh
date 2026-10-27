@@ -139,14 +139,28 @@ LIFECYCLE=$($AWS s3api get-bucket-lifecycle-configuration \
   --bucket "petroglyph-staged-pdfs-${WORKSPACE}" --output text 2>&1)
 assert_contains "S3 lifecycle rule enabled" "Enabled" "$LIFECYCLE"
 
+EXPECTED_SSM_PARAMETERS=(
+  "github/client-id"
+  "github/client-secret"
+  "jwt/private-key"
+  "jwt/public-key"
+  "onedrive/client-id"
+  "onedrive/client-secret"
+)
+
 PARAMS=$($AWS ssm get-parameters-by-path \
   --path "/petroglyph/${WORKSPACE}/" --recursive \
   --query 'Parameters[].Name' --output text)
+for param in "${EXPECTED_SSM_PARAMETERS[@]}"; do
+  assert_contains "SSM parameter: /petroglyph/${WORKSPACE}/${param}" \
+    "/petroglyph/${WORKSPACE}/${param}" "$PARAMS"
+done
+
 PARAM_COUNT=$(echo "$PARAMS" | wc -w)
-if [[ "$PARAM_COUNT" -ge 12 ]]; then
-  success "SSM parameters: $PARAM_COUNT found (expected 12)"
+if [[ "$PARAM_COUNT" -eq "${#EXPECTED_SSM_PARAMETERS[@]}" ]]; then
+  success "SSM parameter count: $PARAM_COUNT (all live parameters present, no extras)"
 else
-  fail "SSM parameters: expected 12, got $PARAM_COUNT"
+  fail "SSM parameter count: expected ${#EXPECTED_SSM_PARAMETERS[@]}, got $PARAM_COUNT"
 fi
 
 for role in \

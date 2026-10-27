@@ -428,24 +428,16 @@ The adapter's per-connection Graph delta state (Delivery 1), superseding the per
 
 Parameters are namespaced by Terraform workspace under `/petroglyph/<workspace>/`, so the `production` and `qa` tiers cannot collide. Sweep one tier with `aws ssm get-parameters-by-path --path /petroglyph/<workspace>/ --recursive`.
 
-| Parameter                                        | Type         | Description                                                                       |
-| ------------------------------------------------ | ------------ | --------------------------------------------------------------------------------- |
-| `/petroglyph/<workspace>/github/client-id`       | SecureString | GitHub OAuth App client ID                                                        |
-| `/petroglyph/<workspace>/github/client-secret`   | SecureString | GitHub OAuth App client secret                                                    |
-| `/petroglyph/<workspace>/jwt/signing-secret`     | SecureString | Secret loaded as `JWT_SIGNING_SECRET`                                             |
-| `/petroglyph/<workspace>/jwt/private-key`        | SecureString | RS256 private key (PEM) used to issue JWTs                                        |
-| `/petroglyph/<workspace>/jwt/public-key`         | SecureString | RS256 public key (PEM) for verifying JWTs                                         |
-| `/petroglyph/<workspace>/onedrive/client-id`     | SecureString | Entra ID app client ID                                                            |
-| `/petroglyph/<workspace>/onedrive/client-secret` | SecureString | Entra ID app client secret                                                        |
-| `/petroglyph/<workspace>/onedrive/access-token`  | SecureString | Current OneDrive access token                                                     |
-| `/petroglyph/<workspace>/onedrive/refresh-token` | SecureString | OneDrive refresh token                                                            |
-| `/petroglyph/<workspace>/onedrive/token-expiry`  | SecureString | Access-token expiry                                                               |
-| `/petroglyph/<workspace>/graph/subscription-id`  | SecureString | Microsoft Graph change-notification subscription ID                               |
-| `/petroglyph/<workspace>/config/target-branch`   | SecureString | Git branch to commit to (e.g. `main`)                                             |
-| `/petroglyph/<workspace>/config/initial-sync`    | SecureString | `true` \| `false` — return all existing files when the plugin has no change token |
-| `/petroglyph/<workspace>/config/retention-days`  | SecureString | Days to retain S3 objects after staging (default: `90`)                           |
+| Parameter                                        | Type         | Description                                |
+| ------------------------------------------------ | ------------ | ------------------------------------------ |
+| `/petroglyph/<workspace>/github/client-id`       | SecureString | GitHub OAuth App client ID                 |
+| `/petroglyph/<workspace>/github/client-secret`   | SecureString | GitHub OAuth App client secret             |
+| `/petroglyph/<workspace>/jwt/private-key`        | SecureString | RS256 private key (PEM) used to issue JWTs |
+| `/petroglyph/<workspace>/jwt/public-key`         | SecureString | RS256 public key (PEM) for verifying JWTs  |
+| `/petroglyph/<workspace>/onedrive/client-id`     | SecureString | Entra ID app client ID                     |
+| `/petroglyph/<workspace>/onedrive/client-secret` | SecureString | Entra ID app client secret                 |
 
-The first seven rows are read by deployed code, though nothing consumes `jwt/signing-secret` yet. The remaining seven are provisioned with no consumer at all — [ops.md](ops.md#secrets) maps each live parameter to the service that reads it, and covers regeneration after a loss.
+Every row is read by deployed code — [ops.md](ops.md#secrets) maps each live parameter to the service that reads it, and covers regeneration after a loss.
 
 > **Note:** Per-user OneDrive token state is stored in DynamoDB (`refresh_tokens` table). SSM stores only system-level configuration/secrets.
 

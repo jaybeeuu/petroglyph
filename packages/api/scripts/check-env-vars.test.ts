@@ -136,7 +136,6 @@ describe("Lambda environment variable configuration", () => {
     const ssmPopulatedVars = new Set([
       "GITHUB_CLIENT_ID",
       "GITHUB_CLIENT_SECRET",
-      "JWT_SIGNING_SECRET",
       "JWT_PRIVATE_KEY",
       "JWT_PUBLIC_KEY",
       "MICROSOFT_CLIENT_ID", // mapped from ONEDRIVE_CLIENT_ID_SSM_PATH
@@ -174,7 +173,6 @@ describe("Lambda environment variable configuration", () => {
     const requiredVars = [
       "GITHUB_CLIENT_ID_SSM_PATH",
       "GITHUB_CLIENT_SECRET_SSM_PATH",
-      "JWT_SIGNING_SECRET_SSM_PATH",
       "REFRESH_TOKENS_TABLE",
       "USERS_TABLE",
     ];
