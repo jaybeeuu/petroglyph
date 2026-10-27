@@ -290,6 +290,8 @@ When adding a new Lambda:
 
 There is deliberately **no stored copy of any secret value** — not in a password manager, not in this repository, not in a snapshot left behind by a migration. A second copy of a live secret is another attack surface, so recovery means _regenerating_ at the source and writing the new value to SSM. Terraform creates each parameter with `value = "PLACEHOLDER"` and `ignore_changes = [value]`, so nothing in CD can overwrite a real value.
 
+Every parameter in `packages/infra/ssm.tf` is read by deployed code, and the table below is the full inventory. Add one only when a service reads it, and delete it when the last reader goes: a parameter nothing reads is standing attack surface and noise during a recovery. Settings that only Terraform or the application consumes stay out of SSM — staged-PDF retention is the `retention_days` variable, initial sync is the profile's `initialSyncEnabled` field. `packages/infra/scripts/tf-apply.sh` asserts the live set by name and count after every apply, so add or drop a parameter there in the same change.
+
 ### Who reads what
 
 | Parameter (`/petroglyph/<workspace>/…`) | Read by                                                                                                           | Source                                               | Rotation                                             |
