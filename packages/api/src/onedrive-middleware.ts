@@ -1,5 +1,3 @@
-// DEPRECATED (6ra.6.1) — token lifecycle now lives in @petroglyph/core (token-resolver).
-// Do not modify. Dies with the old api surface at 6.6.5 (old files-changes at 5.2.4).
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { MiddlewareHandler } from "hono";
 import type { AppVariables } from "./auth-middleware.js";
@@ -72,6 +70,12 @@ function assertMicrosoftTokenResponse(value: unknown): asserts value is Microsof
   }
 }
 
+/**
+ * The token lifecycle now lives in @petroglyph/core (token-resolver).
+ *
+ * @deprecated Deprecated in 6ra.6.1. Do not modify. Dies with the old api surface at 6.6.5 (old
+ * files-changes at 5.2.4).
+ */
 export async function refreshOneDriveToken(
   currentRefreshToken: string,
 ): Promise<MicrosoftTokenResponse> {
@@ -127,12 +131,19 @@ async function storeOneDriveParams(
   );
 }
 
+/**
+ * The token lifecycle now lives in @petroglyph/core (token-resolver).
+ *
+ * @deprecated Deprecated in 6ra.6.1. Do not modify. Dies with the old api surface at 6.6.5 (old
+ * files-changes at 5.2.4).
+ */
 export async function resolveOneDriveAccessToken(userId: string): Promise<string> {
   const params = await readOneDriveParams(userId);
   const msUntilExpiry = params.tokenExpirySeconds * 1000 - Date.now();
 
   if (msUntilExpiry <= TEN_MINUTES_MS) {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy token copy, dies at 6.6.5
       const refreshed = await refreshOneDriveToken(params.refreshToken);
       await storeOneDriveParams(
         userId,
@@ -159,6 +170,7 @@ export const onedriveMiddleware: MiddlewareHandler<{
     console.error("[onedrive-middleware] missing userId in request context");
   } else {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy token copy, dies at 6.6.5
       accessToken = await resolveOneDriveAccessToken(userId);
     } catch (err) {
       console.error("[onedrive-middleware] DynamoDB read failed:", err);

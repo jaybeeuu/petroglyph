@@ -39,8 +39,11 @@ function ingestQueueUrl(): string {
   return url;
 }
 
-// DEPRECATED (6ra.6.1) — token lifecycle now lives in @petroglyph/core (token-resolver).
-// Do not modify. Dies with the sync-worker at 5.2.3.
+/**
+ * The token lifecycle now lives in @petroglyph/core (token-resolver).
+ *
+ * @deprecated Deprecated in 6ra.6.1. Do not modify. Dies with the sync-worker at 5.2.3.
+ */
 function refreshTokensTableName(): string {
   return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh-tokens-default";
 }
@@ -85,6 +88,7 @@ function isRecord(value: unknown): value is UnknownRecord {
 async function readOneDriveTokens(userId: string): Promise<OneDriveTokens> {
   const result = await docClient.send(
     new GetCommand({
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy token copy, dies at 5.2.3
       TableName: refreshTokensTableName(),
       Key: { tokenHash: userId },
     }),
@@ -145,6 +149,7 @@ async function refreshOneDriveAccessToken(userId: string, refreshToken: string):
   const expirySeconds = Math.floor(Date.now() / 1000) + data.expires_in;
   await docClient.send(
     new UpdateCommand({
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy token copy, dies at 5.2.3
       TableName: refreshTokensTableName(),
       Key: { tokenHash: userId },
       UpdateExpression:
