@@ -73,7 +73,7 @@ describe("staging land against LocalStack S3", () => {
 
     const stored = requireStored(await store.get("staging/v1/p1/a/b/note.pdf"));
     expect(new TextDecoder().decode(stored.body)).toBe("%PDF-1.7 second");
-  });
+  }, 30_000);
 
   it("type-accuracy invariant: event mimeType == S3 ContentType == detectType(landed body)", async () => {
     const body = new TextEncoder().encode("%PDF-1.7\n1 0 obj");
@@ -106,5 +106,5 @@ describe("staging land against LocalStack S3", () => {
       mimeType,
     });
     expect(parsed.mimeType).toBe(mimeType);
-  });
+  }, 30_000);
 });

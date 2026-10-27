@@ -64,7 +64,7 @@ describe("event log writer against LocalStack DDB", () => {
 
     expect(await writer.putIfAbsent(document)).toBe(true);
     expect(await writer.putIfAbsent(document)).toBe(false);
-  });
+  }, 30_000);
 
   it("different ids on the same source coexist", async () => {
     const base: Omit<CloudEvent<{ profileId: string; s3Key: string }>, "id"> = {
@@ -80,5 +80,5 @@ describe("event log writer against LocalStack DDB", () => {
     expect(await writer.putIfAbsent({ ...base, id: "id-1" })).toBe(true);
     expect(await writer.putIfAbsent({ ...base, id: "id-2" })).toBe(true);
     expect(await writer.putIfAbsent({ ...base, id: "id-1" })).toBe(false);
-  });
+  }, 30_000);
 });

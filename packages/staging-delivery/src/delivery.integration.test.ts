@@ -156,7 +156,7 @@ describe("delivery surface /files against LocalStack S3 + DDB", () => {
 
     const download = await app.request("/files/item-1");
     expect(download.status).toBe(404);
-  });
+  }, 30_000);
 
   it("M5: a record under a foreign profile is never served, even when bytes exist", async () => {
     await index.upsert({
@@ -178,5 +178,5 @@ describe("delivery surface /files against LocalStack S3 + DDB", () => {
     const feed = await app.request("/files");
     const feedBody = (await feed.json()) as { files: unknown[] };
     expect(feedBody.files).toEqual([]);
-  });
+  }, 30_000);
 });
