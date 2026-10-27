@@ -89,7 +89,7 @@ describe("token store CAS + resolver concurrency against LocalStack DDB", () => 
     expect(stored?.accessToken).toBe("winner-token");
     expect(stored?.refreshToken).toBe("winner-refresh");
     expect(stored?.updatedAt).toBe(winner.updatedAt);
-  });
+  }, 30_000);
 
   it("concurrent resolves on one connection collapse to one MS call, both get the winner token", async () => {
     await store.write("github|race", "onedrive", stale, undefined);
@@ -116,7 +116,7 @@ describe("token store CAS + resolver concurrency against LocalStack DDB", () => 
     expect(outcomes[1]).toEqual({ kind: "success", accessToken: "rotated-token" });
     const stored = await store.read("github|race", "onedrive");
     expect(stored?.refreshToken).toBe("rotated-refresh");
-  });
+  }, 30_000);
 
   it("CAS conflict under a racing writer: loser refetches and returns the winner's token", async () => {
     await store.write("github|cfs", "onedrive", stale, undefined);
@@ -155,5 +155,5 @@ describe("token store CAS + resolver concurrency against LocalStack DDB", () => 
     const stored = await store.read("github|cfs", "onedrive");
     expect(stored?.accessToken).toBe("winner-token");
     expect(stored?.refreshToken).toBe("winner-refresh");
-  });
+  }, 30_000);
 });

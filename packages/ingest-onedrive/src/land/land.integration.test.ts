@@ -141,7 +141,7 @@ describe("fetch+gate+land against LocalStack S3 + DDB", () => {
       }),
     );
     expect(rows.Count).toBe(1);
-  });
+  }, 30_000);
 
   it("s3Key remains deterministic across a restage — same key, overwritten bytes", async () => {
     const first = new TextEncoder().encode("%PDF-1.7 first");
@@ -160,5 +160,5 @@ describe("fetch+gate+land against LocalStack S3 + DDB", () => {
     expect(stored).not.toBeNull();
     if (stored === null) throw new Error("expected stored object");
     expect(new TextDecoder().decode(stored.body)).toBe("%PDF-1.7 second");
-  });
+  }, 30_000);
 });

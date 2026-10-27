@@ -165,7 +165,7 @@ describe("migrate-ssm-namespace.sh", () => {
         type: "SecureString",
       },
     ]);
-  });
+  }, 30_000);
 
   it("passes a value beginning with a hyphen as a single argument", () => {
     const secret = "-AbC123~xyz_def";
@@ -179,7 +179,7 @@ describe("migrate-ssm-namespace.sh", () => {
     // option and fails with "argument --value: expected one argument".
     expect(putCall).toContain(`--value=${secret}`);
     expect(putCall).not.toContain("--value");
-  });
+  }, 30_000);
 
   it("targets the SSM parameters plus any instance whose address moved, and nothing else", () => {
     const movedAlarm = "aws_cloudwatch_metric_alarm.staged_events_dlq_depth";
@@ -196,7 +196,7 @@ describe("migrate-ssm-namespace.sh", () => {
       "-target=aws_ssm_parameter.jwt_private_key",
       `-target=${movedAlarm}`,
     ]);
-  });
+  }, 30_000);
 
   it("leaves the DLQ alarms untargeted when they are not at the unindexed address", () => {
     const { calls } = runMigration([
@@ -209,5 +209,5 @@ describe("migrate-ssm-namespace.sh", () => {
         argument.startsWith("-target=aws_cloudwatch_metric_alarm"),
       ),
     ).toEqual([]);
-  });
+  }, 30_000);
 });

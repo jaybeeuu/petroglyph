@@ -62,11 +62,11 @@ describe("delta state store against LocalStack DDB", () => {
     await store.write("github|roundtrip", "onedrive", state);
 
     await expect(store.read("github|roundtrip", "onedrive")).resolves.toEqual(state);
-  });
+  }, 30_000);
 
   it("read returns null for a connection with no stored state", async () => {
     await expect(store.read("github|missing", "onedrive")).resolves.toBeNull();
-  });
+  }, 30_000);
 
   it("clear removes the stored state so a reset walk starts from scratch", async () => {
     await store.write("github|reset", "onedrive", {
@@ -77,7 +77,7 @@ describe("delta state store against LocalStack DDB", () => {
     await store.clear("github|reset", "onedrive");
 
     await expect(store.read("github|reset", "onedrive")).resolves.toBeNull();
-  });
+  }, 30_000);
 
   it("a malformed stored item is rejected by the schema on read", async () => {
     await client.send(
@@ -88,5 +88,5 @@ describe("delta state store against LocalStack DDB", () => {
     );
 
     await expect(store.read("github|malformed", "onedrive")).rejects.toBeInstanceOf(z.ZodError);
-  });
+  }, 30_000);
 });

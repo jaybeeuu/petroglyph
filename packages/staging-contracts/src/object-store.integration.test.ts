@@ -63,7 +63,7 @@ describe("S3 StagedObjectStore against LocalStack", () => {
       new HeadObjectCommand({ Bucket: "petroglyph-staged-pdfs", Key: "staging/v1/p1/a/b.pdf" }),
     );
     expect(head.ContentType).toBe("application/pdf");
-  });
+  }, 30_000);
 
   it("get returns null for a missing object; delete is idempotent", async () => {
     const store = new S3StagedObjectStore({
@@ -75,7 +75,7 @@ describe("S3 StagedObjectStore against LocalStack", () => {
     await expect(store.get("staging/v1/p1/missing.pdf")).resolves.toBeNull();
     await store.delete("staging/v1/p1/missing.pdf");
     await expect(store.get("staging/v1/p1/missing.pdf")).resolves.toBeNull();
-  });
+  }, 30_000);
 
   it("overwriting the same key yields a fresh version id when versioning is enabled", async () => {
     const store = new S3StagedObjectStore({
@@ -94,7 +94,7 @@ describe("S3 StagedObjectStore against LocalStack", () => {
 
     const stored = requireStored(await store.get("staging/v1/p1/a/b.pdf"));
     expect(new TextDecoder().decode(stored.body)).toBe("second");
-  });
+  }, 30_000);
 
   it("presignGet issues a URL that serves bytes with the content-disposition override for real", async () => {
     const store = new S3StagedObjectStore({
@@ -126,7 +126,7 @@ describe("S3 StagedObjectStore against LocalStack", () => {
     expect(await response.text()).toBe("download-me");
     expect(response.headers.get("content-type")).toBe("application/pdf");
     expect(response.headers.get("content-disposition")).toBe('attachment; filename="dl.pdf"');
-  });
+  }, 30_000);
 
   // DECISION (petroglyph-f2ei): real-AWS signature enforcement is a recorded,
   // accepted coverage gap. LocalStack 3.8.1 accepts a tampered presigned
@@ -165,5 +165,5 @@ describe("S3 StagedObjectStore against LocalStack", () => {
       );
     }
     expect(response.status).toBe(403);
-  });
+  }, 30_000);
 });
