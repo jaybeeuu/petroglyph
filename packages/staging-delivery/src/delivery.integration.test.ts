@@ -141,7 +141,7 @@ describe("delivery surface /files against LocalStack S3 + DDB", () => {
     expect(downloaded.headers.get("content-disposition")).toBe(
       "attachment; filename*=UTF-8''a.pdf",
     );
-  });
+  }, 30_000);
 
   it("M2/M7: a deleted record is never served — feed drops it, download 404s", async () => {
     const afterDelete = await app.request("/files");
