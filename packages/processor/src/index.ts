@@ -49,6 +49,11 @@ const driveItemSchema = z.object({
   folder: driveFolderSchema.optional(),
 });
 
+/**
+ * The token lifecycle now lives in @petroglyph/core (token-resolver).
+ *
+ * @deprecated Deprecated in 6ra.6.1. Do not modify. Dies with the processor at 5.2.3.
+ */
 const tokenResponseSchema = z.object({
   access_token: z.string().min(1),
   refresh_token: z.string().min(1),
@@ -182,6 +187,7 @@ async function refreshOneDriveAccessToken(userId: string, refreshToken: string):
     throw new Error(`Microsoft token refresh failed: ${response.status} ${response.statusText}`);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy token copy, dies at 5.2.3
   const parsedResponse = tokenResponseSchema.parse(await response.json());
 
   await persistRefreshedTokens(
