@@ -4,6 +4,7 @@ import { DeleteCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb"
 import type { Context } from "hono";
 import type { AppVariables } from "./auth-middleware.js";
 import { docClient } from "./db.js";
+import { writeInitialConnectionTokens } from "./token-vault.js";
 
 function refreshTokensTable(): string {
   return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
@@ -268,6 +269,13 @@ export async function handleOnedriveConnect(
   console.info("[onedrive-connect] Microsoft token exchange succeeded", { userId });
   await storeTokensInDynamoDB(userId, tokens.access_token, tokens.refresh_token, tokens.expires_in);
   console.info("[onedrive-connect] Stored Microsoft tokens in DynamoDB", { userId });
+  await writeInitialConnectionTokens(docClient, {
+    userId,
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    expiresInSeconds: tokens.expires_in,
+  });
+  console.info("[onedrive-connect] Seeded the connection token vault", { userId });
   await registerGraphSubscription(tokens.access_token, userId);
   await upsertSyncProfile(userId);
   console.info("[onedrive-connect] OneDrive profile updated", { userId });

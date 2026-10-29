@@ -57,6 +57,7 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
         Resource = [
           aws_dynamodb_table.users.arn,
           aws_dynamodb_table.refresh_tokens.arn,
+          aws_dynamodb_table.token_vaults.arn,
           aws_dynamodb_table.sync_profiles.arn,
           aws_dynamodb_table.file_records.arn,
           aws_dynamodb_table.delta_tokens.arn,
