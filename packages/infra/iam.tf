@@ -570,9 +570,54 @@ resource "aws_iam_role_policy" "petroglyph_adapter_onedrive_policy" {
 }
 
 # ---------------------------------------------------------------------------
+# Catch-up sweep role (adapter catch-up): read the connection list from the
+# token vault and enqueue one bell per connection. Nothing else.
+
+resource "aws_iam_role" "petroglyph_adapter_catch_up_role" {
+  name               = "petroglyph-adapter-catch-up-${terraform.workspace}"
+  assume_role_policy = local.lambda_assume_role_policy
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+resource "aws_iam_role_policy" "petroglyph_adapter_catch_up_policy" {
+  name = "petroglyph-adapter-catch-up-policy"
+  role = aws_iam_role.petroglyph_adapter_catch_up_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      # Scan only: the sweep enumerates connections, it never reads or writes a
+      # token. The adapter keeps the read/write grants.
+      {
+        Sid      = "DynamoDBTokenVaultScan"
+        Effect   = "Allow"
+        Action   = "dynamodb:Scan"
+        Resource = aws_dynamodb_table.token_vaults.arn
+      },
+      {
+        Sid      = "SQSSendDeltaTrigger"
+        Effect   = "Allow"
+        Action   = "sqs:SendMessage"
+        Resource = aws_sqs_queue.delta_trigger.arn
+      },
+      {
+        Sid    = "CloudWatchLogsWrite"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "${local.lambda_log_group_arn_prefix}/petroglyph-adapter-catch-up-${terraform.workspace}:*"
+      },
+    ]
+  })
+}
+
 # Staging delivery role (6.5.2.4): index + profiles read, presign from stored
-# s3Key, JWT public key via SSM
-# ---------------------------------------------------------------------------
+# s3Key, JWT public key via SSM# ---------------------------------------------------------------------------
 
 resource "aws_iam_role" "petroglyph_staging_delivery_role" {
   name               = "petroglyph-staging-delivery-${terraform.workspace}"
