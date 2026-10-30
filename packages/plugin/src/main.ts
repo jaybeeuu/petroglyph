@@ -1,13 +1,15 @@
-import { Notice, Plugin, normalizePath } from "obsidian";
+import { Notice, Plugin } from "obsidian";
 import { z } from "zod";
+import { parseFilesFeed, vaultPathsFor } from "./feed.js";
+import type { FeedEntry } from "./feed.js";
 import { PetroglyphSettingTab } from "./settings.js";
-import type { FileChange, PluginData, SyncProfile } from "./types.js";
+import type { PluginData, SyncProfile } from "./types.js";
 import { hasStringProp, isRecord } from "./validate.js";
 
 const DEFAULT_DATA: PluginData = {
   apiBaseUrl: "https://api.petroglyph.page",
   syncIntervalMinutes: 5,
-  changeTokens: {},
+  feedCursors: {},
 };
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
@@ -18,12 +20,39 @@ const jwtPayloadSchema = z.object({
   exp: z.number(),
 });
 
-/** Delay between sync job status polls, growing by backoff up to SYNC_POLL_MAX_DELAY_MS. */
-export const SYNC_POLL_INITIAL_DELAY_MS = 2_000;
-/** Maximum delay between sync job status polls once backoff saturates. */
-export const SYNC_POLL_MAX_DELAY_MS = 30_000;
-/** Total wall-clock budget for syncing before syncNow gives up, so the UI cannot hang. */
-export const SYNC_POLL_TIMEOUT_MS = 5 * 60 * 1000;
+/** Why a feed drain stopped early. */
+export type FeedDrainFailure = "rejected" | "invalid" | "network" | "stalled";
+
+/** Outcome of draining the `/files` feed. */
+export type FeedDrain = { ok: true } | { ok: false; reason: FeedDrainFailure };
+
+/**
+ * Pages one drain may request before giving up. A feed whose cursor stops
+ * advancing would otherwise hang the plugin forever, every poll interval.
+ */
+export const MAX_FEED_PAGES = 200;
+
+/** The notice a failed drain shows when the user asked for it explicitly. */
+const FEED_FAILURE_NOTICES: { [reason in FeedDrainFailure]: string } = {
+  rejected: "Sync failed: error fetching files",
+  invalid: "Sync failed: invalid files list",
+  network: "Sync failed: network or server error",
+  stalled: "Sync failed: files feed did not finish",
+};
+
+/** The companion note body written beside a synced PDF. */
+function companionNote(entry: FeedEntry): string {
+  return [
+    "---",
+    "source: onedrive",
+    `synced_at: ${new Date().toISOString()}`,
+    `created_at: ${entry.createdAt}`,
+    "tags:",
+    "  - handwritten",
+    "---",
+    "",
+  ].join("\n");
+}
 
 function decodeJwtExpiry(jwt: string): number {
   const parts = jwt.split(".");
@@ -59,153 +88,142 @@ export class PetroglyphPlugin extends Plugin {
     }
   }
   /**
-   * Manually trigger a sync: POST /sync/run, poll the job status until completed or failed
-   * (bounded backoff and timeout), then page GET /files/changes until nextToken is null.
-   * Shows a notice on completion, failure, or timeout.
+   * Manually sync the vault: drain GET /files from the stored cursor and report
+   * the outcome. The server-side trigger is not this call's business — a
+   * catch-up bell makes new files appear in the feed.
    */
   async syncNow(): Promise<void> {
     if (this._data.jwt === undefined || !this._data.oneDriveConnected) {
       new Notice("Not connected. Cannot sync.");
       return;
     }
-    try {
-      const headers = { Authorization: `Bearer ${this._data.jwt}` };
-      const runResp = await fetch(`${this._data.apiBaseUrl}/sync/run`, {
-        method: "POST",
-        headers,
-      });
-      if (!runResp.ok) {
-        new Notice("Sync failed: could not start sync");
-        return;
-      }
-      const runBody: unknown = await runResp.json();
-      if (!isRecord(runBody) || !hasStringProp(runBody, "jobId")) {
-        new Notice("Sync failed: invalid sync start response");
-        return;
-      }
-      new Notice("Sync started");
-      const job = await this.pollSyncJob(runBody.jobId, headers);
-      if (job === null) {
-        new Notice("Sync failed: timed out waiting for sync to complete");
-        return;
-      }
-      if (job.status === "failed") {
-        new Notice(job.error !== undefined ? `Sync failed: ${job.error}` : "Sync failed");
-        return;
-      }
-      // Job completed; page GET /files/changes until nextToken is null
-      const profileId = this.resolveProfileId();
-      let afterToken = this._data.changeTokens?.[profileId];
-      let hasMore = true;
-      while (hasMore) {
-        const url = new URL(`${this._data.apiBaseUrl}/files/changes`);
-        if (afterToken !== undefined) url.searchParams.set("after", afterToken);
-        const resp = await fetch(url.toString(), { headers });
-        if (!resp.ok) {
-          new Notice("Sync failed: error fetching changes");
-          return;
-        }
-        const body: unknown = await resp.json();
-        if (!isRecord(body)) {
-          new Notice("Sync failed: invalid response");
-          return;
-        }
-        if (body["resetToken"] === true) {
-          this._data = {
-            ...this._data,
-            changeTokens: {
-              ...this._data.changeTokens,
-              [profileId]: undefined as unknown as string,
-            },
-          };
-          delete this._data.changeTokens?.[profileId];
-          await this.savePluginData();
-        }
-        const files = body["files"];
-        if (!Array.isArray(files)) {
-          new Notice("Sync failed: invalid files list");
-          return;
-        }
-        for (const file of files) {
-          if (!isRecord(file)) continue;
-          await this.syncFile(file as unknown as FileChange, profileId);
-        }
-        const nextToken = body["nextToken"];
-        hasMore = typeof nextToken === "string";
-        afterToken = hasMore ? (nextToken as string) : undefined;
-      }
+    const drain = await this.drainFilesFeed(this.resolveProfileId());
+    if (drain.ok) {
       new Notice("Sync complete");
-    } catch {
-      new Notice("Sync failed: network or server error");
+      return;
     }
+    new Notice(FEED_FAILURE_NOTICES[drain.reason]);
   }
 
-  /**
-   * Poll GET /sync/jobs/:jobId until the job is completed or failed, with exponential backoff
-   * and a hard timeout. Resolves with the job's terminal status (and error message when failed),
-   * or null if the job never finished before the timeout.
-   */
-  private pollSyncJob(
-    jobId: string,
-    headers: { [key: string]: string },
-  ): Promise<{ status: "completed" | "failed"; error?: string } | null> {
-    return new Promise((resolve) => {
-      const startedAt = Date.now();
-      let attempt = 0;
-      const tick = async (): Promise<void> => {
-        attempt += 1;
-        try {
-          const resp = await fetch(`${this._data.apiBaseUrl}/sync/jobs/${jobId}`, { headers });
-          if (resp.ok) {
-            const body: unknown = await resp.json();
-            if (isRecord(body) && typeof body["status"] === "string") {
-              const status = body["status"];
-              if (status === "completed" || status === "failed") {
-                const error = typeof body["error"] === "string" ? body["error"] : undefined;
-                resolve({ status, ...(error !== undefined ? { error } : {}) });
-                return;
-              }
-            }
-          }
-        } catch {
-          // Network errors are ignored; polling retries until the timeout.
-        }
-        if (Date.now() - startedAt >= SYNC_POLL_TIMEOUT_MS) {
-          resolve(null);
-          return;
-        }
-        const delayMs = Math.min(
-          SYNC_POLL_INITIAL_DELAY_MS * 2 ** (attempt - 1),
-          SYNC_POLL_MAX_DELAY_MS,
-        );
-        this._syncPollTimeoutId = window.setTimeout(() => {
-          void tick();
-        }, delayMs);
-      };
-      void tick();
-    });
-  }
-
-  /** The profile whose change token and files/changes paging are used; falls back to "default". */
+  /** The profile whose feed cursor and files feed paging are used; falls back to "default". */
   private resolveProfileId(): string {
     return this._data.activeProfileId ?? DEFAULT_PROFILE_ID;
   }
 
   /**
-   * Reset plugin state: clear local change token for active profileId only.
+   * Pages GET /files from the profile's stored cursor until the feed is
+   * exhausted, writing each entry into the vault. A cursor the feed rejects
+   * (400) is stale: it is cleared and the drain restarts once from the head of
+   * the feed, so a bad cursor can never wedge syncing.
+   */
+  private async drainFilesFeed(profileId: string): Promise<FeedDrain> {
+    const jwt = this._data.jwt;
+    if (jwt === undefined) return { ok: false, reason: "rejected" };
+
+    const headers = { Authorization: `Bearer ${jwt}` };
+    let cursor = this._data.feedCursors?.[profileId];
+    let retriedRejectedCursor = false;
+
+    for (let page = 0; ; page += 1) {
+      if (page >= MAX_FEED_PAGES) return { ok: false, reason: "stalled" };
+
+      const url = new URL(`${this._data.apiBaseUrl}/files`);
+      if (cursor !== undefined) url.searchParams.set("after", cursor);
+
+      let response: Response;
+      try {
+        response = await fetch(url.toString(), { headers });
+      } catch {
+        return { ok: false, reason: "network" };
+      }
+
+      if (response.status === 400 && !retriedRejectedCursor) {
+        retriedRejectedCursor = true;
+        await this.saveFeedCursor(profileId, undefined);
+        cursor = undefined;
+        continue;
+      }
+      if (!response.ok) return { ok: false, reason: "rejected" };
+
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        return { ok: false, reason: "invalid" };
+      }
+      const feed = parseFilesFeed(payload);
+      if (feed === null) return { ok: false, reason: "invalid" };
+
+      for (const entry of feed.files) {
+        await this.writeFeedEntry(entry);
+      }
+
+      await this.saveFeedCursor(profileId, feed.nextToken ?? undefined);
+      if (feed.nextToken === null) return { ok: true };
+      cursor = feed.nextToken;
+    }
+  }
+
+  /** Stores the profile's feed cursor; `undefined` forgets it. */
+  private async saveFeedCursor(profileId: string, cursor: string | undefined): Promise<void> {
+    const cursors: { [key: string]: string } = {};
+    for (const [key, value] of Object.entries(this._data.feedCursors ?? {})) {
+      if (key !== profileId) cursors[key] = value;
+    }
+    if (cursor !== undefined) cursors[profileId] = cursor;
+    this._data = { ...this._data, feedCursors: cursors };
+    await this.savePluginData();
+  }
+
+  /**
+   * Writes one staged file into the vault, plus its companion note. An entry
+   * whose bytes already match the vault file is skipped, so a repeated poll
+   * does not churn the note's timestamps.
+   */
+  private async writeFeedEntry(entry: FeedEntry): Promise<void> {
+    try {
+      const response = await fetch(entry.s3PresignedUrl);
+      if (!response.ok) return;
+      const bytes = new Uint8Array(await response.arrayBuffer());
+
+      const paths = vaultPathsFor(VAULT_ROOT, entry);
+      const folder = paths.pdf.substring(0, paths.pdf.lastIndexOf("/"));
+      if (folder !== "" && !(await this.app.vault.adapter.exists(folder))) {
+        await this.app.vault.adapter.mkdir(folder);
+      }
+
+      if (await this.isCurrentFile(paths.pdf, bytes)) return;
+
+      await this.app.vault.adapter.writeBinary(paths.pdf, bytes as unknown as ArrayBuffer);
+      if (paths.markdown !== paths.pdf) {
+        await this.app.vault.adapter.write(paths.markdown, companionNote(entry));
+      }
+    } catch {
+      // File-level errors are ignored; sync continues with the next entry.
+    }
+  }
+
+  /** True when the vault already holds exactly these bytes at `path`. */
+  private async isCurrentFile(path: string, bytes: Uint8Array): Promise<boolean> {
+    try {
+      const existing = new Uint8Array(await this.app.vault.adapter.readBinary(path));
+      if (existing.byteLength !== bytes.byteLength) return false;
+      for (let index = 0; index < bytes.byteLength; index += 1) {
+        if (existing[index] !== bytes[index]) return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Reset plugin state: forget the feed cursor for the active profile only, so
+   * the next sync re-enumerates the feed from the head.
    */
   async resetPluginState(): Promise<void> {
-    const profileId = DEFAULT_PROFILE_ID;
-    if (this._data.changeTokens && this._data.changeTokens[profileId]) {
-      this._data = {
-        ...this._data,
-        changeTokens: {
-          ...this._data.changeTokens,
-          [profileId]: undefined as unknown as string,
-        },
-      };
-      delete this._data.changeTokens?.[profileId];
-      await this.savePluginData();
+    if (this._data.feedCursors?.[DEFAULT_PROFILE_ID] !== undefined) {
+      await this.saveFeedCursor(DEFAULT_PROFILE_ID, undefined);
     }
     new Notice("Plugin state reset: local sync token cleared");
   }
@@ -260,16 +278,7 @@ export class PetroglyphPlugin extends Plugin {
       }
       const body: unknown = await resp.json();
       if (isRecord(body) && body["resetToken"] === true) {
-        const profileId = DEFAULT_PROFILE_ID;
-        this._data = {
-          ...this._data,
-          changeTokens: {
-            ...this._data.changeTokens,
-            [profileId]: undefined as unknown as string,
-          },
-        };
-        delete this._data.changeTokens?.[profileId];
-        await this.savePluginData();
+        await this.saveFeedCursor(DEFAULT_PROFILE_ID, undefined);
       }
       new Notice("Full reset complete");
     } catch {
@@ -281,7 +290,6 @@ export class PetroglyphPlugin extends Plugin {
   private _refreshTimeoutId: number | null = null;
   private _statusPollIntervalId: number | null = null;
   private _syncPollIntervalId: number | null = null;
-  private _syncPollTimeoutId: number | null = null;
   private _settingTab: PetroglyphSettingTab | null = null;
 
   get data(): Readonly<PluginData> {
@@ -300,10 +308,6 @@ export class PetroglyphPlugin extends Plugin {
     if (this._syncPollIntervalId !== null) {
       window.clearInterval(this._syncPollIntervalId);
       this._syncPollIntervalId = null;
-    }
-    if (this._syncPollTimeoutId !== null) {
-      window.clearTimeout(this._syncPollTimeoutId);
-      this._syncPollTimeoutId = null;
     }
     const {
       jwt: _j,
@@ -387,100 +391,7 @@ export class PetroglyphPlugin extends Plugin {
   async performSync(): Promise<void> {
     if (this._data.jwt === undefined || !this._data.oneDriveConnected) return;
 
-    try {
-      const profileId = this.resolveProfileId();
-      let afterToken = this._data.changeTokens?.[profileId];
-      let hasMore = true;
-
-      while (hasMore) {
-        const url = new URL(`${this._data.apiBaseUrl}/files/changes`);
-        if (afterToken !== undefined) {
-          url.searchParams.set("after", afterToken);
-        }
-
-        const response = await fetch(url.toString(), {
-          headers: { Authorization: `Bearer ${this._data.jwt}` },
-        });
-
-        if (!response.ok) return;
-
-        const body: unknown = await response.json();
-        if (!isRecord(body)) return;
-
-        if (body["resetToken"] === true) {
-          this._data = {
-            ...this._data,
-            changeTokens: {
-              ...this._data.changeTokens,
-              [profileId]: undefined as unknown as string,
-            },
-          };
-          delete this._data.changeTokens?.[profileId];
-          await this.savePluginData();
-        }
-
-        const files = body["files"];
-        if (!Array.isArray(files)) return;
-
-        for (const file of files) {
-          if (!isRecord(file)) continue;
-          await this.syncFile(file as unknown as FileChange, profileId);
-        }
-
-        const nextToken = body["nextToken"];
-        hasMore = typeof nextToken === "string";
-        afterToken = hasMore ? (nextToken as string) : undefined;
-      }
-    } catch {
-      // Network errors are silently ignored; the next sync will retry.
-    }
-  }
-
-  async syncFile(file: FileChange, profileId: string): Promise<void> {
-    try {
-      const pdfResponse = await fetch(file.s3PresignedUrl);
-      if (!pdfResponse.ok) return;
-
-      const pdfBytes = await pdfResponse.arrayBuffer();
-      const filename = file.filename;
-      const pdfPath = normalizePath(`${VAULT_ROOT}/${filename}`);
-      const mdPath = pdfPath.replace(/\.pdf$/, ".md");
-
-      const pdfFolder = pdfPath.substring(0, pdfPath.lastIndexOf("/"));
-      if (!(await this.app.vault.adapter.exists(pdfFolder))) {
-        await this.app.vault.adapter.mkdir(pdfFolder);
-      }
-
-      await this.app.vault.adapter.writeBinary(
-        pdfPath,
-        new Uint8Array(pdfBytes) as unknown as ArrayBuffer,
-      );
-
-      const frontmatter = [
-        "---",
-        "source: onedrive",
-        `synced_at: ${new Date().toISOString()}`,
-        `created_at: ${file.createdAt}`,
-        ...(file.pageCount !== undefined ? [`page_count: ${file.pageCount}`] : []),
-        "tags:",
-        "  - handwritten",
-        "---",
-        "",
-      ].join("\n");
-
-      await this.app.vault.adapter.write(mdPath, frontmatter);
-
-      this._data = {
-        ...this._data,
-        changeTokens: {
-          ...this._data.changeTokens,
-          [profileId]: file.fileId,
-        },
-      };
-      await this.savePluginData();
-    } catch {
-      // File-level errors are silently ignored; sync continues with next file.
-    }
+    await this.drainFilesFeed(this.resolveProfileId());
   }
 
   override async onload(): Promise<void> {
@@ -566,10 +477,6 @@ export class PetroglyphPlugin extends Plugin {
       window.clearInterval(this._syncPollIntervalId);
       this._syncPollIntervalId = null;
     }
-    if (this._syncPollTimeoutId !== null) {
-      window.clearTimeout(this._syncPollTimeoutId);
-      this._syncPollTimeoutId = null;
-    }
   }
 
   async loadPluginData(): Promise<void> {
@@ -586,8 +493,11 @@ export class PetroglyphPlugin extends Plugin {
       if (typeof raw["syncIntervalMinutes"] === "number") {
         saved.syncIntervalMinutes = raw["syncIntervalMinutes"];
       }
-      if (isRecord(raw["changeTokens"])) {
-        saved.changeTokens = raw["changeTokens"] as { [key: string]: string };
+      // `changeTokens` is the pre-/files field name; keep reading it so an
+      // upgrade does not lose the cursor and re-download the whole vault.
+      const savedCursors = raw["feedCursors"] ?? raw["changeTokens"];
+      if (isRecord(savedCursors)) {
+        saved.feedCursors = savedCursors as { [key: string]: string };
       }
       if (hasStringProp(raw, "oneDriveStatus")) {
         saved.oneDriveStatus = raw.oneDriveStatus;
@@ -627,16 +537,16 @@ export class PetroglyphPlugin extends Plugin {
         ...(activeProfileId !== undefined ? { activeProfileId } : {}),
       };
 
-      // Clean up stale change tokens whose profile IDs no longer exist
-      if (this._data.changeTokens !== undefined) {
+      // Clean up cursors whose profile IDs no longer exist
+      if (this._data.feedCursors !== undefined) {
         const profileIds = new Set(profiles.map((p) => p.id));
-        const cleanedTokens: { [key: string]: string } = {};
-        for (const [key, val] of Object.entries(this._data.changeTokens)) {
+        const cleanedCursors: { [key: string]: string } = {};
+        for (const [key, val] of Object.entries(this._data.feedCursors)) {
           if (profileIds.has(key)) {
-            cleanedTokens[key] = val;
+            cleanedCursors[key] = val;
           }
         }
-        this._data = { ...this._data, changeTokens: cleanedTokens };
+        this._data = { ...this._data, feedCursors: cleanedCursors };
       }
 
       await this.savePluginData();
