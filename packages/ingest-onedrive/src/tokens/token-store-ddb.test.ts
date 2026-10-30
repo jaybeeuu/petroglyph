@@ -108,4 +108,56 @@ describe("DynamoDBTokenStore", () => {
 
     await expect(store.write("github|12345", "onedrive", record, record)).rejects.toThrow();
   });
+
+  describe("list", () => {
+    it("returns every stored connection with its reconnect flag", async () => {
+      const send = vi.fn().mockResolvedValue({
+        Items: [
+          { userId: "github|1", provider: "onedrive", reconnectRequired: false },
+          { userId: "github|2", provider: "onedrive", reconnectRequired: true },
+        ],
+      });
+      const client = { send } as unknown as DynamoDBDocumentClient;
+      const store = new DynamoDBTokenStore({ ...options, client });
+
+      const connections = await store.list();
+
+      expect(connections).toEqual([
+        { userId: "github|1", provider: "onedrive", reconnectRequired: false },
+        { userId: "github|2", provider: "onedrive", reconnectRequired: true },
+      ]);
+      expect(commandCall(send, 0).input).toMatchObject({
+        TableName: "petroglyph-refresh-tokens",
+      });
+    });
+
+    it("pages through the whole table", async () => {
+      const send = vi
+        .fn()
+        .mockResolvedValueOnce({
+          Items: [{ userId: "github|1", provider: "onedrive", reconnectRequired: false }],
+          LastEvaluatedKey: { userId: "github|1", provider: "onedrive" },
+        })
+        .mockResolvedValueOnce({
+          Items: [{ userId: "github|2", provider: "onedrive", reconnectRequired: false }],
+        });
+      const client = { send } as unknown as DynamoDBDocumentClient;
+      const store = new DynamoDBTokenStore({ ...options, client });
+
+      const connections = await store.list();
+
+      expect(connections.map((connection) => connection.userId)).toEqual(["github|1", "github|2"]);
+      expect(commandCall(send, 1).input).toMatchObject({
+        ExclusiveStartKey: { userId: "github|1", provider: "onedrive" },
+      });
+    });
+
+    it("is empty when the table holds no connection", async () => {
+      const send = vi.fn().mockResolvedValue({});
+      const client = { send } as unknown as DynamoDBDocumentClient;
+      const store = new DynamoDBTokenStore({ ...options, client });
+
+      await expect(store.list()).resolves.toEqual([]);
+    });
+  });
 });

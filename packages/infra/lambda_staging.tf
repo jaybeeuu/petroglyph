@@ -225,6 +225,81 @@ resource "aws_cloudwatch_log_group" "lambda_adapter_onedrive" {
   }
 }
 
+# Scheduled catch-up sweep: EventBridge → per-connection delta-trigger bells.
+# Graph may never deliver a webhook, so the sweep is the reliability net —
+# without it a saved PDF only syncs when a human sends a bell by hand. Same
+# artifact as the adapter, different entry point (dist/catch-up.handler).
+
+resource "aws_lambda_function" "petroglyph_adapter_catch_up" {
+  count = var.ingest_onedrive_zip_s3_bucket != "" ? 1 : 0
+
+  function_name = "petroglyph-adapter-catch-up-${terraform.workspace}"
+
+  s3_bucket = var.ingest_onedrive_zip_s3_bucket
+  s3_key    = var.ingest_onedrive_zip_s3_key
+
+  runtime = "nodejs24.x"
+  handler = "dist/catch-up.handler"
+
+  role    = aws_iam_role.petroglyph_adapter_catch_up_role.arn
+  timeout = 60
+
+  environment {
+    variables = {
+      REFRESH_TOKENS_TABLE    = aws_dynamodb_table.token_vaults.name
+      DELTA_TRIGGER_QUEUE_URL = aws_sqs_queue.delta_trigger.url
+    }
+  }
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+resource "aws_cloudwatch_log_group" "lambda_adapter_catch_up" {
+  count = var.ingest_onedrive_zip_s3_bucket != "" ? 1 : 0
+
+  name              = "/aws/lambda/${aws_lambda_function.petroglyph_adapter_catch_up[0].function_name}"
+  retention_in_days = 14
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+# The sweep is gated on the same local as the queue consumers: enqueueing
+# bells into a queue nothing drains is exactly the idle-QA waste qa_quiesced
+# exists to prevent.
+resource "aws_cloudwatch_event_rule" "adapter_catch_up" {
+  count = var.ingest_onedrive_zip_s3_bucket != "" && local.sqs_esm_enabled ? 1 : 0
+
+  name                = "petroglyph-adapter-catch-up-${terraform.workspace}"
+  description         = "Bells every connection on a schedule so the delta walk runs without a webhook"
+  schedule_expression = var.adapter_catch_up_schedule
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+resource "aws_cloudwatch_event_target" "adapter_catch_up" {
+  count = var.ingest_onedrive_zip_s3_bucket != "" && local.sqs_esm_enabled ? 1 : 0
+
+  rule      = aws_cloudwatch_event_rule.adapter_catch_up[0].name
+  target_id = "adapter-catch-up"
+  arn       = aws_lambda_function.petroglyph_adapter_catch_up[0].arn
+}
+
+resource "aws_lambda_permission" "eventbridge_adapter_catch_up" {
+  count = var.ingest_onedrive_zip_s3_bucket != "" && local.sqs_esm_enabled ? 1 : 0
+
+  statement_id  = "AllowEventBridgeInvokeCatchUp"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.petroglyph_adapter_catch_up[0].function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.adapter_catch_up[0].arn
+}
+
 # ---------------------------------------------------------------------------
 # Staging delivery Lambda (6.5.2.4): the /files surface — feed + download
 # over the staged index + S3, auth-scoped by JWT userId.

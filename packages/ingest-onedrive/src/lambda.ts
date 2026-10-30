@@ -2,22 +2,15 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { SQSBatchResponse, SQSEvent } from "aws-lambda";
-import { z } from "zod";
 import { OAuthTokenResolver, listProfiles } from "@petroglyph/core";
 import { DynamoDBEventLogWriter } from "@petroglyph/events";
 import { S3StagedObjectStore } from "@petroglyph/staging-contracts";
+import { deltaTriggerSchema } from "./delta-trigger.js";
 import { DynamoDBTokenStore } from "./tokens/token-store-ddb.js";
 import { OAuthTokenClient } from "./tokens/token-client.js";
 import { MicrosoftGraphClient } from "./tokens/graph-client.js";
 import { DynamoDBDeltaStateStore } from "./delta/delta-state-store-ddb.js";
 import { runDeltaSync, type DeltaSyncResult } from "./adapter/sync.js";
-
-const deltaTriggerSchema = z.object({
-  userId: z.string().min(1),
-  provider: z.string().min(1),
-});
-
-export type DeltaTrigger = z.infer<typeof deltaTriggerSchema>;
 
 /**
  * The 6ra adapter lambda shell: one bell/Sync-Now message per connection →
