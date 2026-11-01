@@ -64,17 +64,22 @@ function requiredEnv(name: string): string {
   return value;
 }
 
-export const handler = (): Promise<void> => {
+/**
+ * The deployed composition: real vault scan and real FIFO send, both built
+ * from the environment. The clock is injectable so an integration test can
+ * step past the dedupe window without waiting five real minutes.
+ */
+export function createScheduledSweep(now: () => number): () => Promise<void> {
   const docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
   const sqsClient = new SQSClient({});
   const queueUrl = requiredEnv("DELTA_TRIGGER_QUEUE_URL");
+  const tokenStore = new DynamoDBTokenStore({
+    client: docClient,
+    tableName: requiredEnv("REFRESH_TOKENS_TABLE"),
+  });
 
   return createCatchUpHandler({
-    listConnections: () =>
-      new DynamoDBTokenStore({
-        client: docClient,
-        tableName: requiredEnv("REFRESH_TOKENS_TABLE"),
-      }).list(),
+    listConnections: () => tokenStore.list(),
     enqueue: async (message) => {
       await sqsClient.send(
         new SendMessageCommand({
@@ -85,6 +90,8 @@ export const handler = (): Promise<void> => {
         }),
       );
     },
-    now: () => Date.now(),
-  })();
-};
+    now,
+  });
+}
+
+export const handler = (): Promise<void> => createScheduledSweep(() => Date.now())();
