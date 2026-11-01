@@ -229,6 +229,15 @@ resource "aws_cloudwatch_log_group" "lambda_adapter_onedrive" {
 # Graph may never deliver a webhook, so the sweep is the reliability net —
 # without it a saved PDF only syncs when a human sends a bell by hand. Same
 # artifact as the adapter, different entry point (dist/catch-up.handler).
+#
+# Scale note. This function sends one bell per connection, sequentially, inside
+# the `timeout` below (60 s), on the `var.adapter_catch_up_schedule` cadence
+# (default `rate(6 hours)`). Keep the two consistent: a schedule shorter than
+# the SQS dedupe window (5 minutes) collapses every sweep into one, and a sweep
+# that outruns the 60 s timeout is killed and retried from the first connection.
+# The handler comment in packages/ingest-onedrive/src/catch-up.ts states the
+# connection count at which that happens and the bounded-concurrency change to
+# make at that size.
 
 resource "aws_lambda_function" "petroglyph_adapter_catch_up" {
   count = var.ingest_onedrive_zip_s3_bucket != "" ? 1 : 0
@@ -242,7 +251,7 @@ resource "aws_lambda_function" "petroglyph_adapter_catch_up" {
   handler = "dist/catch-up.handler"
 
   role    = aws_iam_role.petroglyph_adapter_catch_up_role.arn
-  timeout = 60
+  timeout = 60 # see the scale note above before changing this
 
   environment {
     variables = {
