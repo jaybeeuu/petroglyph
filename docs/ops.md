@@ -164,6 +164,7 @@ Do not disable the mappings in the AWS console — that is drift the next `terra
 Webhooks are best-effort: Graph may never deliver one. The sweep is the reliability net — `petroglyph-adapter-catch-up-<workspace>` runs on an EventBridge schedule (`var.adapter_catch_up_schedule`, default `rate(6 hours)`), scans the token vault, and enqueues one delta-trigger bell per connection into `petroglyph-delta-trigger-<workspace>.fifo`. The adapter then walks the delta exactly as it would for a webhook.
 
 - A connection with `reconnectRequired: true` is skipped — no walk can succeed until a human reconnects it, so belling it would only fill the DLQ.
+- A vault row that fails the connection schema is skipped and logged — `[ingest-onedrive] skipping malformed connection in token vault: <userId>:<provider>`, or `unknown` when even the identity is unreadable. The sweep still bells the healthy connections, so the skipped connection gets no bells until its row is repaired. A reconnect (`POST /onedrive/connect`) rewrites the whole row and clears the error. A systemic schema break is loud, not silent: N malformed rows emit N ERROR lines per sweep.
 - The dedupe id is `<userId>:<provider>:<bucket>`, where the bucket is the SQS deduplication window (five minutes). A retried sweep inside that window collapses; a retry after it re-bells, which costs one no-op walk because the stored deltaLink is unchanged.
 - The rule is gated on `local.sqs_esm_enabled` like the queue consumers, so a quiesced QA does not enqueue bells nothing will drain.
 
