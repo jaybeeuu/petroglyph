@@ -152,6 +152,53 @@ describe("DynamoDBTokenStore", () => {
       });
     });
 
+    it("skips a row that fails the connection schema and keeps the healthy ones", async () => {
+      const send = vi.fn().mockResolvedValue({
+        Items: [
+          { userId: "github|1", provider: "onedrive", reconnectRequired: false },
+          { userId: "github|2", provider: "onedrive" },
+        ],
+      });
+      const client = { send } as unknown as DynamoDBDocumentClient;
+      const store = new DynamoDBTokenStore({ ...options, client, log: vi.fn() });
+
+      const connections = await store.list();
+
+      expect(connections).toEqual([
+        { userId: "github|1", provider: "onedrive", reconnectRequired: false },
+      ]);
+    });
+
+    it("names the skipped connection in the log", async () => {
+      const send = vi.fn().mockResolvedValue({
+        Items: [{ userId: "github|2", provider: "onedrive", reconnectRequired: null }],
+      });
+      const client = { send } as unknown as DynamoDBDocumentClient;
+      const log = vi.fn();
+      const store = new DynamoDBTokenStore({ ...options, client, log });
+
+      await store.list();
+
+      expect(log).toHaveBeenCalledWith(expect.stringContaining("github|2:onedrive"));
+    });
+
+    it("skips a row with no identity at all", async () => {
+      const send = vi.fn().mockResolvedValue({
+        Items: [
+          { userId: "github|1", provider: "onedrive", reconnectRequired: false },
+          { accessToken: "orphaned" },
+        ],
+      });
+      const client = { send } as unknown as DynamoDBDocumentClient;
+      const log = vi.fn();
+      const store = new DynamoDBTokenStore({ ...options, client, log });
+
+      const connections = await store.list();
+
+      expect(connections.map((connection) => connection.userId)).toEqual(["github|1"]);
+      expect(log).toHaveBeenCalledTimes(1);
+    });
+
     it("is empty when the table holds no connection", async () => {
       const send = vi.fn().mockResolvedValue({});
       const client = { send } as unknown as DynamoDBDocumentClient;

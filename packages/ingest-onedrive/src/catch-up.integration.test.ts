@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { CreateTableCommand, DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import {
   CreateQueueCommand,
   DeleteMessageCommand,
@@ -184,6 +184,40 @@ describe("catch-up sweep against LocalStack DynamoDB + FIFO SQS", () => {
     nowMs += DEDUPE_WINDOW_SECONDS * 1000;
     await sweep();
     expect(await drainBells()).toHaveLength(1);
+  }, 120_000);
+
+  it("bells the healthy connection while a malformed vault row sits beside it", async () => {
+    const { store, sweep, drainBells } = await createSweepHarness({
+      workspace: "malformed",
+      now: () => NOW_MS,
+    });
+
+    // Written raw, as an older deploy would: `reconnectRequired` is absent, so the
+    // row fails storedConnectionSchema. store.write() would reject it.
+    await dynamo.send(
+      new PutCommand({
+        TableName: "token-vaults-malformed",
+        Item: {
+          userId: "github|bad",
+          provider: "onedrive",
+          accessToken: "access-bad",
+          refreshToken: "refresh-bad",
+          expirySeconds: 1_000_000,
+          updatedAt: "2026-09-01T00:00:00.000Z",
+        },
+      }),
+    );
+    await store.write("github|healthy", "onedrive", createTokenRecord(), undefined);
+
+    // The malformed row is skipped, so the sweep still resolves and the healthy
+    // connection still gets a bell on the real queue.
+    await expect(sweep()).resolves.toBeUndefined();
+    expect(await drainBells()).toEqual([
+      {
+        bell: { userId: "github|healthy", provider: "onedrive" },
+        messageGroupId: "github|healthy:onedrive",
+      },
+    ]);
   }, 120_000);
 });
 
