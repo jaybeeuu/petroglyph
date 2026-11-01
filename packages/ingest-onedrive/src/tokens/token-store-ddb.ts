@@ -15,9 +15,27 @@ export const storedConnectionSchema = z.object({
 
 export type StoredConnection = z.infer<typeof storedConnectionSchema>;
 
+/** Just the identity of a vault row, readable even when the rest fails the schema. */
+const connectionIdentitySchema = z.object({
+  userId: z.string().min(1),
+  provider: z.string().min(1),
+});
+
 type StoredTokenRecord = TokenRecord & { userId: string; provider: string };
 
+export interface DynamoDBTokenStoreOptions {
+  client: DynamoDBDocumentClient;
+  tableName: string;
+  /** Where a vault row skipped by the sweep is reported; defaults to console.error. */
+  log?: (message: string) => void;
+}
+
 const CAS_FAILURE_NAME = "ConditionalCheckFailedException";
+
+function describeConnection(item: unknown): string {
+  const identity = connectionIdentitySchema.safeParse(item);
+  return identity.success ? `${identity.data.userId}:${identity.data.provider}` : "unknown";
+}
 
 function isConditionalCheckFailure(error: unknown): boolean {
   return (error as { name?: unknown }).name === CAS_FAILURE_NAME;
@@ -31,10 +49,12 @@ function isConditionalCheckFailure(error: unknown): boolean {
 export class DynamoDBTokenStore implements TokenStore {
   readonly #client: DynamoDBDocumentClient;
   readonly #tableName: string;
+  readonly #log: (message: string) => void;
 
-  constructor(options: { client: DynamoDBDocumentClient; tableName: string }) {
+  constructor(options: DynamoDBTokenStoreOptions) {
     this.#client = options.client;
     this.#tableName = options.tableName;
+    this.#log = options.log ?? console.error;
   }
 
   async read(userId: string, provider: string): Promise<TokenRecord | null> {
@@ -54,6 +74,11 @@ export class DynamoDBTokenStore implements TokenStore {
    * Every stored connection, for the scheduled catch-up sweep. A scan is the
    * right tool here: the vault is keyed by connection, and the sweep needs all
    * of them, once every few hours.
+   *
+   * A row that fails storedConnectionSchema is skipped and logged, naming the
+   * connection when its identity is readable. One malformed row must never fail
+   * the sweep: the sweep is the reliability net, so it degrades to the healthy
+   * connections instead of going dark for every user.
    */
   async list(): Promise<StoredConnection[]> {
     const connections: StoredConnection[] = [];
@@ -68,7 +93,14 @@ export class DynamoDBTokenStore implements TokenStore {
         }),
       );
       for (const item of result.Items ?? []) {
-        connections.push(storedConnectionSchema.parse(item));
+        const connection = storedConnectionSchema.safeParse(item);
+        if (!connection.success) {
+          this.#log(
+            `[ingest-onedrive] skipping malformed connection in token vault: ${describeConnection(item)}`,
+          );
+          continue;
+        }
+        connections.push(connection.data);
       }
       lastEvaluatedKey = result.LastEvaluatedKey;
     } while (lastEvaluatedKey !== undefined);
