@@ -617,7 +617,8 @@ resource "aws_iam_role_policy" "petroglyph_adapter_catch_up_policy" {
 }
 
 # Staging delivery role (6.5.2.4): index + profiles read, presign from stored
-# s3Key, JWT public key via SSM# ---------------------------------------------------------------------------
+# s3Key, JWT public key via SSM
+# ---------------------------------------------------------------------------
 
 resource "aws_iam_role" "petroglyph_staging_delivery_role" {
   name               = "petroglyph-staging-delivery-${terraform.workspace}"

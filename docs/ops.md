@@ -166,6 +166,7 @@ Webhooks are best-effort: Graph may never deliver one. The sweep is the reliabil
 - A connection with `reconnectRequired: true` is skipped — no walk can succeed until a human reconnects it, so belling it would only fill the DLQ.
 - The dedupe id is `<userId>:<provider>:<bucket>`, where the bucket is an epoch-aligned five-minute window, the same length as the SQS deduplication window. The buckets are aligned to the epoch, not to the first send, so the collapse window is five minutes minus the distance from the send to the next boundary: a retry before the boundary collapses, a retry after it re-bells, and the re-bell costs one no-op walk because the stored deltaLink is unchanged. A unit test in `packages/ingest-onedrive/src/catch-up.test.ts` pins that boundary behaviour.
 - The rule is gated on `local.sqs_esm_enabled` like the queue consumers, so a quiesced QA does not enqueue bells nothing will drain.
+- The sweep is sequential: one bell per connection, sent one at a time, inside the function's 60 s `timeout`. A send costs 20–50 ms, so a few hundred connections fit and a few thousand do not. Past that size Lambda kills the invocation mid-sweep, and the retry restarts at the first connection. A larger vault needs a bounded send pool (about 8 in flight) plus a deadline that throws at about 45 s, so the invocation fails visibly instead of being killed. Treat `timeout` and `var.adapter_catch_up_schedule` as one setting.
 
 Check it ran:
 
