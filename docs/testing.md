@@ -37,14 +37,16 @@ signatures, not because an environment is missing.
 
 Each layer proves what the one below it cannot.
 
-| Layer                   | Proves                                               | Infrastructure                                      | Runs in `pnpm test` | Status                                          |
-| ----------------------- | ---------------------------------------------------- | --------------------------------------------------- | ------------------- | ----------------------------------------------- |
-| Component / integration | a package's behaviour against real services          | LocalStack (Docker)                                 | Yes                 | In place                                        |
-| Service boundary        | a deployed handler wires its collaborators correctly | LocalStack (Docker)                                 | Yes                 | Adapter, forwarder, delivery, dispatch in place |
-| Deployed smoke          | the deployed path works end to end                   | QA environment (Graph stubbed via `GRAPH_BASE_URL`) | No                  | In place                                        |
-| Live Microsoft Graph    | behaviour against the real Microsoft edge            | Real Graph (throwaway account)                      | No                  | Opt-in, never scheduled                         |
+| Layer                   | Proves                                               | Infrastructure                                      | Runs in `pnpm test` | Status                                                    |
+| ----------------------- | ---------------------------------------------------- | --------------------------------------------------- | ------------------- | --------------------------------------------------------- |
+| Component / integration | a package's behaviour against real services          | LocalStack (Docker)                                 | Yes                 | In place                                                  |
+| Service boundary        | a deployed handler wires its collaborators correctly | LocalStack (Docker)                                 | Yes                 | Adapter, forwarder, delivery, dispatch, catch-up in place |
+| Deployed smoke          | the deployed path works end to end                   | QA environment (Graph stubbed via `GRAPH_BASE_URL`) | No                  | In place                                                  |
+| Live Microsoft Graph    | behaviour against the real Microsoft edge            | Real Graph (throwaway account)                      | No                  | Opt-in, never scheduled                                   |
 
-Boundary suites drive the real handler with a realistic trigger: adapter (`SQSEvent` -> Graph delta -> S3 + event log), forwarder (`DynamoDBStreamEvent` -> FIFO message), delivery (API Gateway v2 request -> feed + presigned GET), and dispatch (`SQSEvent` of staged CloudEvents -> `staged_records` rows + S3 object removal).
+Boundary suites drive the real handler with a realistic trigger: adapter (`SQSEvent` -> Graph delta -> S3 + event log), forwarder (`DynamoDBStreamEvent` -> FIFO message), delivery (API Gateway v2 request -> feed + presigned GET), dispatch (`SQSEvent` of staged CloudEvents -> `staged_records` rows + S3 object removal), and the scheduled catch-up sweep (schedule tick -> token-vault scan -> FIFO bell).
+
+The catch-up suite calls the deployed composition rather than the bare handler: `packages/ingest-onedrive/src/catch-up.integration.test.ts` invokes `createScheduledSweep`, so the vault scan and the FIFO send both run for real. It stubs `AWS_ENDPOINT_URL_DYNAMODB` and `AWS_ENDPOINT_URL_SQS` instead of passing endpoints to the clients, and gives each test a private table and queue. The clock is the only injected dependency: stepping `now` past the five-minute dedupe window re-bells without a real wait.
 
 Cross-service payload drift is pinned by the shared `@petroglyph/staging-contracts` zod schema and `pnpm -r typecheck`, which fail in the same commit as the change; there is no separate contract layer ([technical-direction/pact-contract-tests.md](technical-direction/pact-contract-tests.md)).
 
