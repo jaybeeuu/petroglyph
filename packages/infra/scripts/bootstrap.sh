@@ -420,6 +420,7 @@ POLICY_DOC_ALL=$(cat << EOF
         "lambda:ListTags"
       ],
       "Resource": [
+        "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-adapter-catch-up-${DEPLOY_ENVIRONMENT}",
         "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-adapter-onedrive-${DEPLOY_ENVIRONMENT}",
         "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-api-${DEPLOY_ENVIRONMENT}",
         "arn:aws:lambda:eu-west-2:${ACCOUNT_ID}:function:petroglyph-graph-stub-${DEPLOY_ENVIRONMENT}",
@@ -486,6 +487,21 @@ POLICY_DOC_ALL=$(cat << EOF
         "apigateway:DELETE"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "ProjectEventBridgeSchedules",
+      "Effect": "Allow",
+      "Action": [
+        "events:PutRule",
+        "events:PutTargets",
+        "events:DeleteRule",
+        "events:RemoveTargets",
+        "events:DescribeRule",
+        "events:TagResource",
+        "events:UntagResource",
+        "events:ListTagsForResource"
+      ],
+      "Resource": "arn:aws:events:eu-west-2:${ACCOUNT_ID}:rule/petroglyph-adapter-catch-up-${DEPLOY_ENVIRONMENT}"
     },
     {
       "Sid": "ProjectLogGroups",

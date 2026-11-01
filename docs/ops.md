@@ -159,6 +159,26 @@ terraform apply -refresh=false \
 
 Do not disable the mappings in the AWS console — that is drift the next `terraform apply` reverts. Change `var.qa_quiesced` through Terraform so the state and the account agree.
 
+### Catch-up sweep (scheduled delta bells)
+
+Webhooks are best-effort: Graph may never deliver one. The sweep is the reliability net — `petroglyph-adapter-catch-up-<workspace>` runs on an EventBridge schedule (`var.adapter_catch_up_schedule`, default `rate(6 hours)`), scans the token vault, and enqueues one delta-trigger bell per connection into `petroglyph-delta-trigger-<workspace>.fifo`. The adapter then walks the delta exactly as it would for a webhook.
+
+- A connection with `reconnectRequired: true` is skipped — no walk can succeed until a human reconnects it, so belling it would only fill the DLQ.
+- A vault row that fails the connection schema is skipped and logged — `[ingest-onedrive] skipping malformed connection in token vault: <userId>:<provider>`, or `unknown` when even the identity is unreadable. The sweep still bells the healthy connections, so the skipped connection gets no bells until its row is repaired. A reconnect (`POST /onedrive/connect`) rewrites the whole row and clears the error. A systemic schema break is loud, not silent: N malformed rows emit N ERROR lines per sweep.
+- The dedupe id is `<userId>:<provider>:<bucket>`, where the bucket is an epoch-aligned five-minute window, the same length as the SQS deduplication window. The buckets are aligned to the epoch, not to the first send, so the collapse window is five minutes minus the distance from the send to the next boundary: a retry before the boundary collapses, a retry after it re-bells, and the re-bell costs one no-op walk because the stored deltaLink is unchanged. A unit test in `packages/ingest-onedrive/src/catch-up.test.ts` pins that boundary behaviour.
+- The rule is gated on `local.sqs_esm_enabled` like the queue consumers, so a quiesced QA does not enqueue bells nothing will drain.
+- The sweep is sequential: one bell per connection, sent one at a time, inside the function's 60 s `timeout`. A send costs 20–50 ms, so a few hundred connections fit and a few thousand do not. Past that size Lambda kills the invocation mid-sweep, and the retry restarts at the first connection. A larger vault needs a bounded send pool (about 8 in flight) plus a deadline that throws at about 45 s, so the invocation fails visibly instead of being killed. Treat `timeout` and `var.adapter_catch_up_schedule` as one setting.
+
+Check it ran:
+
+```sh
+aws events list-rules --region eu-west-2 --profile petroglyph-admin \
+  --name-prefix petroglyph-adapter-catch-up --query 'Rules[].[Name,ScheduleExpression,State]' --output table
+aws logs tail /aws/lambda/petroglyph-adapter-catch-up-production --since 12h --profile petroglyph-admin
+```
+
+To force a sweep outside the schedule, invoke the function directly; to bell a single connection instead, send the message by hand (see the Delivery 1 runbook in `.working-docs/`).
+
 ### Auditing idle SQS requests
 
 `packages/infra/scripts/audit-sqs-idle-requests.sh` answers one question: is the account's SQS request volume idle polling or real work, and which queues produced it. It sums four metrics per queue over the window — `NumberOfEmptyReceives` for the idles, `NumberOfMessagesSent`/`Received`/`Deleted` for the work — then prints the event source mapping states, so a queue that is still polling is visible beside the number it produced.

@@ -126,3 +126,13 @@ variable "qa_quiesced" {
   type        = bool
   default     = true
 }
+
+# How often the catch-up sweep bells every connection. Six hours matches the
+# reliability window Graph promises for webhook delivery, so a missed bell is
+# repaired inside the same window. Any schedule shorter than the SQS
+# deduplication window (5 minutes) would collapse every sweep into one.
+variable "adapter_catch_up_schedule" {
+  description = "EventBridge schedule expression for the catch-up delta sweep"
+  type        = string
+  default     = "rate(6 hours)"
+}
