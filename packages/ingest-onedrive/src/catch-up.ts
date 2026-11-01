@@ -38,6 +38,19 @@ export interface CatchUpDeps {
  * A connection awaiting reauthorisation is skipped — no walk can succeed until
  * a human reconnects it. An enqueue failure fails the whole invocation so the
  * scheduler retries.
+ *
+ * Scale limit. The sweep sends one bell at a time, and the connection scan
+ * pages one page at a time. The Lambda timeout is 60 s
+ * (`packages/infra/lambda_staging.tf`) and the EventBridge schedule is
+ * `var.adapter_catch_up_schedule`, default `rate(6 hours)`. A sequential send
+ * costs about 20 to 50 ms, so a few hundred connections fit and a few thousand
+ * do not. Past that point the invocation is killed mid-sweep, EventBridge
+ * retries, and the retry restarts at the first connection.
+ *
+ * When the vault grows, change two things together: enqueue through a bounded
+ * pool (about 8 sends in flight, not one and not all at once), and stop at a
+ * deadline well under the 60 s Lambda timeout (about 45 s) by throwing, so the
+ * invocation fails visibly instead of being killed.
  */
 export function createCatchUpHandler(deps: CatchUpDeps): () => Promise<void> {
   return async () => {
