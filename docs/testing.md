@@ -54,4 +54,8 @@ The deployed smoke is the release gate: the deploy pipeline promotes through QA 
 
 Vitest gives every test 5000 ms unless it is handed a budget of its own. A test that does real I/O — an S3 put, a DynamoDB upsert, an HTTP fetch of a presigned URL — can exceed that once the full suite runs in parallel on a loaded runner, so such tests pass an explicit timeout sized to the work they do: `packages/staging-delivery/src/delivery.integration.test.ts` runs its presigned download under 30 s and its `beforeAll` under 180 s. The budget stays per test rather than a package-wide `testTimeout`, so the headroom goes only to the tests that need it and unit tests keep failing fast.
 
+## Suite parallelism
+
+`packages/ingest-onedrive` runs its test files one at a time (`fileParallelism: false` in its `vitest.config.ts`) because four of its suites each start their own LocalStack container. Run together on a loaded machine, four LocalStack JVMs exhaust the RAM and the `beforeAll` budget expires; the failure looks like a code defect but is memory pressure. Keep the package serial unless the container count falls, and expect its suite to take longer than a parallel one.
+
 [CONTRIBUTING.md](../CONTRIBUTING.md) holds the workspace commands and package script conventions.
