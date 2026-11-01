@@ -118,6 +118,33 @@ describe("createCatchUpHandler", () => {
     expect(firstCall[0].dedupeId).not.toBe(secondCall[0].dedupeId);
   });
 
+  it("re-bells when a retry crosses a bucket boundary inside the five-minute window", async () => {
+    const enqueue = vi.fn().mockResolvedValue(undefined);
+    let nowMs = 1_700_000_000_000;
+    const handler = createCatchUpHandler({
+      listConnections: () => Promise.resolve([createConnection()]),
+      enqueue,
+      now: () => nowMs,
+    });
+
+    // The buckets are aligned to the epoch, so a sweep at 100_000 ms before a
+    // boundary and a retry 1 ms after it are two ids: the real collapse window
+    // is five minutes minus the distance from the send to the boundary.
+    const sendMs = nowMs;
+    const retryMs = sendMs + 100_001;
+    expect(retryMs - sendMs).toBeLessThan(DEDUPE_WINDOW_SECONDS * 1000);
+
+    await handler();
+    nowMs = retryMs;
+    await handler();
+
+    const [firstCall, secondCall] = enqueue.mock.calls as [
+      [{ dedupeId: string }],
+      [{ dedupeId: string }],
+    ];
+    expect(firstCall[0].dedupeId).not.toBe(secondCall[0].dedupeId);
+  });
+
   it("fails the sweep when a bell cannot be enqueued, so the schedule retries", async () => {
     const handler = createCatchUpHandler({
       listConnections: () => Promise.resolve([createConnection()]),

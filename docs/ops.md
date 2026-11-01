@@ -164,7 +164,7 @@ Do not disable the mappings in the AWS console — that is drift the next `terra
 Webhooks are best-effort: Graph may never deliver one. The sweep is the reliability net — `petroglyph-adapter-catch-up-<workspace>` runs on an EventBridge schedule (`var.adapter_catch_up_schedule`, default `rate(6 hours)`), scans the token vault, and enqueues one delta-trigger bell per connection into `petroglyph-delta-trigger-<workspace>.fifo`. The adapter then walks the delta exactly as it would for a webhook.
 
 - A connection with `reconnectRequired: true` is skipped — no walk can succeed until a human reconnects it, so belling it would only fill the DLQ.
-- The dedupe id is `<userId>:<provider>:<bucket>`, where the bucket is the SQS deduplication window (five minutes). A retried sweep inside that window collapses; a retry after it re-bells, which costs one no-op walk because the stored deltaLink is unchanged.
+- The dedupe id is `<userId>:<provider>:<bucket>`, where the bucket is an epoch-aligned five-minute window, the same length as the SQS deduplication window. The buckets are aligned to the epoch, not to the first send, so the collapse window is five minutes minus the distance from the send to the next boundary: a retry before the boundary collapses, a retry after it re-bells, and the re-bell costs one no-op walk because the stored deltaLink is unchanged. A unit test in `packages/ingest-onedrive/src/catch-up.test.ts` pins that boundary behaviour.
 - The rule is gated on `local.sqs_esm_enabled` like the queue consumers, so a quiesced QA does not enqueue bells nothing will drain.
 
 Check it ran:
