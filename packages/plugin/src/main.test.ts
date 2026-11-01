@@ -951,20 +951,96 @@ describe("oauth/callback URI handler registration", () => {
   });
 });
 
-describe("syncNow async polling", () => {
-  let pollInitialDelayMs: number;
-  let pollMaxDelayMs: number;
-  let pollTimeoutMs: number;
+describe("syncNow", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("window", makeWindowStub());
+  });
 
-  beforeEach(async () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("pages GET /files and reports completion", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ files: [], nextToken: null }),
+    });
+
+    await plugin.syncNow();
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.petroglyph.page/files",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer jwt-token" },
+      }),
+    );
+    expect(Notice).toHaveBeenCalledWith("Sync complete");
+  });
+
+  it("does not reach the API when OneDrive is not connected", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: false,
+    });
+    global.fetch = vi.fn();
+
+    await plugin.syncNow();
+
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(Notice).toHaveBeenCalledWith("Not connected. Cannot sync.");
+  });
+
+  it("shows an error notice when the feed request is rejected", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+
+    await plugin.syncNow();
+
+    expect(Notice).toHaveBeenCalledWith("Sync failed: error fetching files");
+    expect(Notice).not.toHaveBeenCalledWith("Sync complete");
+  });
+
+  it("shows an error notice when the feed payload does not match the contract", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ files: [{ itemId: "item-1" }], nextToken: null }),
+    });
+
+    await plugin.syncNow();
+
+    expect(Notice).toHaveBeenCalledWith("Sync failed: invalid files list");
+  });
+
+  it("shows a network error notice when the feed request throws", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+    global.fetch = vi.fn().mockRejectedValue(new Error("offline"));
+
+    await plugin.syncNow();
+
+    expect(Notice).toHaveBeenCalledWith("Sync failed: network or server error");
+  });
+});
+
+describe("feed sync", () => {
+  beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     vi.stubGlobal("window", makeWindowStub());
-    const { SYNC_POLL_INITIAL_DELAY_MS, SYNC_POLL_MAX_DELAY_MS, SYNC_POLL_TIMEOUT_MS } =
-      await import("./main.js");
-    pollInitialDelayMs = SYNC_POLL_INITIAL_DELAY_MS;
-    pollMaxDelayMs = SYNC_POLL_MAX_DELAY_MS;
-    pollTimeoutMs = SYNC_POLL_TIMEOUT_MS;
   });
 
   afterEach(() => {
@@ -972,192 +1048,400 @@ describe("syncNow async polling", () => {
     vi.unstubAllGlobals();
   });
 
-  it("posts /sync/run, reads jobId, polls to completed, then pages /files/changes", async () => {
+  it("writes each feed file into the vault under its relative path", async () => {
     const { plugin } = await makePlugin({
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
-    global.fetch = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ jobId: "job-123" }) })
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ status: "completed" }) })
-      .mockResolvedValueOnce({
+
+    const mockPdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+    global.fetch = vi.fn((url) => {
+      if (typeof url === "string" && url.includes("/files")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              files: [
+                {
+                  itemId: "item-1",
+                  name: "note.pdf",
+                  relativePath: "notes/2026",
+                  mimeType: "application/pdf",
+                  s3PresignedUrl: "https://s3.example.com/file.pdf",
+                  createdAt: "2026-04-11T10:00:00Z",
+                },
+              ],
+              nextToken: null,
+            }),
+        });
+      }
+      return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ files: [], nextToken: null }),
+        arrayBuffer: () => Promise.resolve(mockPdfBytes.buffer),
       });
+    }) as unknown as typeof fetch;
 
-    const syncPromise = plugin.syncNow();
-    await syncPromise;
+    const mockVault = {
+      adapter: {
+        exists: vi.fn(() => Promise.resolve(false)),
+        mkdir: vi.fn(() => Promise.resolve()),
+        readBinary: vi.fn(() => Promise.resolve(new ArrayBuffer(0))),
+        writeBinary: vi.fn(() => Promise.resolve()),
+        write: vi.fn(() => Promise.resolve()),
+      },
+    };
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/sync/run"),
-      expect.objectContaining({ method: "POST" }),
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: mockVault };
+
+    await plugin.performSync();
+
+    expect(mockVault.adapter.writeBinary).toHaveBeenCalledWith(
+      "handwritten/notes/2026/note.pdf",
+      expect.any(Uint8Array),
     );
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/sync/jobs/job-123"),
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "Bearer jwt-token" }) as unknown as {
-          [key: string]: string;
-        },
-      }),
+    expect(mockVault.adapter.write).toHaveBeenCalledWith(
+      "handwritten/notes/2026/note.md",
+      expect.stringContaining("source: onedrive"),
     );
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/files/changes"),
-      expect.anything(),
-    );
-    expect(Notice).toHaveBeenCalledWith("Sync complete");
   });
 
-  it("polls the job status again after the initial delay while queued", async () => {
+  it("creates the destination folder before writing", async () => {
     const { plugin } = await makePlugin({
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
-    global.fetch = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ jobId: "job-123" }) })
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ status: "queued" }) })
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ status: "completed" }) })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ files: [], nextToken: null }),
-      });
 
-    const syncPromise = plugin.syncNow();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(global.fetch).not.toHaveBeenCalledWith(
-      expect.stringContaining("/files/changes"),
-      expect.anything(),
-    );
-    await vi.advanceTimersByTimeAsync(pollInitialDelayMs);
-    await syncPromise;
-
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/sync/jobs/job-123"),
-      expect.anything(),
-    );
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/files/changes"),
-      expect.anything(),
-    );
-    expect(Notice).toHaveBeenCalledWith("Sync complete");
-  });
-
-  it("shows an error notice with the job error when the job fails", async () => {
-    const { plugin } = await makePlugin({
-      jwt: "jwt-token",
-      oneDriveConnected: true,
-    });
-    global.fetch = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ jobId: "job-456" }) })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ status: "failed", error: "Graph delta walk failed" }),
-      });
-
-    const syncPromise = plugin.syncNow();
-    await syncPromise;
-
-    expect(Notice).toHaveBeenCalledWith("Sync failed: Graph delta walk failed");
-    expect(global.fetch).not.toHaveBeenCalledWith(
-      expect.stringContaining("/files/changes"),
-      expect.anything(),
-    );
-  });
-
-  it("stops polling and shows a notice when the job times out", async () => {
-    const { plugin } = await makePlugin({
-      jwt: "jwt-token",
-      oneDriveConnected: true,
-    });
-    global.fetch = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ jobId: "job-123" }) })
-      .mockResolvedValue({ ok: true, json: () => Promise.resolve({ status: "queued" }) });
-
-    const syncPromise = plugin.syncNow();
-    await vi.advanceTimersByTimeAsync(pollTimeoutMs + pollMaxDelayMs);
-    await syncPromise;
-
-    expect(Notice).toHaveBeenCalledWith("Sync failed: timed out waiting for sync to complete");
-    expect(global.fetch).not.toHaveBeenCalledWith(
-      expect.stringContaining("/files/changes"),
-      expect.anything(),
-    );
-  });
-
-  it("pages /files/changes with the active profile's profileId and token", async () => {
-    const { plugin } = await makePlugin({
-      jwt: "jwt-token",
-      oneDriveConnected: true,
-      activeProfileId: "p2",
-      changeTokens: { p2: "after-p2" },
-    });
-    global.fetch = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ jobId: "job-123" }) })
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ status: "completed" }) })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            files: [
-              {
-                fileId: "file-1",
-                s3PresignedUrl: "https://s3.example.com/file.pdf",
-                filename: "note.pdf",
-                createdAt: "2026-04-11T10:00:00Z",
-              },
-            ],
-            nextToken: null,
-          }),
-      })
-      .mockResolvedValueOnce({
+    global.fetch = vi.fn((url) => {
+      if (typeof url === "string" && url.includes("/files")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              files: [
+                {
+                  itemId: "item-1",
+                  name: "note.pdf",
+                  relativePath: "subfolder",
+                  mimeType: "application/pdf",
+                  s3PresignedUrl: "https://s3.example.com/file.pdf",
+                  createdAt: "2026-04-11T10:00:00Z",
+                },
+              ],
+              nextToken: null,
+            }),
+        });
+      }
+      return Promise.resolve({
         ok: true,
         arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
       });
+    }) as unknown as typeof fetch;
+
+    const mockVault = {
+      adapter: {
+        exists: vi.fn(() => Promise.resolve(false)),
+        mkdir: vi.fn(() => Promise.resolve()),
+        readBinary: vi.fn(() => Promise.resolve(new ArrayBuffer(0))),
+        writeBinary: vi.fn(() => Promise.resolve()),
+        write: vi.fn(() => Promise.resolve()),
+      },
+    };
+
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: mockVault };
+
+    await plugin.performSync();
+
+    expect(mockVault.adapter.mkdir).toHaveBeenCalledWith("handwritten/subfolder");
+  });
+
+  it("leaves an already-current file untouched", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+
+    const currentBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+    global.fetch = vi.fn((url) => {
+      if (typeof url === "string" && url.includes("/files")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              files: [
+                {
+                  itemId: "item-1",
+                  name: "note.pdf",
+                  relativePath: "",
+                  mimeType: "application/pdf",
+                  s3PresignedUrl: "https://s3.example.com/file.pdf",
+                  createdAt: "2026-04-11T10:00:00Z",
+                },
+              ],
+              nextToken: null,
+            }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(currentBytes.buffer),
+      });
+    }) as unknown as typeof fetch;
 
     const mockVault = {
       adapter: {
         exists: vi.fn(() => Promise.resolve(true)),
         mkdir: vi.fn(() => Promise.resolve()),
+        readBinary: vi.fn(() => Promise.resolve(currentBytes.buffer)),
         writeBinary: vi.fn(() => Promise.resolve()),
         write: vi.fn(() => Promise.resolve()),
       },
     };
+
     // @ts-expect-error — minimal stub
     plugin.app = { vault: mockVault };
 
-    const syncPromise = plugin.syncNow();
-    await syncPromise;
+    await plugin.performSync();
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/files/changes?after=after-p2"),
-      expect.anything(),
-    );
-    expect(plugin.data.changeTokens?.["p2"]).toBe("file-1");
-    expect(plugin.data.changeTokens?.["default"]).toBeUndefined();
+    expect(mockVault.adapter.writeBinary).not.toHaveBeenCalled();
+    expect(mockVault.adapter.write).not.toHaveBeenCalled();
   });
 
-  it("shows a start notice after dispatching the job", async () => {
+  it("pages through the feed using nextToken", async () => {
     const { plugin } = await makePlugin({
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
-    global.fetch = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ jobId: "job-123" }) })
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ status: "completed" }) })
-      .mockResolvedValueOnce({
+
+    let callCount = 0;
+    global.fetch = vi.fn((url) => {
+      if (typeof url === "string" && url.includes("/files")) {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                files: [
+                  {
+                    itemId: "item-1",
+                    name: "note1.pdf",
+                    relativePath: "",
+                    mimeType: "application/pdf",
+                    s3PresignedUrl: "https://s3.example.com/file1.pdf",
+                    createdAt: "2026-04-11T10:00:00Z",
+                  },
+                ],
+                nextToken: "page-2-cursor",
+              }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              files: [
+                {
+                  itemId: "item-2",
+                  name: "note2.pdf",
+                  relativePath: "",
+                  mimeType: "application/pdf",
+                  s3PresignedUrl: "https://s3.example.com/file2.pdf",
+                  createdAt: "2026-04-11T11:00:00Z",
+                },
+              ],
+              nextToken: null,
+            }),
+        });
+      }
+      return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ files: [], nextToken: null }),
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
       });
+    }) as unknown as typeof fetch;
 
-    const syncPromise = plugin.syncNow();
-    await syncPromise;
+    const mockVault = {
+      adapter: {
+        exists: vi.fn(() => Promise.resolve(true)),
+        mkdir: vi.fn(() => Promise.resolve()),
+        readBinary: vi.fn(() => Promise.resolve(new ArrayBuffer(0))),
+        writeBinary: vi.fn(() => Promise.resolve()),
+        write: vi.fn(() => Promise.resolve()),
+      },
+    };
 
-    expect(Notice).toHaveBeenCalledWith("Sync started");
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: mockVault };
+
+    await plugin.performSync();
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.petroglyph.page/files?after=page-2-cursor",
+      expect.anything(),
+    );
+    expect(mockVault.adapter.writeBinary).toHaveBeenCalledTimes(2);
+  });
+
+  it("pages from the stored cursor for the active profile", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p2",
+      feedCursors: { p2: "after-p2" },
+    });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ files: [], nextToken: null }),
+    });
+
+    await plugin.performSync();
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.petroglyph.page/files?after=after-p2",
+      expect.anything(),
+    );
+  });
+
+  it("clears a rejected cursor and re-pages from the head of the feed", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      feedCursors: { default: "stale-cursor" },
+    });
+
+    const requestedUrls: string[] = [];
+    global.fetch = vi.fn((url) => {
+      if (typeof url !== "string" || !url.includes("/files")) {
+        return Promise.resolve({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
+        });
+      }
+      requestedUrls.push(url);
+      if (url.includes("after=stale-cursor")) {
+        return Promise.resolve({ ok: false, status: 400 });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            files: [
+              {
+                itemId: "item-1",
+                name: "note.pdf",
+                relativePath: "",
+                mimeType: "application/pdf",
+                s3PresignedUrl: "https://s3.example.com/file.pdf",
+                createdAt: "2026-04-11T10:00:00Z",
+              },
+            ],
+            nextToken: null,
+          }),
+      });
+    }) as unknown as typeof fetch;
+
+    const mockVault = {
+      adapter: {
+        exists: vi.fn(() => Promise.resolve(true)),
+        mkdir: vi.fn(() => Promise.resolve()),
+        readBinary: vi.fn(() => Promise.resolve(new ArrayBuffer(0))),
+        writeBinary: vi.fn(() => Promise.resolve()),
+        write: vi.fn(() => Promise.resolve()),
+      },
+    };
+
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: mockVault };
+
+    await plugin.performSync();
+
+    expect(requestedUrls).toEqual([
+      "https://api.petroglyph.page/files?after=stale-cursor",
+      "https://api.petroglyph.page/files",
+    ]);
+    expect(mockVault.adapter.writeBinary).toHaveBeenCalledWith(
+      "handwritten/note.pdf",
+      expect.any(Uint8Array),
+    );
+  });
+
+  it("gives up rather than looping when a cursor is rejected twice", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      feedCursors: { default: "stale-cursor" },
+    });
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 400 });
+
+    await plugin.performSync();
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears the stored cursor once the feed is exhausted", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      feedCursors: { default: "old-cursor" },
+    });
+    let callCount = 0;
+    global.fetch = vi.fn((url) => {
+      if (typeof url === "string" && url.includes("/files")) {
+        callCount++;
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ files: [], nextToken: null }),
+        });
+      }
+      return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)) });
+    }) as unknown as typeof fetch;
+
+    await plugin.performSync();
+
+    expect(callCount).toBe(1);
+    expect(plugin.data.feedCursors?.["default"]).toBeUndefined();
+  });
+
+  it("keeps the mid-feed cursor when a later page fails", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+    let callCount = 0;
+    global.fetch = vi.fn((url) => {
+      if (typeof url === "string" && url.includes("/files")) {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ files: [], nextToken: "page-2-cursor" }),
+          });
+        }
+        return Promise.resolve({ ok: false, status: 500 });
+      }
+      return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)) });
+    }) as unknown as typeof fetch;
+
+    await plugin.performSync();
+
+    expect(plugin.data.feedCursors?.["default"]).toBe("page-2-cursor");
+  });
+
+  it("gives up when the feed cursor never advances", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ files: [], nextToken: "same-cursor" }),
+    });
+
+    const { MAX_FEED_PAGES } = await import("./main.js");
+    await plugin.performSync();
+
+    expect(global.fetch).toHaveBeenCalledTimes(MAX_FEED_PAGES);
   });
 });
 
@@ -1209,284 +1493,6 @@ describe("sync poller", () => {
     plugin.onunload();
 
     expect(clearIntervalSpy).toHaveBeenCalled();
-  });
-
-  it("fetches files and writes to vault on sync", async () => {
-    const { plugin } = await makePlugin({
-      jwt: "jwt-token",
-      oneDriveConnected: true,
-    });
-
-    const mockPdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
-    global.fetch = vi.fn((url) => {
-      if (typeof url === "string" && url.includes("/files/changes")) {
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              files: [
-                {
-                  fileId: "file-1",
-                  s3PresignedUrl: "https://s3.example.com/file.pdf",
-                  filename: "note.pdf",
-                  createdAt: "2026-04-11T10:00:00Z",
-                  pageCount: 3,
-                },
-              ],
-              nextToken: null,
-            }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        arrayBuffer: () => Promise.resolve(mockPdfBytes.buffer),
-      });
-    }) as unknown as typeof fetch;
-
-    const mockVault = {
-      adapter: {
-        exists: vi.fn(() => Promise.resolve(false)),
-        mkdir: vi.fn(() => Promise.resolve()),
-        writeBinary: vi.fn(() => Promise.resolve()),
-        write: vi.fn(() => Promise.resolve()),
-      },
-    };
-
-    // @ts-expect-error — minimal stub
-    plugin.app = { vault: mockVault };
-
-    await plugin.performSync();
-
-    expect(mockVault.adapter.writeBinary).toHaveBeenCalledWith(
-      "handwritten/note.pdf",
-      expect.any(Uint8Array),
-    );
-    expect(mockVault.adapter.write).toHaveBeenCalledWith(
-      "handwritten/note.md",
-      expect.stringContaining("source: onedrive"),
-    );
-    expect(mockVault.adapter.write).toHaveBeenCalledWith(
-      "handwritten/note.md",
-      expect.stringContaining("page_count: 3"),
-    );
-  });
-
-  it("advances token after each file write", async () => {
-    const { plugin } = await makePlugin({
-      jwt: "jwt-token",
-      oneDriveConnected: true,
-    });
-
-    global.fetch = vi.fn((url) => {
-      if (typeof url === "string" && url.includes("/files/changes")) {
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              files: [
-                {
-                  fileId: "file-1",
-                  s3PresignedUrl: "https://s3.example.com/file1.pdf",
-                  filename: "note1.pdf",
-                  createdAt: "2026-04-11T10:00:00Z",
-                },
-                {
-                  fileId: "file-2",
-                  s3PresignedUrl: "https://s3.example.com/file2.pdf",
-                  filename: "note2.pdf",
-                  createdAt: "2026-04-11T11:00:00Z",
-                },
-              ],
-              nextToken: null,
-            }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
-      });
-    }) as unknown as typeof fetch;
-
-    const mockVault = {
-      adapter: {
-        exists: vi.fn(() => Promise.resolve(true)),
-        mkdir: vi.fn(() => Promise.resolve()),
-        writeBinary: vi.fn(() => Promise.resolve()),
-        write: vi.fn(() => Promise.resolve()),
-      },
-    };
-
-    // @ts-expect-error — minimal stub
-    plugin.app = { vault: mockVault };
-
-    await plugin.performSync();
-
-    // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(plugin.saveData).toHaveBeenCalledTimes(2);
-    expect(plugin.data.changeTokens?.["default"]).toBe("file-2");
-  });
-
-  it("handles resetToken flag by clearing stored token", async () => {
-    const { plugin } = await makePlugin({
-      jwt: "jwt-token",
-      oneDriveConnected: true,
-      changeTokens: { default: "old-token" },
-    });
-
-    global.fetch = vi.fn((url) => {
-      if (typeof url === "string" && url.includes("/files/changes")) {
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              resetToken: true,
-              files: [
-                {
-                  fileId: "file-1",
-                  s3PresignedUrl: "https://s3.example.com/file1.pdf",
-                  filename: "note1.pdf",
-                  createdAt: "2026-04-11T10:00:00Z",
-                },
-              ],
-              nextToken: null,
-            }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
-      });
-    }) as unknown as typeof fetch;
-
-    const mockVault = {
-      adapter: {
-        exists: vi.fn(() => Promise.resolve(true)),
-        mkdir: vi.fn(() => Promise.resolve()),
-        writeBinary: vi.fn(() => Promise.resolve()),
-        write: vi.fn(() => Promise.resolve()),
-      },
-    };
-
-    // @ts-expect-error — minimal stub
-    plugin.app = { vault: mockVault };
-
-    await plugin.performSync();
-
-    expect(plugin.data.changeTokens?.["default"]).toBe("file-1");
-  });
-
-  it("pages through multiple responses using nextToken", async () => {
-    const { plugin } = await makePlugin({
-      jwt: "jwt-token",
-      oneDriveConnected: true,
-    });
-
-    let callCount = 0;
-    global.fetch = vi.fn((url) => {
-      if (typeof url === "string" && url.includes("/files/changes")) {
-        callCount++;
-        if (callCount === 1) {
-          return Promise.resolve({
-            ok: true,
-            json: () =>
-              Promise.resolve({
-                files: [
-                  {
-                    fileId: "file-1",
-                    s3PresignedUrl: "https://s3.example.com/file1.pdf",
-                    filename: "note1.pdf",
-                    createdAt: "2026-04-11T10:00:00Z",
-                  },
-                ],
-                nextToken: "page-2-token",
-              }),
-          });
-        }
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              files: [
-                {
-                  fileId: "file-2",
-                  s3PresignedUrl: "https://s3.example.com/file2.pdf",
-                  filename: "note2.pdf",
-                  createdAt: "2026-04-11T11:00:00Z",
-                },
-              ],
-              nextToken: null,
-            }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
-      });
-    }) as unknown as typeof fetch;
-
-    const mockVault = {
-      adapter: {
-        exists: vi.fn(() => Promise.resolve(true)),
-        mkdir: vi.fn(() => Promise.resolve()),
-        writeBinary: vi.fn(() => Promise.resolve()),
-        write: vi.fn(() => Promise.resolve()),
-      },
-    };
-
-    // @ts-expect-error — minimal stub
-    plugin.app = { vault: mockVault };
-
-    await plugin.performSync();
-
-    expect(mockVault.adapter.writeBinary).toHaveBeenCalledTimes(2);
-    expect(plugin.data.changeTokens?.["default"]).toBe("file-2");
-  });
-
-  it("creates missing vault folders before writing files", async () => {
-    const { plugin } = await makePlugin({
-      jwt: "jwt-token",
-      oneDriveConnected: true,
-    });
-
-    global.fetch = vi.fn((url) => {
-      if (typeof url === "string" && url.includes("/files/changes")) {
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              files: [
-                {
-                  fileId: "file-1",
-                  s3PresignedUrl: "https://s3.example.com/file.pdf",
-                  filename: "subfolder/note.pdf",
-                  createdAt: "2026-04-11T10:00:00Z",
-                },
-              ],
-              nextToken: null,
-            }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
-      });
-    }) as unknown as typeof fetch;
-
-    const mockVault = {
-      adapter: {
-        exists: vi.fn(() => Promise.resolve(false)),
-        mkdir: vi.fn(() => Promise.resolve()),
-        writeBinary: vi.fn(() => Promise.resolve()),
-        write: vi.fn(() => Promise.resolve()),
-      },
-    };
-
-    // @ts-expect-error — minimal stub
-    plugin.app = { vault: mockVault };
-
-    await plugin.performSync();
-
-    expect(mockVault.adapter.mkdir).toHaveBeenCalledWith("handwritten/subfolder");
   });
 
   it("starts sync polling when OneDrive is connected via callback", async () => {
@@ -1554,7 +1560,7 @@ describe("loadProfiles", () => {
   it("removes stale change tokens for deleted profile IDs", async () => {
     const { plugin } = await makePlugin({
       jwt: "jwt-token",
-      changeTokens: { p1: "token1", p2: "token2" },
+      feedCursors: { p1: "token1", p2: "token2" },
     });
 
     global.fetch = vi.fn().mockResolvedValue({
@@ -1567,8 +1573,8 @@ describe("loadProfiles", () => {
 
     await plugin.loadProfiles();
 
-    expect(plugin.data.changeTokens?.["p1"]).toBe("token1");
-    expect(plugin.data.changeTokens?.["p2"]).toBeUndefined();
+    expect(plugin.data.feedCursors?.["p1"]).toBe("token1");
+    expect(plugin.data.feedCursors?.["p2"]).toBeUndefined();
   });
 
   it("syncs activeProfileId from the profile returned with active: true", async () => {
