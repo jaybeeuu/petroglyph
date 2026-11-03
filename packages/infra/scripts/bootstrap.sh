@@ -494,6 +494,7 @@ POLICY_DOC_ALL=$(cat << EOF
       "Action": [
         "events:PutRule",
         "events:PutTargets",
+        "events:ListTargetsByRule",
         "events:DeleteRule",
         "events:RemoveTargets",
         "events:DescribeRule",
