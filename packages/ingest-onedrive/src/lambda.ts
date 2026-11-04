@@ -45,6 +45,7 @@ export function createAdapterHandler(deps: {
       }
       try {
         const result = await deps.runDelta(parsed.data);
+        log(describeProgress(parsed.data, result));
         if (result.outcome === "failed") {
           batchItemFailures.push({ itemIdentifier: message.messageId });
         }
@@ -55,6 +56,23 @@ export function createAdapterHandler(deps: {
     }
     return { batchItemFailures };
   };
+}
+
+/**
+ * The per-bell progress line. A deferred walk, a failed walk and a walk that
+ * reached the terminal change token all report the same two numbers, because
+ * they are the only per-invocation progress signal the adapter has: without
+ * them a catch-up that stops advancing looks exactly like a healthy one. The
+ * counts carry no token, resume link or secret — `pagesRemaining` is null when
+ * pages remain, since Graph's delta reports no total.
+ */
+function describeProgress(trigger: DeltaTrigger, result: DeltaSyncResult): string {
+  const remaining =
+    result.pagesRemaining === null ? "more remain" : `${result.pagesRemaining} remaining`;
+  return (
+    `[adapter] delta run for ${trigger.userId}/${trigger.provider} ${result.outcome}: ` +
+    `${result.pagesCompleted} page(s) completed, ${remaining}`
+  );
 }
 
 const ssmClient = new SSMClient({});

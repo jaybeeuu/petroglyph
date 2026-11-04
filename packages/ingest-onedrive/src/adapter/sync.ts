@@ -92,7 +92,12 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
   });
 
   if (walk.outcome === "failed") {
-    log(`[adapter] delta walk failed for ${connection.userId}/${connection.provider}`);
+    // Page progress on the failure path too: a failed walk that reports no
+    // page count is indistinguishable from one that never started.
+    log(
+      `[adapter] delta walk failed for ${connection.userId}/${connection.provider} ` +
+        `after ${walk.pagesCompleted} page(s)`,
+    );
     return {
       outcome: "failed",
       landed: 0,
