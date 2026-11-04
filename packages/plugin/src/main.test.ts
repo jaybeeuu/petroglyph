@@ -1977,3 +1977,30 @@ describe("deleteProfile", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("state-changed emissions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("runs a handler that re-subscribes during the emission only once", async () => {
+    const { plugin } = await makePlugin();
+    const handler = vi.fn();
+    let resubscriptions = 0;
+    const resubscribing = (): void => {
+      handler();
+      // Mirrors the settings tab, which re-registers itself while rendering.
+      // Capped so the buggy implementation fails the assertion instead of
+      // recursing until the stack overflows.
+      if (resubscriptions < 5) {
+        resubscriptions += 1;
+        plugin.on("state-changed", resubscribing);
+      }
+    };
+    plugin.on("state-changed", resubscribing);
+
+    plugin.refreshSettingsUi();
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+});

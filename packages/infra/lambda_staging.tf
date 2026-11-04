@@ -185,6 +185,11 @@ resource "aws_lambda_function" "petroglyph_adapter_onedrive" {
   role    = aws_iam_role.petroglyph_adapter_onedrive_role.arn
   timeout = 300
 
+  # A full delta walk holds the enumerate in memory, so the default 128 MB OOMs
+  # on a real drive (petroglyph-63vq: 127 MB used, Runtime.OutOfMemory at 78s).
+  # This buys headroom until the walk streams per page instead of accumulating.
+  memory_size = 1024
+
   environment {
     variables = {
       EVENT_LOG_TABLE                 = aws_dynamodb_table.event_log.name

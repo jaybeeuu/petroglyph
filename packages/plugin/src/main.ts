@@ -83,7 +83,10 @@ export class PetroglyphPlugin extends Plugin {
   }
 
   private emit(event: PluginEventType): void {
-    for (const handler of this._listeners.get(event) ?? []) {
+    // Snapshot the subscribers: a handler may subscribe or unsubscribe while it
+    // runs, and iterating the live set would visit the newly added handler
+    // inside the same emission — an unbounded re-entrant render loop.
+    for (const handler of [...(this._listeners.get(event) ?? [])]) {
       handler();
     }
   }
@@ -290,7 +293,6 @@ export class PetroglyphPlugin extends Plugin {
   private _refreshTimeoutId: number | null = null;
   private _statusPollIntervalId: number | null = null;
   private _syncPollIntervalId: number | null = null;
-  private _settingTab: PetroglyphSettingTab | null = null;
 
   get data(): Readonly<PluginData> {
     return this._data;
@@ -330,7 +332,6 @@ export class PetroglyphPlugin extends Plugin {
 
   refreshSettingsUi(): void {
     this.emit("state-changed");
-    this._settingTab?.display();
   }
 
   startStatusPolling(): void {
@@ -398,8 +399,7 @@ export class PetroglyphPlugin extends Plugin {
     await this.loadPluginData();
     await this.loadProfiles();
 
-    this._settingTab = new PetroglyphSettingTab(this.app, this);
-    this.addSettingTab(this._settingTab);
+    this.addSettingTab(new PetroglyphSettingTab(this.app, this));
 
     // Register manual commands
     if (typeof this.addCommand === "function") {
