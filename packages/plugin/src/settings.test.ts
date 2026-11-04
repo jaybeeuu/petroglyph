@@ -111,6 +111,19 @@ describe("PetroglyphSettingTab", () => {
     buttonHandlers.clear();
   });
 
+  it("renders once per state change, however many times it has rendered", async () => {
+    const plugin = await makePlugin();
+    const { PetroglyphSettingTab } = await import("./settings.js");
+    const tab = new PetroglyphSettingTab({} as App, plugin);
+    tab.display();
+    tab.display();
+    const displaySpy = vi.spyOn(tab, "display");
+
+    plugin.refreshSettingsUi();
+
+    expect(displaySpy).toHaveBeenCalledTimes(1);
+  });
+
   it("shows Connect button when logged out", async () => {
     const plugin = await makePlugin();
     const { PetroglyphSettingTab } = await import("./settings.js");
