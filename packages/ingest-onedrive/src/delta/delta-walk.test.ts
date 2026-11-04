@@ -140,6 +140,8 @@ describe("walkDelta", () => {
       store,
       profiles: [makeProfile({ profileId: "p1", rootPath: "notes" })],
       initialUrl: INITIAL_URL,
+      // This test pages a whole chain; the budget is a separate behaviour.
+      pageBudget: 10,
     });
 
     expect(paths).toEqual([
@@ -147,6 +149,8 @@ describe("walkDelta", () => {
       "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=p1",
     ]);
     expect(result.outcome).toBe("continued");
+    expect(result.pagesCompleted).toBe(2);
+    expect(result.resumeLink).toBeUndefined();
     expect(result.deltaLink).toBe(
       "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=final",
     );
@@ -206,6 +210,7 @@ describe("walkDelta", () => {
       store,
       profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
+      pageBudget: 10,
     });
 
     expect(store.writes).toBe(1);
@@ -253,6 +258,7 @@ describe("walkDelta", () => {
       store,
       profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
+      pageBudget: 10,
     });
 
     expect(result.outcome).toBe("failed");
@@ -491,6 +497,7 @@ describe("walkDelta", () => {
       store,
       profiles: [makeProfile()],
       initialUrl: INITIAL_URL,
+      pageBudget: 10,
     });
 
     expect(result.outcome).toBe("reset");
@@ -774,6 +781,36 @@ describe("walkDelta", () => {
     expect(result.events[0]).toMatchObject({ kind: "file", eTag: "etag-1" });
   });
 
+  it("stops at the page budget mid-chain and returns the resume link instead of walking on", async () => {
+    const store = memStateStore(null);
+    const secondPage = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=page-2";
+    const { client, paths } = scriptedClient([
+      () => page([fileItem({ id: "i1", name: "a.pdf" })], { nextLink: secondPage }),
+      () =>
+        page([fileItem({ id: "i2", name: "b.pdf" })], {
+          deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=final",
+        }),
+    ]);
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [makeProfile()],
+      initialUrl: INITIAL_URL,
+      pageBudget: 1,
+    });
+    // The budget is spent on the first page, so the second is never requested.
+    expect(paths).toEqual([INITIAL_URL]);
+    expect(result.outcome).toBe("deferred");
+    expect(result.pagesCompleted).toBe(1);
+    expect(result.resumeLink).toBe(secondPage);
+    expect(result.deltaLink).toBeUndefined();
+    // Events already fetched are returned; dropping them would lose changes the
+    // resume cursor is about to skip over.
+    expect(result.events.map((event) => event.itemId)).toEqual(["i1"]);
+    // The walker never advances the token past unlanded changes, so it writes nothing.
+    expect(store.writes).toBe(0);
+  });
   it("keeps only the last occurrence of an item repeated within one page", async () => {
     const store = memStateStore(null);
     const { client } = scriptedClient([

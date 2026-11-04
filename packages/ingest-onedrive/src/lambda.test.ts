@@ -25,8 +25,22 @@ function sqsEvent(bodies: string[]): SQSEvent {
 }
 
 const trigger = { userId: "u1", provider: "onedrive" };
-const completed: DeltaSyncResult = { outcome: "completed", landed: 1, deleted: 0, skipped: 0 };
-const failed: DeltaSyncResult = { outcome: "failed", landed: 0, deleted: 0, skipped: 0 };
+const completed: DeltaSyncResult = {
+  outcome: "completed",
+  landed: 1,
+  deleted: 0,
+  skipped: 0,
+  pagesCompleted: 1,
+  pagesRemaining: 0,
+};
+const failed: DeltaSyncResult = {
+  outcome: "failed",
+  landed: 0,
+  deleted: 0,
+  skipped: 0,
+  pagesCompleted: 0,
+  pagesRemaining: null,
+};
 
 describe("adapter lambda handler (delta-trigger SQS)", () => {
   it("runs the delta sync for each valid trigger and reports no failures", async () => {

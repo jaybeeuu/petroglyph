@@ -197,6 +197,7 @@ resource "aws_lambda_function" "petroglyph_adapter_onedrive" {
       REFRESH_TOKENS_TABLE            = aws_dynamodb_table.token_vaults.name
       SYNC_PROFILES_TABLE             = aws_dynamodb_table.sync_profiles.name
       STAGED_PDFS_BUCKET              = aws_s3_bucket.staged_pdfs.id
+      DELTA_TRIGGER_QUEUE_URL         = aws_sqs_queue.delta_trigger.url
       ONEDRIVE_CLIENT_ID_SSM_PATH     = aws_ssm_parameter.onedrive_client_id.name
       ONEDRIVE_CLIENT_SECRET_SSM_PATH = aws_ssm_parameter.onedrive_client_secret.name
       GRAPH_BASE_URL                  = local.adapter_graph_base_url
