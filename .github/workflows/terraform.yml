@@ -99,6 +99,17 @@ jobs:
           role-to-assume: ${{ env.AWS_PLAN_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # A policy or resource change that reaches the repo but never reaches the
+      # account fails the next deploy, not the PR (lambda:CreateFunction,
+      # events:ListTargetsByRule and s3:PutBucketCORS have all bitten this way).
+      # bootstrap.sh is the source of truth for those grants, so prove it is
+      # converged before anything merges. Read-only: --check records what it
+      # would write and changes nothing.
+      - name: Deploy-policy drift
+        if: steps.preflight.outputs.available == 'true'
+        working-directory: packages/infra
+        run: ./scripts/bootstrap.sh --check --no-profile
+
       - name: Terraform init
         if: steps.preflight.outputs.available == 'true'
         working-directory: packages/infra
