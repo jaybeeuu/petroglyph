@@ -1,7 +1,13 @@
 import { DeleteCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { z } from "zod";
-import { getProfile, listProfiles, putProfile, deleteProfile } from "@petroglyph/core";
+import {
+  getProfile,
+  listProfiles,
+  normalizeSourceFolderPath,
+  putProfile,
+  deleteProfile,
+} from "@petroglyph/core";
 import type { SyncProfile } from "@petroglyph/core";
 import type { AppVariables } from "./auth-middleware.js";
 import { docClient } from "./db.js";
@@ -16,7 +22,7 @@ function fileRecordsTableName(): string {
 
 const putProfileBodySchema = z.object({
   name: z.string().min(1).optional(),
-  sourceFolderPath: z.string().min(1).optional(),
+  sourceFolderPath: z.string().min(1).transform(normalizeSourceFolderPath).optional(),
   destinationVaultPath: z.string().min(1).optional(),
   pollingIntervalMinutes: z.number().int().positive().optional(),
   enabled: z.boolean().optional(),
@@ -112,7 +118,7 @@ export async function handlePutProfile(c: Context<{ Variables: AppVariables }>):
   const updates = parsed.data;
   const sourceFolderChanged =
     updates.sourceFolderPath !== undefined &&
-    updates.sourceFolderPath !== existing.sourceFolderPath;
+    updates.sourceFolderPath !== normalizeSourceFolderPath(existing.sourceFolderPath);
 
   const updated = mergeProfile(existing, updates);
 
