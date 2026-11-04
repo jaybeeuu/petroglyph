@@ -329,7 +329,9 @@ POLICY_DOC_ALL=$(cat << EOF
         "s3:GetEncryptionConfiguration",
         "s3:PutEncryptionConfiguration",
         "s3:GetLifecycleConfiguration",
-        "s3:PutLifecycleConfiguration"
+        "s3:PutLifecycleConfiguration",
+        "s3:GetBucketCORS",
+        "s3:PutBucketCORS"
       ],
       "Resource": [
         "arn:aws:s3:::petroglyph-terraform-state-${ACCOUNT_ID}",
