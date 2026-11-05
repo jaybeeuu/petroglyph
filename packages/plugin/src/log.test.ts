@@ -47,6 +47,7 @@ async function flushedText(record: (log: PluginLog) => void): Promise<string> {
 }
 
 const JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc";
+const HEX_TOKEN = "a3f5c9d1b2e4f60718293a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d";
 
 describe("PluginLog", () => {
   it("writes one timestamped line per entry when flushed", async () => {
@@ -144,7 +145,23 @@ describe("PluginLog", () => {
     expect(written).toContain("retry the write? the disk was full");
   });
 
-  it("refuses to emit a value stored under a sensitive key", async () => {
+  it("keeps the punctuation of prose in a message", async () => {
+    const written = await flushedText((log) => {
+      log.warn("vault", "download failed; see issue#12 then retry the write?");
+    });
+
+    expect(written).toContain("download failed; see issue#12 then retry the write?");
+  });
+
+  it("keeps a semicolon in a vault path", async () => {
+    const written = await flushedText((log) => {
+      log.info("vault", "wrote", { path: "handwritten/a;b.pdf" });
+    });
+
+    expect(written).toContain("path=handwritten/a;b.pdf");
+  });
+
+  it("writes a redacted value for every key the allow-list does not declare", async () => {
     const memory = createMemorySink();
     const log = new PluginLog({ sink: () => memory.sink });
 
@@ -153,41 +170,22 @@ describe("PluginLog", () => {
       refreshToken: "refresh-secret",
       authorization: "Bearer access-secret",
       sas: "sv=2024-01-01&sig=sas-secret",
+      header: "Bearer header-secret",
+      cookie: "session=cookie-secret",
+      note: "plain word",
     });
     await log.flush();
 
     const written = memory.files[LOG_PATH] ?? "";
-    expect(written).toContain("jwt=[redacted]");
-    expect(written).toContain("refreshToken=[redacted]");
+    for (const key of ["jwt", "refreshToken", "authorization", "sas", "header", "cookie", "note"]) {
+      expect(written).toContain(`${key}=[redacted]`);
+    }
     expect(written).not.toContain("refresh-secret");
     expect(written).not.toContain("access-secret");
     expect(written).not.toContain("sas-secret");
-  });
-
-  it("redacts a credential carried by a key that only looks benign", async () => {
-    const memory = createMemorySink();
-    const log = new PluginLog({ sink: () => memory.sink });
-
-    log.error("download", "request rejected", {
-      header: "Bearer header-secret",
-      cookie: "session=cookie-secret",
-      setCookie: "session=set-cookie-secret",
-      apiKey: "api-key-secret",
-      "x-api-key": "x-api-key-secret",
-    });
-    await log.flush();
-
-    const written = memory.files[LOG_PATH] ?? "";
-    expect(written).toContain("header=[redacted]");
-    expect(written).toContain("cookie=[redacted]");
-    expect(written).toContain("setCookie=[redacted]");
-    expect(written).toContain("apiKey=[redacted]");
-    expect(written).toContain("x-api-key=[redacted]");
     expect(written).not.toContain("header-secret");
     expect(written).not.toContain("cookie-secret");
-    expect(written).not.toContain("set-cookie-secret");
-    expect(written).not.toContain("api-key-secret");
-    expect(written).not.toContain("x-api-key-secret");
+    expect(written).not.toContain("plain word");
   });
 
   it("logs a feed cursor named nextToken and a resetToken boolean", async () => {
@@ -346,46 +344,58 @@ describe("PluginLog", () => {
   });
 
   it.each([
-    { shape: "a JWT under a key that does not name one", fields: { refresh: JWT }, secret: JWT },
-    { shape: "a JWT under a generic key", fields: { value: JWT }, secret: JWT },
+    {
+      shape: "a JWT split across two fields",
+      fields: { first: "eyJhbGciOiJIUzI1NiJ9.", second: "eyJzdWIiOiIxIn0.abc" },
+      secret: "eyJzdWIiOiIxIn0",
+    },
+    {
+      shape: "a presigned URL split across two fields",
+      fields: { first: "https://bucket.s3.amazonaws.com/k.pdf", second: "?capability-secret" },
+      secret: "capability-secret",
+    },
+    {
+      shape: "a capability query alone",
+      fields: { detail: "?capability-secret" },
+      secret: "capability-secret",
+    },
+    {
+      shape: "a capability query after a word",
+      fields: { detail: "sig?capability-secret" },
+      secret: "capability-secret",
+    },
+    { shape: "a lowercase hex token", fields: { note: HEX_TOKEN }, secret: HEX_TOKEN },
+    {
+      shape: "a bare token word",
+      fields: { note: "EwCoA8thisIsAnAccessTokenValue" },
+      secret: "EwCoA8thisIsAnAccessTokenValue",
+    },
+    {
+      shape: "a Basic credential named in the value",
+      fields: { note: "Authorization=Basic dXNlcjpwYXNzd29yZA==" },
+      secret: "dXNlcjpwYXNzd29yZA==",
+    },
+    {
+      shape: "a short base64 Basic credential",
+      fields: { note: "dXNlcjpwYXNz" },
+      secret: "dXNlcjpwYXNz",
+    },
     {
       shape: "a JWT with a key id segment",
       fields: { value: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.aaa.bbb.ccc" },
       secret: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.aaa.bbb.ccc",
     },
-    {
-      shape: "a name=value pair under a generic key",
-      fields: { value: "session=cookie-benign-key" },
-      secret: "cookie-benign-key",
-    },
-    {
-      shape: "a signed pair under a generic key",
-      fields: { value: "sig=sig-secret-value" },
-      secret: "sig-secret-value",
-    },
-    {
-      shape: "a bearer token under a benign key",
-      fields: { detail: "Bearer ben-token" },
-      secret: "ben-token",
-    },
-    {
-      shape: "an authorization header inside a value",
-      fields: { detail: "Authorization: Bearer hdr-token" },
-      secret: "hdr-token",
-    },
-    {
-      shape: "an opaque encoded blob under a benign key",
-      fields: { detail: "AbCdEf0123456789AbCdEf0123456789Zz" },
-      secret: "AbCdEf0123456789AbCdEf0123456789Zz",
-    },
-  ])("replaces $shape", async ({ fields, secret }) => {
-    const written = await flushedText((log) => {
-      log.error("auth", "state", fields);
-    });
+  ])(
+    "writes nothing of $shape under a key the allow-list does not declare",
+    async ({ fields, secret }) => {
+      const written = await flushedText((log) => {
+        log.error("auth", "state", fields);
+      });
 
-    expect(written).toContain("[redacted]");
-    expect(written).not.toContain(secret);
-  });
+      expect(written).toContain("[redacted]");
+      expect(written).not.toContain(secret);
+    },
+  );
 
   it.each([
     {
@@ -393,7 +403,34 @@ describe("PluginLog", () => {
       message: "sent Authorization: Bearer bearer-in-message",
       secret: "bearer-in-message",
     },
+    {
+      shape: "a bearer token after an equals sign",
+      message: "sending Authorization=Basic dXNlcjpwYXNzd29yZA==",
+      secret: "dXNlcjpwYXNzd29yZA==",
+    },
     { shape: "a JWT", message: `jwt is ${JWT}`, secret: JWT },
+    {
+      shape: "a header and a scheme in one word",
+      message: "sent Authorization:Basic joined-secret",
+      secret: "joined-secret",
+    },
+    {
+      shape: "a scheme after an equals sign",
+      message: "sent key=Bearer equals-secret",
+      secret: "equals-secret",
+    },
+    { shape: "half a JWT", message: "part eyJzdWIiOiIxIn0.abc", secret: "eyJzdWIiOiIxIn0" },
+    {
+      shape: "a bare token word",
+      message: "graph call failed with EwCoA8thisIsAnAccessTokenValue",
+      secret: "EwCoA8thisIsAnAccessTokenValue",
+    },
+    {
+      shape: "a short base64 Basic credential",
+      message: "the server sent dXNlcjpwYXNz back",
+      secret: "dXNlcjpwYXNz",
+    },
+    { shape: "a lowercase hex token", message: `token ${HEX_TOKEN}`, secret: HEX_TOKEN },
     {
       shape: "a cookie pair",
       message: "set cookie session=msg-cookie-secret",
@@ -404,12 +441,32 @@ describe("PluginLog", () => {
       message: "got AbCdEf0123456789AbCdEf0123456789Zz",
       secret: "AbCdEf0123456789AbCdEf0123456789Zz",
     },
-  ])("replaces $shape in the message", async ({ message, secret }) => {
+    {
+      shape: "a bare capability query",
+      message: "got ?capability-secret from the server",
+      secret: "capability-secret",
+    },
+    {
+      shape: "a capability query after a word",
+      message: "got sig?capability-secret from the server",
+      secret: "capability-secret",
+    },
+    {
+      shape: "a semicolon parameter",
+      message: "GET https://host.example.com/k.pdf;x=capability-secret",
+      secret: "capability-secret",
+    },
+    {
+      shape: "a double-encoded query",
+      message: "GET https://host.example.com/k.pdf%253Fsig=capability-secret",
+      secret: "capability-secret",
+    },
+  ])("keeps $shape out of the message", async ({ message, secret }) => {
     const written = await flushedText((log) => {
       log.error("auth", message);
     });
 
-    expect(written).toContain("[redacted]");
+    expect(written).toContain("ERROR auth");
     expect(written).not.toContain(secret);
   });
 
@@ -428,28 +485,46 @@ describe("PluginLog", () => {
     expect(written).toContain("url=");
   });
 
+  it.each(["url", "path", "apiBaseUrl"])(
+    "strips the query of a location-shaped value written under %s",
+    async (key) => {
+      const written = await flushedText((log) => {
+        log.error("download", "download failed", {
+          [key]: "https://host.example.com/a.pdf?sig=capability-secret",
+        });
+      });
+
+      expect(written).not.toContain("capability-secret");
+      expect(written).toContain(`${key}=https://host.example.com/a.pdf`);
+    },
+  );
+
   it.each([
-    { key: "s3PresignedUrl", value: "https://host.example.com/a.pdf?X-Custom=capability-secret" },
-    { key: "href", value: "//host.example.com/a.pdf#capability-secret" },
-    { key: "link", value: "a.pdf%23capability-secret" },
-  ])("strips the query of a field whose key names a location: $key", async ({ key, value }) => {
+    "https://host.example.com/a.pdf;x=capability-secret",
+    "https://host.example.com/a.pdf%253Fsig=capability-secret",
+    "https://host.example.com/a.pdf%3Fsig=capability-secret",
+    "https://host.example.com/a.pdf#capability-secret",
+    ";capability-secret",
+  ])("strips a location tail whatever its shape: %s", async (url) => {
     const written = await flushedText((log) => {
-      log.error("download", "download failed", { [key]: value });
+      log.error("download", "download failed", { url });
     });
 
     expect(written).not.toContain("capability-secret");
+    expect(written).toContain("url=");
   });
 
   it.each([
     "https://host.example.com/a.pdf?X-Custom=capability-secret",
     "a.pdf?Policy=capability-secret",
     "https://host.example.com/a.pdf%3FPolicy=capability-secret",
-  ])("strips the query of a URL logged under a benign key: %s", async (value) => {
+  ])("redacts a location-shaped value under an undeclared key: %s", async (value) => {
     const written = await flushedText((log) => {
       log.error("download", "download failed", { detail: value });
     });
 
     expect(written).not.toContain("capability-secret");
+    expect(written).toContain("detail=[redacted]");
   });
 
   it("keeps counters, cursors, ids and plain prose readable", async () => {
@@ -480,6 +555,42 @@ describe("PluginLog", () => {
     });
 
     expect(written).toContain("itemId=01ABCDEF0123456789ABCDEF0123456789AB");
+  });
+
+  it("keeps a GUID item id readable", async () => {
+    const written = await flushedText((log) => {
+      log.info("download", "downloaded", { itemId: "a1b2c3d4-e5f6-7a8b-9c0d-e1f2a3b4c5d6" });
+    });
+
+    expect(written).toContain("itemId=a1b2c3d4-e5f6-7a8b-9c0d-e1f2a3b4c5d6");
+  });
+
+  it("keeps a long vault path readable", async () => {
+    const written = await flushedText((log) => {
+      log.info("vault", "wrote", { path: "handwritten/2024/scans/ScanOfReceipt-2024-11-05.pdf" });
+    });
+
+    expect(written).toContain("path=handwritten/2024/scans/ScanOfReceipt-2024-11-05.pdf");
+    expect(written).not.toContain("[redacted]");
+  });
+
+  it("keeps a feed cursor readable when its own shape is an encoded cursor", async () => {
+    const nextToken =
+      "eyJmaWxlSWQiOiJhYmMxMjMiLCJjcmVhdGVkQXQiOiIyMDI0LTExLTA1VDEwOjAwOjAwLjAwMFoifQ";
+    const written = await flushedText((log) => {
+      log.info("feed", "page", { files: 2, nextToken });
+    });
+
+    expect(written).toContain(`nextToken=${nextToken}`);
+  });
+
+  it("replaces a credential that appears inside an allow-listed error value", async () => {
+    const written = await flushedText((log) => {
+      log.error("download", "download threw", { error: `TypeError: rejected ${JWT}` });
+    });
+
+    expect(written).toContain("error=TypeError: rejected [redacted]");
+    expect(written).not.toContain(JWT);
   });
 });
 
