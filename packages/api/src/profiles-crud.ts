@@ -36,7 +36,7 @@ async function deleteFileRecordsForProfile(profileId: string): Promise<void> {
   let lastEvaluatedKey: { [key: string]: unknown } | undefined;
 
   do {
-    const result = await docClient.send(
+    const result = await docClient().send(
       new QueryCommand({
         TableName: fileRecordsTableName(),
         KeyConditionExpression: "profileId = :profileId",
@@ -49,7 +49,7 @@ async function deleteFileRecordsForProfile(profileId: string): Promise<void> {
     for (const item of result.Items ?? []) {
       const itemProfileId = item["profileId"] as string;
       const fileId = item["fileId"] as string;
-      await docClient.send(
+      await docClient().send(
         new DeleteCommand({
           TableName: fileRecordsTableName(),
           Key: { profileId: itemProfileId, fileId },
@@ -88,7 +88,7 @@ export async function handleGetProfile(c: Context<{ Variables: AppVariables }>):
   const userId = c.get("userId");
   const profileId = c.req.param("id") ?? "";
 
-  const profile = await getProfile(docClient, syncProfilesTableName(), userId, profileId);
+  const profile = await getProfile(docClient(), syncProfilesTableName(), userId, profileId);
 
   if (profile === null || profile.userId !== userId) {
     return c.json({ error: "Profile not found" }, 404);
@@ -101,7 +101,7 @@ export async function handlePutProfile(c: Context<{ Variables: AppVariables }>):
   const userId = c.get("userId");
   const profileId = c.req.param("id") ?? "";
 
-  const existing = await getProfile(docClient, syncProfilesTableName(), userId, profileId);
+  const existing = await getProfile(docClient(), syncProfilesTableName(), userId, profileId);
 
   if (existing === null || existing.userId !== userId) {
     return c.json({ error: "Profile not found" }, 404);
@@ -134,17 +134,17 @@ export async function handlePutProfile(c: Context<{ Variables: AppVariables }>):
 
   const updated = mergeProfile(existing, updates);
 
-  await putProfile(docClient, syncProfilesTableName(), updated);
+  await putProfile(docClient(), syncProfilesTableName(), updated);
 
   const deactivatedProfileIds: string[] = [];
 
   if (updates.active === true) {
-    const profiles = await listProfiles(docClient, syncProfilesTableName(), userId);
+    const profiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
 
     for (const other of profiles) {
       if (other.profileId === profileId || !other.active) continue;
 
-      await putProfile(docClient, syncProfilesTableName(), {
+      await putProfile(docClient(), syncProfilesTableName(), {
         ...other,
         active: false,
         updatedAt: new Date().toISOString(),
@@ -168,24 +168,24 @@ export async function handleDeleteProfile(
   const userId = c.get("userId");
   const profileId = c.req.param("id") ?? "";
 
-  const existing = await getProfile(docClient, syncProfilesTableName(), userId, profileId);
+  const existing = await getProfile(docClient(), syncProfilesTableName(), userId, profileId);
 
   if (existing === null || existing.userId !== userId) {
     return c.json({ error: "Profile not found" }, 404);
   }
 
-  await deleteProfile(docClient, syncProfilesTableName(), userId, profileId);
+  await deleteProfile(docClient(), syncProfilesTableName(), userId, profileId);
   await deleteFileRecordsForProfile(profileId);
 
   if (existing.active) {
-    const remaining = await listProfiles(docClient, syncProfilesTableName(), userId);
+    const remaining = await listProfiles(docClient(), syncProfilesTableName(), userId);
     const others = remaining.filter((p) => p.profileId !== profileId);
 
     if (others.length > 0) {
       const newest = others.reduce((best: SyncProfile, p: SyncProfile) =>
         p.createdAt > best.createdAt ? p : best,
       );
-      await putProfile(docClient, syncProfilesTableName(), {
+      await putProfile(docClient(), syncProfilesTableName(), {
         ...newest,
         active: true,
         updatedAt: new Date().toISOString(),

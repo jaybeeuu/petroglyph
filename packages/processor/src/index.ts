@@ -11,8 +11,26 @@ import { z } from "zod";
 
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 
-const s3Client = new S3Client({});
-const docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+let cachedS3Client: S3Client | undefined;
+
+/**
+ * The S3 client, built on first use. Building it at module scope would make
+ * importing this module an effect (petroglyph-1o2d).
+ */
+function s3Client(): S3Client {
+  cachedS3Client ??= new S3Client({});
+  return cachedS3Client;
+}
+
+let cachedDocClient: DynamoDBDocumentClient | undefined;
+
+/**
+ * The document client, built on first use (petroglyph-1o2d).
+ */
+function docClient(): DynamoDBDocumentClient {
+  cachedDocClient ??= DynamoDBDocumentClient.from(new DynamoDBClient({}));
+  return cachedDocClient;
+}
 
 const parentReferenceSchema = z.object({
   driveId: z.string().min(1),
@@ -131,7 +149,7 @@ function parseOneDriveParams(value: unknown, userId: string): OneDriveParams {
 }
 
 async function readOneDriveParams(userId: string): Promise<OneDriveParams> {
-  const result = await docClient.send(
+  const result = await docClient().send(
     new GetCommand({
       TableName: refreshTokensTable(),
       Key: { tokenHash: userId },
@@ -148,7 +166,7 @@ async function persistRefreshedTokens(
   expiresIn: number,
 ): Promise<void> {
   const expirySeconds = Math.floor(Date.now() / 1000) + expiresIn;
-  await docClient.send(
+  await docClient().send(
     new UpdateCommand({
       TableName: refreshTokensTable(),
       Key: { tokenHash: userId },
@@ -261,7 +279,7 @@ async function writeFileRecord(
   filename: string,
   s3Key: string,
 ): Promise<void> {
-  await docClient.send(
+  await docClient().send(
     new PutCommand({
       TableName: fileRecordsTableName(),
       Item: {
@@ -298,7 +316,7 @@ async function processRecord(record: SQSRecord): Promise<void> {
   const s3Key = buildS3Key(filename, parentPath);
   const pdfBytes = await downloadPdf(message.itemMetadata.resource, accessToken);
 
-  await s3Client.send(
+  await s3Client().send(
     new PutObjectCommand({
       Bucket: stagedBucketName(),
       Key: s3Key,

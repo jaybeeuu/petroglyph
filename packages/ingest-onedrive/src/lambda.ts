@@ -75,13 +75,29 @@ function describeProgress(trigger: DeltaTrigger, result: DeltaSyncResult): strin
   );
 }
 
-const ssmClient = new SSMClient({});
-const dynamoClient = new DynamoDBClient({});
-const docClient = DynamoDBDocumentClient.from(dynamoClient);
-const sqsClient = new SQSClient({});
+let cachedSsmClient: SSMClient | undefined;
+
+function ssmClient(): SSMClient {
+  cachedSsmClient ??= new SSMClient({});
+  return cachedSsmClient;
+}
+
+let cachedDocClient: DynamoDBDocumentClient | undefined;
+
+function docClient(): DynamoDBDocumentClient {
+  cachedDocClient ??= DynamoDBDocumentClient.from(new DynamoDBClient({}));
+  return cachedDocClient;
+}
+
+let cachedSqsClient: SQSClient | undefined;
+
+function sqsClient(): SQSClient {
+  cachedSqsClient ??= new SQSClient({});
+  return cachedSqsClient;
+}
 
 async function readSsmParameter(path: string): Promise<string> {
-  const result = await ssmClient.send(
+  const result = await ssmClient().send(
     new GetParameterCommand({ Name: path, WithDecryption: true }),
   );
   const value = result.Parameter?.Value;
@@ -128,7 +144,7 @@ export function buildDeltaRunner(): (connection: {
     const deltaTriggerQueueUrl = requiredEnv("DELTA_TRIGGER_QUEUE_URL");
     const resolver = new OAuthTokenResolver({
       store: new DynamoDBTokenStore({
-        client: docClient,
+        client: docClient(),
         tableName: requiredEnv("REFRESH_TOKENS_TABLE"),
       }),
       now: () => Math.floor(Date.now() / 1000),
@@ -136,7 +152,7 @@ export function buildDeltaRunner(): (connection: {
     });
 
     const profiles = (
-      await listProfiles(docClient, requiredEnv("SYNC_PROFILES_TABLE"), connection.userId)
+      await listProfiles(docClient(), requiredEnv("SYNC_PROFILES_TABLE"), connection.userId)
     )
       .filter((profile) => profile.enabled && profile.active)
       .map((profile) => ({ profileId: profile.profileId, rootPath: profile.sourceFolderPath }));
@@ -152,18 +168,18 @@ export function buildDeltaRunner(): (connection: {
         region: env("AWS_REGION", "eu-west-2"),
       }),
       eventLog: new DynamoDBEventLogWriter({
-        client: docClient,
+        client: docClient(),
         tableName: requiredEnv("EVENT_LOG_TABLE"),
       }),
       deltaStateStore: new DynamoDBDeltaStateStore({
-        client: docClient,
+        client: docClient(),
         tableName: requiredEnv("DELTA_TOKENS_TABLE"),
       }),
       connection,
       profiles,
       initialUrl: env("GRAPH_DRIVE_ROOT_DELTA_URL", DEFAULT_DRIVE_ROOT_DELTA_URL),
       requestContinuation: async (continuation) => {
-        await sqsClient.send(
+        await sqsClient().send(
           new SendMessageCommand({
             QueueUrl: deltaTriggerQueueUrl,
             MessageBody: JSON.stringify({

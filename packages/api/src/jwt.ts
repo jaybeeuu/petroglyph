@@ -6,7 +6,12 @@ export interface JwtClaims {
   username: string;
 }
 
-const ssmClient = new SSMClient({});
+let cachedSsmClient: SSMClient | undefined;
+
+function ssmClient(): SSMClient {
+  cachedSsmClient ??= new SSMClient({});
+  return cachedSsmClient;
+}
 
 async function fetchPublicKeyPem(): Promise<string> {
   const envKey = process.env["JWT_PUBLIC_KEY"];
@@ -14,7 +19,7 @@ async function fetchPublicKeyPem(): Promise<string> {
 
   const paramName =
     process.env["JWT_PUBLIC_KEY_SSM_PATH"] ?? "/petroglyph/production/jwt/public-key";
-  const result = await ssmClient.send(
+  const result = await ssmClient().send(
     new GetParameterCommand({ Name: paramName, WithDecryption: true }),
   );
   const key = result.Parameter?.Value;

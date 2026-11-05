@@ -8,7 +8,7 @@ const mockDbSend = vi.hoisted(() => vi.fn());
 const mockFetch = vi.hoisted(() => vi.fn());
 
 vi.mock("./db.js", () => ({
-  docClient: { send: mockDbSend },
+  docClient: () => ({ send: mockDbSend }),
 }));
 
 import { onedriveMiddleware } from "./onedrive-middleware.js";

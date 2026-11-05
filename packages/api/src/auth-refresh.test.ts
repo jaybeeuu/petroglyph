@@ -13,10 +13,12 @@ import { createHash, randomUUID } from "node:crypto";
 const mockSend = vi.hoisted(() => vi.fn());
 
 vi.mock("./db.js", () => ({
-  docClient: { send: mockSend },
+  docClient: () => ({ send: mockSend }),
 }));
 
-import { app } from "./app.js";
+import { createApp } from "./app.js";
+
+const app = createApp();
 
 // ─── Key pair (generated once for the suite) ────────────────────────────────
 

@@ -22,7 +22,7 @@ async function findActiveProfile(
   userId: string,
 ): Promise<{ sourceFolderPath: string; profileId: string } | null> {
   try {
-    const result = await docClient.send(
+    const result = await docClient().send(
       new QueryCommand({
         TableName: syncProfilesTableName(),
         KeyConditionExpression: "userId = :userId",
@@ -51,7 +51,7 @@ async function createSyncJob(
   sourceFolderPath: string,
 ): Promise<void> {
   const createdAt = new Date().toISOString();
-  await docClient.send(
+  await docClient().send(
     new PutCommand({
       TableName: syncJobsTableName(),
       Item: {

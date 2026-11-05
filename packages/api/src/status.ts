@@ -57,7 +57,7 @@ function parseSyncProfileStatus(item: unknown): SyncProfileStatus {
 
 async function fetchSyncProfileStatus(userId: string): Promise<SyncProfileStatus> {
   try {
-    const result = await docClient.send(
+    const result = await docClient().send(
       new GetCommand({
         TableName: syncProfilesTable(),
         Key: { userId, profileId: "default" },
@@ -72,7 +72,7 @@ async function fetchSyncProfileStatus(userId: string): Promise<SyncProfileStatus
 
 async function fetchStoredReconnectRequired(userId: string): Promise<boolean> {
   try {
-    const result = await docClient.send(
+    const result = await docClient().send(
       new GetCommand({
         TableName: usersTable(),
         Key: { userId },

@@ -59,7 +59,7 @@ function parseLifecycleNotifications(body: unknown): LifecycleNotification[] {
 }
 
 async function updateOneDriveStatus(userId: string, status: OneDriveStatus): Promise<void> {
-  await docClient.send(
+  await docClient().send(
     new UpdateCommand({
       TableName: usersTable(),
       Key: { userId },
@@ -162,7 +162,7 @@ async function storeUserTokens(
   expiresIn: number,
 ): Promise<void> {
   const expirySeconds = Math.floor(Date.now() / 1000) + expiresIn;
-  await docClient.send(
+  await docClient().send(
     new UpdateCommand({
       TableName: refreshTokensTable(),
       Key: { tokenHash: userId },
@@ -292,7 +292,7 @@ async function handleReauthorizationRequired(notification: LifecycleNotification
     throw new Error("Lifecycle notification missing subscriptionId");
   }
 
-  const refreshTokenResult = await docClient.send(
+  const refreshTokenResult = await docClient().send(
     new GetCommand({
       TableName: refreshTokensTable(),
       Key: { tokenHash: notification.clientState },

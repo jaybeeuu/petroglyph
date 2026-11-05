@@ -30,92 +30,94 @@ const EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: "GET", path: "/onedrive/connect" },
 ];
 
-const app = new Hono<{ Variables: AppVariables }>();
+export function createApp(): Hono<{ Variables: AppVariables }> {
+  const app = new Hono<{ Variables: AppVariables }>();
 
-app.use(
-  "*",
-  cors({
-    origin: ["app://obsidian.md", "capacitor://localhost", "http://localhost"],
-    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowHeaders: ["Authorization", "Content-Type"],
-  }),
-);
-
-app.use("*", (c, next) => {
-  const isExempt = EXEMPT_ROUTES.some(
-    (route) => route.method === c.req.method && route.path === c.req.path,
-  );
-  if (isExempt) return next();
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-  return authMiddleware(c as unknown as Context<{ Variables: AppVariables }>, next);
-});
-
-app.get("/health", (c) => {
-  return c.json({ status: "ok" });
-});
-
-app.get("/auth/url", async (c) => {
-  const clientId = process.env["GITHUB_CLIENT_ID"];
-  const redirectUri = process.env["GITHUB_REDIRECT_URI"];
-  const returnUri = c.req.query("returnUri");
-  if (!clientId || !redirectUri) {
-    return c.json({ error: "Missing OAuth configuration" }, 500);
-  }
-
-  if (typeof returnUri !== "string" || returnUri.length === 0) {
-    return c.json({ error: "returnUri is required" }, 400);
-  }
-
-  const state = randomUUID();
-  const ttl = Math.floor(Date.now() / 1000) + 600;
-
-  await docClient.send(
-    new PutCommand({
-      TableName: TABLE_NAME,
-      Item: { tokenHash: state, type: "oauth_state", ttl, returnUri },
+  app.use(
+    "*",
+    cors({
+      origin: ["app://obsidian.md", "capacitor://localhost", "http://localhost"],
+      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      allowHeaders: ["Authorization", "Content-Type"],
     }),
   );
 
-  const url = new URL("https://github.com/login/oauth/authorize");
-  url.searchParams.set("client_id", clientId);
-  url.searchParams.set("redirect_uri", redirectUri);
-  url.searchParams.set("scope", "read:user");
-  url.searchParams.set("state", state);
+  app.use("*", (c, next) => {
+    const isExempt = EXEMPT_ROUTES.some(
+      (route) => route.method === c.req.method && route.path === c.req.path,
+    );
+    if (isExempt) return next();
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    return authMiddleware(c as unknown as Context<{ Variables: AppVariables }>, next);
+  });
 
-  return c.json({ url: url.toString() });
-});
+  app.get("/health", (c) => {
+    return c.json({ status: "ok" });
+  });
 
-app.get("/auth/callback", (c) => handleAuthCallback(c));
+  app.get("/auth/url", async (c) => {
+    const clientId = process.env["GITHUB_CLIENT_ID"];
+    const redirectUri = process.env["GITHUB_REDIRECT_URI"];
+    const returnUri = c.req.query("returnUri");
+    if (!clientId || !redirectUri) {
+      return c.json({ error: "Missing OAuth configuration" }, 500);
+    }
 
-app.post("/auth/refresh", (c) => handleAuthRefresh(c));
+    if (typeof returnUri !== "string" || returnUri.length === 0) {
+      return c.json({ error: "returnUri is required" }, 400);
+    }
 
-app.get("/status", (c) => handleStatus(c));
+    const state = randomUUID();
+    const ttl = Math.floor(Date.now() / 1000) + 600;
 
-app.get("/files/changes", (c) => handleFilesChanges(c));
+    await docClient().send(
+      new PutCommand({
+        TableName: TABLE_NAME,
+        Item: { tokenHash: state, type: "oauth_state", ttl, returnUri },
+      }),
+    );
 
-app.get("/profiles", (c) => handleListProfiles(c));
-app.post("/profiles", (c) => handleCreateProfile(c));
-app.get("/profiles/:id", (c) => handleGetProfile(c));
-app.put("/profiles/:id", (c) => handlePutProfile(c));
-app.delete("/profiles/:id", (c) => handleDeleteProfile(c));
+    const url = new URL("https://github.com/login/oauth/authorize");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", redirectUri);
+    url.searchParams.set("scope", "read:user");
+    url.searchParams.set("state", state);
 
-app.get("/onedrive/auth-url", (c) => handleOnedriveAuthUrl(c));
+    return c.json({ url: url.toString() });
+  });
 
-app.get("/onedrive/connect", (c) => handleOnedriveCallbackBridge(c));
+  app.get("/auth/callback", (c) => handleAuthCallback(c));
 
-app.post("/onedrive/connect", (c) => handleOnedriveConnect(c));
+  app.post("/auth/refresh", (c) => handleAuthRefresh(c));
 
-app.post("/onedrive/lifecycle", (c) => handleOnedriveLifecycle(c));
+  app.get("/status", (c) => handleStatus(c));
 
-app.post("/sync/reset", (c) => handleSyncReset(c));
+  app.get("/files/changes", (c) => handleFilesChanges(c));
 
-app.post("/sync/run", (c) => handleSyncRun(c));
+  app.get("/profiles", (c) => handleListProfiles(c));
+  app.post("/profiles", (c) => handleCreateProfile(c));
+  app.get("/profiles/:id", (c) => handleGetProfile(c));
+  app.put("/profiles/:id", (c) => handlePutProfile(c));
+  app.delete("/profiles/:id", (c) => handleDeleteProfile(c));
 
-app.get("/sync/jobs/:jobId", (c) => handleSyncJobStatus(c));
+  app.get("/onedrive/auth-url", (c) => handleOnedriveAuthUrl(c));
 
-app.use("/onedrive/*", (c, next) =>
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-  onedriveMiddleware(c as unknown as Context<{ Variables: AppVariables }>, next),
-);
+  app.get("/onedrive/connect", (c) => handleOnedriveCallbackBridge(c));
 
-export { app };
+  app.post("/onedrive/connect", (c) => handleOnedriveConnect(c));
+
+  app.post("/onedrive/lifecycle", (c) => handleOnedriveLifecycle(c));
+
+  app.post("/sync/reset", (c) => handleSyncReset(c));
+
+  app.post("/sync/run", (c) => handleSyncRun(c));
+
+  app.get("/sync/jobs/:jobId", (c) => handleSyncJobStatus(c));
+
+  app.use("/onedrive/*", (c, next) =>
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    onedriveMiddleware(c as unknown as Context<{ Variables: AppVariables }>, next),
+  );
+
+  return app;
+}

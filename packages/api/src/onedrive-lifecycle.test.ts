@@ -5,12 +5,14 @@ const mockDbSend = vi.hoisted(() => vi.fn());
 const mockFetch = vi.hoisted(() => vi.fn());
 
 vi.mock("./db.js", () => ({
-  docClient: { send: mockDbSend },
+  docClient: () => ({ send: mockDbSend }),
 }));
 
 vi.stubGlobal("fetch", mockFetch);
 
-import { app } from "./app.js";
+import { createApp } from "./app.js";
+
+const app = createApp();
 
 describe("POST /onedrive/lifecycle", () => {
   beforeEach(() => {

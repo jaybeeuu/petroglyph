@@ -78,7 +78,7 @@ function parseGitHubUser(data: unknown): GitHubUser {
 }
 
 async function lookUpState(state: string): Promise<StateItem | undefined> {
-  const result = await docClient.send(
+  const result = await docClient().send(
     new GetCommand({
       TableName: refreshTokensTable(),
       Key: { tokenHash: state },
@@ -89,7 +89,7 @@ async function lookUpState(state: string): Promise<StateItem | undefined> {
 }
 
 async function deleteState(state: string): Promise<void> {
-  await docClient.send(
+  await docClient().send(
     new DeleteCommand({
       TableName: refreshTokensTable(),
       Key: { tokenHash: state },
@@ -141,7 +141,7 @@ async function fetchGitHubUser(accessToken: string): Promise<GitHubUser> {
 }
 
 async function upsertUser(userId: string, username: string): Promise<void> {
-  await docClient.send(
+  await docClient().send(
     new UpdateCommand({
       TableName: usersTable(),
       Key: { userId },
@@ -176,7 +176,7 @@ async function storeRefreshToken(refreshToken: string, userId: string): Promise<
   const hash = createHash("sha256").update(refreshToken).digest("hex");
   const ttl = Math.floor(Date.now() / 1000) + 90 * 24 * 60 * 60;
 
-  await docClient.send(
+  await docClient().send(
     new PutCommand({
       TableName: refreshTokensTable(),
       Item: {

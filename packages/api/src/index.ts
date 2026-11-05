@@ -1,6 +1,6 @@
 import { GetParametersCommand, type SSMClient } from "@aws-sdk/client-ssm";
 import { handle } from "hono/aws-lambda";
-import { app } from "./app.js";
+import { createApp } from "./app.js";
 import { ssmClient } from "./ssm.js";
 
 export const SSM_MAPPINGS = [
@@ -35,6 +35,15 @@ export async function loadSSMParameters(
   }
 }
 
-await loadSSMParameters(ssmClient, SSM_MAPPINGS);
+await loadSSMParameters(ssmClient(), SSM_MAPPINGS);
 
-export const handler = handle(app);
+let cachedHandler: ReturnType<typeof handle> | undefined;
+
+/**
+ * Lambda entrypoint. The app is built on first invocation, so importing this
+ * module does not construct the route graph (petroglyph-1o2d).
+ */
+export const handler: ReturnType<typeof handle> = (event, lambdaContext) => {
+  cachedHandler ??= handle(createApp());
+  return cachedHandler(event, lambdaContext);
+};

@@ -16,11 +16,13 @@ vi.mock("@petroglyph/core", async (importOriginal) => {
 });
 
 vi.mock("./db.js", () => ({
-  docClient: {},
+  docClient: () => ({}),
 }));
 
-import { app } from "./app.js";
+import { createApp } from "./app.js";
 import { resetKeyCache } from "./jwt.js";
+
+const app = createApp();
 
 describe("/profiles", () => {
   let privateKey: CryptoKey;
