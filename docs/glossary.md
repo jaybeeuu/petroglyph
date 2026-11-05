@@ -42,3 +42,13 @@ beads, docs, PRs, and new code — a synonym invented in one place is a concept 
   connection.
 - **`reconnectRequired` is sticky** until `/onedrive/connect` rewrites the tokens, and
   `resolveAccessToken` never returns an expired token.
+
+## Active profile
+
+A user has at most one **active** profile: `active` marks the profile the scheduler and the
+manual sync path run, and consumers take the first profile with `active: true`. Creating the
+first profile, activating a profile through `PUT /profiles/:id`, and deleting the active profile
+each adjust the other profiles to keep that invariant.
+
+Activation is read-then-write, not transactional. Two activations that overlap in time can leave
+two profiles marked active, and the consumer then runs whichever `listProfiles` returns first.

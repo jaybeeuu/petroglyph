@@ -145,7 +145,11 @@ export interface paths {
     get: operations["getProfile"];
     /**
      * Update sync profile
-     * @description Update an existing sync profile
+     * @description Update an existing sync profile. Properties that the schema does not define are
+     *     rejected with 400 rather than ignored. Sending `active: true` activates this profile
+     *     and deactivates any other active profile for the user in the same request; the
+     *     deactivated profile ids are returned in `deactivatedProfileIds`. Deactivating the
+     *     active profile is rejected with 409.
      */
     put: operations["updateProfile"];
     post?: never;
@@ -361,6 +365,10 @@ export interface components {
       pollingIntervalMinutes?: number;
       enabled?: boolean;
       active?: boolean;
+    };
+    UpdateProfileResponse: components["schemas"]["SyncProfile"] & {
+      /** @description Profiles this request deactivated; empty when it activated none */
+      deactivatedProfileIds: string[];
     };
     FileChange: {
       fileId: string;
@@ -725,7 +733,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["SyncProfile"];
+          "application/json": components["schemas"]["UpdateProfileResponse"];
         };
       };
       /** @description Invalid request body */
@@ -748,6 +756,15 @@ export interface operations {
       };
       /** @description Profile not found */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description The request would leave the user with no active profile */
+      409: {
         headers: {
           [name: string]: unknown;
         };

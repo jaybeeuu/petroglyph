@@ -20,14 +20,17 @@ function fileRecordsTableName(): string {
   return process.env["FILE_RECORDS_TABLE"] ?? "petroglyph-file-records-default";
 }
 
-const putProfileBodySchema = z.object({
-  name: z.string().min(1).optional(),
-  sourceFolderPath: z.string().min(1).transform(normalizeSourceFolderPath).optional(),
-  destinationVaultPath: z.string().min(1).optional(),
-  pollingIntervalMinutes: z.number().int().positive().optional(),
-  enabled: z.boolean().optional(),
-  initialSyncEnabled: z.boolean().optional(),
-});
+const putProfileBodySchema = z
+  .object({
+    name: z.string().min(1).optional(),
+    sourceFolderPath: z.string().min(1).transform(normalizeSourceFolderPath).optional(),
+    destinationVaultPath: z.string().min(1).optional(),
+    pollingIntervalMinutes: z.number().int().positive().optional(),
+    enabled: z.boolean().optional(),
+    initialSyncEnabled: z.boolean().optional(),
+    active: z.boolean().optional(),
+  })
+  .strict();
 
 async function deleteFileRecordsForProfile(profileId: string): Promise<void> {
   let lastEvaluatedKey: { [key: string]: unknown } | undefined;
@@ -76,6 +79,7 @@ function mergeProfile(
     ...(updates.initialSyncEnabled !== undefined && {
       initialSyncEnabled: updates.initialSyncEnabled,
     }),
+    ...(updates.active !== undefined && { active: updates.active }),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -112,10 +116,18 @@ export async function handlePutProfile(c: Context<{ Variables: AppVariables }>):
 
   const parsed = putProfileBodySchema.safeParse(body);
   if (!parsed.success) {
-    return c.json({ error: "Invalid request body" }, 400);
+    return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
   }
 
   const updates = parsed.data;
+
+  if (updates.active === false && existing.active) {
+    return c.json(
+      { error: "Cannot deactivate the active profile; activate another profile instead" },
+      409,
+    );
+  }
+
   const sourceFolderChanged =
     updates.sourceFolderPath !== undefined &&
     updates.sourceFolderPath !== normalizeSourceFolderPath(existing.sourceFolderPath);
@@ -124,13 +136,30 @@ export async function handlePutProfile(c: Context<{ Variables: AppVariables }>):
 
   await putProfile(docClient, syncProfilesTableName(), updated);
 
+  const deactivatedProfileIds: string[] = [];
+
+  if (updates.active === true) {
+    const profiles = await listProfiles(docClient, syncProfilesTableName(), userId);
+
+    for (const other of profiles) {
+      if (other.profileId === profileId || !other.active) continue;
+
+      await putProfile(docClient, syncProfilesTableName(), {
+        ...other,
+        active: false,
+        updatedAt: new Date().toISOString(),
+      });
+      deactivatedProfileIds.push(other.profileId);
+    }
+  }
+
   if (sourceFolderChanged && existing.active) {
     console.warn(
       `[profiles-crud] Profile ${profileId} is active and sourceFolderPath changed; Graph subscription update not yet implemented`,
     );
   }
 
-  return c.json(updated);
+  return c.json({ ...updated, deactivatedProfileIds });
 }
 
 export async function handleDeleteProfile(
