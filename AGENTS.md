@@ -28,11 +28,14 @@ for test levels, detection, and recovery.
 
 ## Module scope
 
-**Importing a module must have no effects.** Build an SDK client or a Hono app lazily — a `??=`
-accessor for a client, a `createApp()` factory for a route table — never at module scope. A
-module-scope construction couples every importer to the dependency graph and makes load order
-matter. Lint fails on `new <Sdk>Client()` and `new Hono()` at module scope; see
-[eslint.config.js](eslint.config.js).
+**Importing a module must not construct an SDK client or an application, and must not do I/O.**
+Pure module-scope work is fine — constants, regexes, a factory that returns a closure.
+
+Build lazily instead. A client gets a `??=` accessor and a route table gets a `createApp()` factory.
+When the first invocation must load configuration, cache an `init()` promise and clear it in the
+rejection handler, so a failed attempt retries on the next invocation. A module-scope construction
+couples every importer to the dependency graph and makes load order matter. Lint fails on
+`new <Sdk>Client()` and `new Hono()` at module scope; see [eslint.config.js](eslint.config.js).
 
 ## Generic type naming
 
