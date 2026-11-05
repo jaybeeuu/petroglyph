@@ -335,7 +335,6 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
       return failed();
     }
 
-
     const classified = classifyPage(parsed.data.value, profiles);
     pagesCompleted += 1;
     for (const event of classified.events) {
