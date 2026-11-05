@@ -13,9 +13,11 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "generate-types": "openapi-typescript openapi.yaml -o src/openapi-types.ts",
+    "generate-types": "openapi-typescript openapi.yaml -o src/generated/openapi-types.ts",
     "lint": "eslint .",
     "prebuild": "pnpm generate-types",
+    "pretest": "pnpm generate-types",
+    "pretypecheck": "pnpm generate-types",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
