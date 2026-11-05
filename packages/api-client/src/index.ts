@@ -1,7 +1,7 @@
 import createFetchClient from "openapi-fetch";
-import type { paths } from "./openapi-types.js";
+import type { paths } from "./generated/openapi-types.js";
 
-export type { paths } from "./openapi-types.js";
+export type { paths } from "./generated/openapi-types.js";
 
 export interface PetroglyphClientOptions {
   baseUrl: string;

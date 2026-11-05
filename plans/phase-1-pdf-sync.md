@@ -113,7 +113,7 @@ The API Handler Lambda exposes `GET /files/changes?after={token}&limit={pageSize
   - If `false`, returns an empty first page; only new files appear on subsequent syncs.
 - The endpoint enforces authentication and validates all parameters and responses with Zod.
 
-The plugin polls `GET /files/changes` on a configurable interval. The "Sync Now" command calls `POST /sync/run` first then fetches changes. For each file in a page: download the PDF via pre-signed S3 URL, write it to the vault at the path defined by the active SyncProfile, create a companion `.md` file with YAML frontmatter, then advance the stored change token. The token is opaque, stored in plugin local settings per active profile, and advances file-by-file after each successful vault write. S3 objects are deleted after 90 days (configurable) via a lifecycle rule — purely time-based, no per-file delivery confirmation.
+The plugin polls `GET /files/changes` on a configurable interval. The "Sync Now" command calls `POST /sync/run` first then fetches changes. For each file in a page: download the PDF via pre-signed S3 URL, write it to the vault at the path defined by the active SyncProfile, create a companion `.md` file with YAML frontmatter, then advance the stored change token. The token is opaque, stored in plugin local settings per active profile, and advances per page — only when every file on the page was written, so a failed download defers the page to the next poll. S3 objects are deleted after 90 days (configurable) via a lifecycle rule — purely time-based, no per-file delivery confirmation.
 
 Authenticated `POST /sync/reset` accepts a `scope` field (`"server"` or `"full"`) and returns `{ resetToken: boolean }`:
 
@@ -134,7 +134,7 @@ The plugin settings and command palette expose three reset commands:
 - [ ] The PDF is placed at `handwritten/<OneDrive folder path>/<filename>.pdf`
 - [ ] A companion `.md` file is created with correct frontmatter (`source`, `synced_at`, `created_at`, `page_count`, `tags: [handwritten]`)
 - [ ] "Sync Now" calls `POST /sync/run` then pages through `GET /files/changes` until `nextToken` is null
-- [ ] The plugin's change token advances after each individual file is written to the vault
+- [ ] The plugin's change token advances per page once each file on that page is written to the vault
 - [ ] Restarting the plugin and syncing does not re-download already-processed files
 - [ ] A file that already exists in the vault is overwritten with the OneDrive version
 - [ ] S3 objects are deleted after 90 days (verifiable via lifecycle rule inspection); default is configurable via SSM
