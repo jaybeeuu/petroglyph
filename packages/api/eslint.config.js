@@ -2,6 +2,4 @@
 import rootConfig from "../../eslint.config.js";
 import { config } from "typescript-eslint";
 
-export default config(...rootConfig, {
-  ignores: ["src/openapi-types.ts"],
-});
+export default config(...rootConfig);

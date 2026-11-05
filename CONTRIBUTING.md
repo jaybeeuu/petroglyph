@@ -100,6 +100,12 @@ Each package should expose the following scripts where applicable:
 
 Mirror an existing package for scaffolding — `packages/staging-consumer` is the reference (`package.json`, `tsconfig.json`, `vitest.config.ts`, `eslint.config.js`).
 
+### Generated code
+
+`packages/api-client` generates its OpenAPI types into `src/generated/openapi-types.ts` from its own `openapi.yaml`. The file is gitignored and never committed: it is a build artefact, and `prebuild`, `pretypecheck`, and `pretest` regenerate it, so any build, typecheck, or test run recreates it. A fresh clone has no `src/generated/` directory until one of those scripts runs.
+
+`packages/api` does not generate types. The API server is the source of the contract; only the client consumes it, so the generation scripts and the `openapi-typescript` dependency belong to `packages/api-client` alone. Do not restore them to `packages/api` for symmetry.
+
 ## Testing
 
 ### Fast local checks (run these first)
@@ -204,10 +210,11 @@ When adding tests that touch new Obsidian APIs, extend the mock first.
 
 ## Troubleshooting
 
-| Symptom                              | Likely cause                           | Fix                                           |
-| ------------------------------------ | -------------------------------------- | --------------------------------------------- |
-| `pnpm: command not found`            | pnpm not installed                     | `npm install -g pnpm`                         |
-| Wrong Node.js version                | nvm not active or `.nvmrc` not loaded  | `nvm use` from the repository root            |
-| `Module not found` in tests          | Packages not built before tests        | `pnpm build` then re-run tests                |
-| Tests fail with missing env variable | `.env` not present or variable not set | `cp .env.example .env` and fill in values     |
-| Lint errors after adding a package   | Missing `eslint.config.js` extension   | Check `eslint.config.js` includes the package |
+| Symptom                                             | Likely cause                                      | Fix                                                            |
+| --------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------- |
+| `pnpm: command not found`                           | pnpm not installed                                | `npm install -g pnpm`                                          |
+| Wrong Node.js version                               | nvm not active or `.nvmrc` not loaded             | `nvm use` from the repository root                             |
+| `Module not found` in tests                         | Packages not built before tests                   | `pnpm build` then re-run tests                                 |
+| `Cannot find module './generated/openapi-types.js'` | Generated OpenAPI types absent from a fresh clone | Run `pnpm typecheck` (or any build, typecheck, or test script) |
+| Tests fail with missing env variable                | `.env` not present or variable not set            | `cp .env.example .env` and fill in values                      |
+| Lint errors after adding a package                  | Missing `eslint.config.js` extension              | Check `eslint.config.js` includes the package                  |
