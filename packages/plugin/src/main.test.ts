@@ -2006,6 +2006,33 @@ describe("state-changed emissions", () => {
 });
 
 describe("diagnostics log", () => {
+  /** An in-memory vault adapter that keeps the log file in `files`. */
+  function createLogSink(): {
+    files: { [path: string]: string };
+    adapter: {
+      append: (path: string, data: string) => Promise<void>;
+      read: (path: string) => Promise<string>;
+      rename: (fromPath: string, toPath: string) => Promise<void>;
+    };
+  } {
+    const files: { [path: string]: string } = {};
+    return {
+      files,
+      adapter: {
+        append: (path, data) => {
+          files[path] = `${files[path] ?? ""}${data}`;
+          return Promise.resolve();
+        },
+        read: (path) => Promise.resolve(files[path] ?? ""),
+        rename: (fromPath, toPath) => {
+          files[toPath] = files[fromPath] ?? "";
+          files[fromPath] = "";
+          return Promise.resolve();
+        },
+      },
+    };
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
@@ -2110,5 +2137,84 @@ describe("diagnostics log", () => {
     expect(written).toContain("oneDriveStatus=connected");
     expect(written).toContain("cursors=1");
     expect(written).not.toContain("jwt-token");
+  });
+  it("logs why a token refresh could not reach the API", async () => {
+    const { LOG_PATH } = await import("./log.js");
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+    const { files, adapter } = createLogSink();
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      refreshToken: "refresh-token",
+      username: "alice",
+    });
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: { adapter } };
+    global.fetch = vi.fn(() => Promise.reject(new Error("offline"))) as unknown as typeof fetch;
+    await plugin.onload();
+    await plugin.performRefresh();
+    await vi.advanceTimersByTimeAsync(2000);
+    const written = files[LOG_PATH] ?? "";
+    expect(written).toContain("WARN auth refresh failed");
+    expect(written).toContain("error=Error: offline");
+  });
+  it("logs a token refresh the API rejected", async () => {
+    const { LOG_PATH } = await import("./log.js");
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+    const { files, adapter } = createLogSink();
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      refreshToken: "refresh-token",
+      username: "alice",
+    });
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: { adapter } };
+    global.fetch = vi.fn(() =>
+      Promise.resolve({ ok: false, status: 401 }),
+    ) as unknown as typeof fetch;
+    await plugin.onload();
+    await plugin.performRefresh();
+    await vi.advanceTimersByTimeAsync(2000);
+    const written = files[LOG_PATH] ?? "";
+    expect(written).toContain("WARN auth refresh rejected");
+    expect(written).toContain("status=401");
+  });
+  it("logs an auth callback that carried no credentials", async () => {
+    const { LOG_PATH } = await import("./log.js");
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+    const { files, adapter } = createLogSink();
+    const { plugin } = await makePlugin();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: { adapter } };
+    await plugin.onload();
+    const registerProtocolHandler = plugin.registerObsidianProtocolHandler; // eslint-disable-line @typescript-eslint/unbound-method
+    const handler = vi
+      .mocked(registerProtocolHandler)
+      .mock.calls.find((call) => call[0] === "petroglyph/auth/callback")?.[1];
+    await handler?.({ action: "callback", jwt: "jwt-token", username: "alice" });
+    await vi.advanceTimersByTimeAsync(2000);
+    const written = files[LOG_PATH] ?? "";
+    expect(written).toContain("ERROR auth login failed");
+    expect(written).toContain("reason=missing auth params");
+  });
+  it("logs a OneDrive connection the API rejected", async () => {
+    const { LOG_PATH } = await import("./log.js");
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+    const { files, adapter } = createLogSink();
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: { adapter } };
+    global.fetch = vi.fn(() =>
+      Promise.resolve({ ok: false, status: 502 }),
+    ) as unknown as typeof fetch;
+    await plugin.onload();
+    await plugin.handleOneDriveCallback({ code: "code-1", state: "state-1" });
+    await vi.advanceTimersByTimeAsync(2000);
+    const written = files[LOG_PATH] ?? "";
+    expect(written).toContain("ERROR auth onedrive connect failed");
+    expect(written).toContain("status=502");
   });
 });

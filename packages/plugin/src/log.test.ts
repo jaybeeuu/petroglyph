@@ -37,6 +37,15 @@ function createMemorySink(initialFiles: { [path: string]: string } = {}): Memory
   return { sink, appends, renames, files };
 }
 
+/** The text the log flushed after `record` wrote its lines. */
+async function flushedText(record: (log: PluginLog) => void): Promise<string> {
+  const memory = createMemorySink();
+  const log = new PluginLog({ sink: () => memory.sink });
+  record(log);
+  await log.flush();
+  return memory.files[LOG_PATH] ?? "";
+}
+
 describe("PluginLog", () => {
   it("writes one timestamped line per entry when flushed", async () => {
     const memory = createMemorySink();
@@ -53,22 +62,84 @@ describe("PluginLog", () => {
     );
   });
 
-  it("keeps the query string of a presigned URL out of the log", async () => {
-    const memory = createMemorySink();
-    const log = new PluginLog({ sink: () => memory.sink });
-
-    log.error("download", "download failed", {
-      itemId: "item-1",
-      url: "https://petroglyph.blob.core.windows.net/files/note.pdf?sv=2024-01-01&sig=sas-capability-secret&se=2026-01-01",
-      status: 403,
-      bytes: 0,
+  it("keeps only the host and path of a presigned download URL", async () => {
+    const written = await flushedText((log) => {
+      log.error("download", "download failed", {
+        itemId: "item-1",
+        url: "https://petroglyph.blob.core.windows.net/files/note.pdf?sv=2024-01-01&sig=capability-secret&se=2026-01-01",
+        status: 403,
+        bytes: 0,
+      });
     });
-    await log.flush();
 
-    const written = memory.files[LOG_PATH] ?? "";
     expect(written).toContain("url=https://petroglyph.blob.core.windows.net/files/note.pdf");
-    expect(written).not.toContain("sig=");
-    expect(written).not.toContain("sas-capability-secret");
+    expect(written).not.toContain("sig=capability-secret");
+  });
+
+  it("keeps the query off a presigned URL whose scheme is uppercase", async () => {
+    const written = await flushedText((log) => {
+      log.error("download", "download failed", {
+        url: "HTTPS://petroglyph.blob.core.windows.net/files/note.pdf?sig=capability-secret",
+      });
+    });
+
+    expect(written).toContain("url=HTTPS://petroglyph.blob.core.windows.net/files/note.pdf");
+    expect(written).not.toContain("capability-secret");
+  });
+
+  it("keeps the query off a protocol-relative presigned URL", async () => {
+    const written = await flushedText((log) => {
+      log.error("download", "download failed", {
+        url: "//petroglyph.blob.core.windows.net/files/note.pdf?sig=capability-secret",
+      });
+    });
+
+    expect(written).toContain("url=//petroglyph.blob.core.windows.net/files/note.pdf");
+    expect(written).not.toContain("capability-secret");
+  });
+
+  it("keeps the query off a scheme-less presigned URL", async () => {
+    const written = await flushedText((log) => {
+      log.error("download", "download failed", {
+        url: "petroglyph.blob.core.windows.net/files/note.pdf?sig=capability-secret",
+      });
+    });
+
+    expect(written).toContain("url=petroglyph.blob.core.windows.net/files/note.pdf");
+    expect(written).not.toContain("capability-secret");
+  });
+
+  it("keeps the query off a local presigned URL that names a port", async () => {
+    const written = await flushedText((log) => {
+      log.error("download", "download failed", {
+        url: "http://127.0.0.1:4566/petroglyph/note.pdf?X-Amz-Signature=capability-secret",
+      });
+    });
+
+    expect(written).toContain("url=http://127.0.0.1:4566/petroglyph/note.pdf");
+    expect(written).not.toContain("capability-secret");
+  });
+
+  it("keeps the query out of a URL embedded in a message", async () => {
+    const written = await flushedText((log) => {
+      log.error(
+        "download",
+        "GET https://petroglyph.blob.core.windows.net/files/note.pdf?sig=capability-secret returned 403",
+      );
+    });
+
+    expect(written).toContain(
+      "GET https://petroglyph.blob.core.windows.net/files/note.pdf returned 403",
+    );
+    expect(written).not.toContain("capability-secret");
+  });
+
+  it("keeps a plain question mark in a message", async () => {
+    const written = await flushedText((log) => {
+      log.warn("vault", "retry the write? the disk was full");
+    });
+
+    expect(written).toContain("retry the write? the disk was full");
   });
 
   it("refuses to emit a value stored under a sensitive key", async () => {
@@ -91,14 +162,82 @@ describe("PluginLog", () => {
     expect(written).not.toContain("sas-secret");
   });
 
-  it("keeps a field whose key only resembles a credential", async () => {
+  it("redacts a credential carried by a key that only looks benign", async () => {
     const memory = createMemorySink();
     const log = new PluginLog({ sink: () => memory.sink });
 
-    log.info("feed", "page", { files: 2, nextCursor: "page-2-cursor" });
+    log.error("download", "request rejected", {
+      header: "Bearer header-secret",
+      cookie: "session=cookie-secret",
+      setCookie: "session=set-cookie-secret",
+      apiKey: "api-key-secret",
+      "x-api-key": "x-api-key-secret",
+    });
     await log.flush();
 
-    expect(memory.files[LOG_PATH]).toContain("nextCursor=page-2-cursor");
+    const written = memory.files[LOG_PATH] ?? "";
+    expect(written).toContain("header=[redacted]");
+    expect(written).toContain("cookie=[redacted]");
+    expect(written).toContain("setCookie=[redacted]");
+    expect(written).toContain("apiKey=[redacted]");
+    expect(written).toContain("x-api-key=[redacted]");
+    expect(written).not.toContain("header-secret");
+    expect(written).not.toContain("cookie-secret");
+    expect(written).not.toContain("set-cookie-secret");
+    expect(written).not.toContain("api-key-secret");
+    expect(written).not.toContain("x-api-key-secret");
+  });
+
+  it("logs a feed cursor named nextToken and a resetToken boolean", async () => {
+    const memory = createMemorySink();
+    const log = new PluginLog({ sink: () => memory.sink });
+
+    log.info("feed", "page", { files: 2, nextToken: "page-2-cursor" });
+    log.info("profile", "reset", { resetToken: true });
+    await log.flush();
+
+    const written = memory.files[LOG_PATH] ?? "";
+    expect(written).toContain("nextToken=page-2-cursor");
+    expect(written).toContain("resetToken=true");
+    expect(written).not.toContain("[redacted]");
+  });
+
+  it("keeps a newline in a message on the one line it belongs to", async () => {
+    const memory = createMemorySink();
+    const log = new PluginLog({ sink: () => memory.sink });
+
+    log.error("download", "download threw", {
+      error: "TypeError: socket hang up\nERROR download forged line",
+    });
+    await log.flush();
+
+    expect((memory.files[LOG_PATH] ?? "").trimEnd().split("\n")).toHaveLength(1);
+    expect(memory.files[LOG_PATH]).toContain(
+      "error=TypeError: socket hang up ERROR download forged line",
+    );
+  });
+
+  it("keeps the batch buffered when a write fails, so the next flush retries it", async () => {
+    const files: { [path: string]: string } = {};
+    let attempts = 0;
+    const log = new PluginLog({
+      sink: () => ({
+        append: (path, data) => {
+          attempts += 1;
+          if (attempts === 1) return Promise.reject(new Error("disk full"));
+          files[path] = `${files[path] ?? ""}${data}`;
+          return Promise.resolve();
+        },
+        read: (path) => Promise.resolve(files[path] ?? ""),
+        rename: () => Promise.resolve(),
+      }),
+    });
+
+    log.info("vault", "wrote", { path: "handwritten/note.pdf" });
+    await log.flush();
+    await log.flush();
+
+    expect(files[LOG_PATH]).toContain("path=handwritten/note.pdf");
   });
 
   it("coalesces a burst of entries into one append", async () => {
