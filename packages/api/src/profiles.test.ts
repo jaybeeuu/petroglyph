@@ -179,7 +179,7 @@ describe("/profiles", () => {
         },
         body: JSON.stringify({
           name: "My Profile",
-          sourceFolderPath: "/source",
+          sourceFolderPath: "source",
           destinationVaultPath: "/vault",
         }),
       });
@@ -190,12 +190,38 @@ describe("/profiles", () => {
       expect(body.profileId).toMatch(/^[0-9a-f-]{36}$/);
       expect(body.userId).toBe("user-42");
       expect(body.name).toBe("My Profile");
-      expect(body.sourceFolderPath).toBe("/source");
+      expect(body.sourceFolderPath).toBe("source");
       expect(body.destinationVaultPath).toBe("/vault");
       expect(body.pollingIntervalMinutes).toBe(5);
       expect(body.enabled).toBe(true);
       expect(body.createdAt).toBeDefined();
       expect(body.updatedAt).toBeDefined();
+    });
+
+    it("stores a leading-slash source folder path without the leading slash", async () => {
+      const token = await makeValidToken("user-42");
+
+      const res = await app.request("/profiles", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "My Profile",
+          sourceFolderPath: "/onyx/NoteAir5C/Notebooks",
+          destinationVaultPath: "/vault",
+        }),
+      });
+
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as SyncProfile;
+      expect(body.sourceFolderPath).toBe("onyx/NoteAir5C/Notebooks");
+      expect(mockPutProfile).toHaveBeenCalledWith(
+        expect.anything(),
+        "test-sync-profiles",
+        expect.objectContaining({ sourceFolderPath: "onyx/NoteAir5C/Notebooks" }),
+      );
     });
 
     it("sets active: true when this is the first profile for the user", async () => {

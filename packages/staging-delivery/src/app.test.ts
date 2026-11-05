@@ -161,6 +161,40 @@ describe("GET /files feed", () => {
     expect(listProfiles).toHaveBeenCalledWith("user-1");
   });
 
+  it("returns an empty feed when no profile is both active and sync-enabled", async () => {
+    const index = new MemoryIndex();
+    index.put(stagedRecord);
+    const { app } = buildApp({
+      // Neither candidate qualifies: the first is disabled, the second is inactive.
+      profiles: [
+        profile({ profileId: "p1", enabled: false }),
+        profile({ profileId: "p2", active: false }),
+      ],
+      index,
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    const res = await app.request("/files");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ files: [], nextToken: null });
+  });
+
+  it("serves the active+enabled profile when an earlier active profile is disabled", async () => {
+    const index = new MemoryIndex();
+    index.put({ ...stagedRecord, profileId: "p2", itemId: "item-1" });
+    const { app } = buildApp({
+      // Listed first, so a scan-order-dependent pick would blank the feed.
+      profiles: [profile({ profileId: "p1", enabled: false }), profile({ profileId: "p2" })],
+      index,
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    const res = await app.request("/files");
+    const body = (await res.json()) as { files: { itemId: string }[]; nextToken: string | null };
+    expect(res.status).toBe(200);
+    expect(body.files.map((file) => file.itemId)).toEqual(["item-1"]);
+  });
+
   it("serves the active profile's staged records with cursor paging (M1, M7 monitor semantics)", async () => {
     const index = new MemoryIndex();
     index.put({ ...stagedRecord, itemId: "item-1" });

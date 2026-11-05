@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeSourceFolderPath } from "@petroglyph/core";
 import type { GraphClient } from "../tokens/graph-client.js";
 import type { DeltaStateStore } from "./delta-state-store.js";
 
@@ -262,6 +263,17 @@ type Page =
  */
 export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkResult> {
   const stored = await options.store.read(options.connection.userId, options.connection.provider);
+
+  // A stored profile path may predate write-side normalization (a leading slash
+  // makes the prefix match unsatisfiable, so the profile silently ingests
+  // nothing), so canonicalize here too: the walk is where the prefix is used.
+  const profiles = options.profiles.map(
+    (profile): DeltaWalkProfile =>
+      profile.rootPath === undefined
+        ? profile
+        : { ...profile, rootPath: normalizeSourceFolderPath(profile.rootPath) },
+  );
+
   const pageBudget = options.pageBudget ?? DEFAULT_PAGE_BUDGET;
   // Delta shows the latest state per item and may repeat an item within a walk,
   // so the last occurrence seen wins.
@@ -323,7 +335,8 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
       return failed();
     }
 
-    const classified = classifyPage(parsed.data.value, options.profiles);
+
+    const classified = classifyPage(parsed.data.value, profiles);
     pagesCompleted += 1;
     for (const event of classified.events) {
       eventsByItemId.set(event.itemId, event);

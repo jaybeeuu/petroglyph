@@ -145,7 +145,11 @@ export interface paths {
     get: operations["getProfile"];
     /**
      * Update sync profile
-     * @description Update an existing sync profile
+     * @description Update an existing sync profile. Properties that the schema does not define are
+     *     rejected with 400 rather than ignored. Sending `active: true` activates this profile
+     *     and deactivates any other active profile for the user in the same request; the
+     *     deactivated profile ids are returned in `deactivatedProfileIds`. Deactivating the
+     *     active profile is rejected with 409.
      */
     put: operations["updateProfile"];
     post?: never;
@@ -334,7 +338,7 @@ export interface components {
       profileId: string;
       userId: string;
       name: string;
-      /** @description OneDrive folder path to sync from */
+      /** @description OneDrive folder path to sync from. Stored in canonical form: leading and trailing slashes are stripped and repeated slashes collapsed, so `/notes/a` is stored as `notes/a`. `/` means the whole drive. An empty string is rejected. A path that is already canonical is unchanged. */
       sourceFolderPath: string;
       /** @description Obsidian vault path to sync to */
       destinationVaultPath: string;
@@ -351,6 +355,7 @@ export interface components {
     };
     CreateProfileRequest: {
       name: string;
+      /** @description Normalised on write; see `Profile.sourceFolderPath` for the canonical form. */
       sourceFolderPath: string;
       destinationVaultPath: string;
       pollingIntervalMinutes?: number;
@@ -358,11 +363,16 @@ export interface components {
     };
     UpdateProfileRequest: {
       name?: string;
+      /** @description Normalised on write; see `Profile.sourceFolderPath` for the canonical form. */
       sourceFolderPath?: string;
       destinationVaultPath?: string;
       pollingIntervalMinutes?: number;
       enabled?: boolean;
       active?: boolean;
+    };
+    UpdateProfileResponse: components["schemas"]["SyncProfile"] & {
+      /** @description Profiles this request deactivated; empty when it activated none */
+      deactivatedProfileIds: string[];
     };
     FileChange: {
       fileId: string;
@@ -727,7 +737,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["SyncProfile"];
+          "application/json": components["schemas"]["UpdateProfileResponse"];
         };
       };
       /** @description Invalid request body */
@@ -750,6 +760,15 @@ export interface operations {
       };
       /** @description Profile not found */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Error"];
+        };
+      };
+      /** @description The request would leave the user with no active profile */
+      409: {
         headers: {
           [name: string]: unknown;
         };
