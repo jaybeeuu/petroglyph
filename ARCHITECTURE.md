@@ -206,7 +206,10 @@ A TypeScript plugin that runs inside Obsidian, responsible for pulling staged fi
 #### Behaviour
 
 - **File sync** — calls `GET /files/changes?after={token}` to retrieve a page of new files as `{ files, nextToken }`.
-  - The `after` token is an opaque cursor, stored in plugin local settings per active profile, and advances after each successful vault write.
+  - The `after` token is an opaque cursor, stored in plugin local settings per active profile. It advances one page at a time, after every file on that page is written.
+  - A page with any failed download does not advance the cursor, so the next poll retries those files instead of skipping them. The drain reports the synced and failed counts so the user sees the failure rather than a clean "Sync complete".
+  - The cost of holding the cursor is a stall. A file that can never be written — an expired presigned URL, a rejected vault write — keeps the feed on its page, and later pages are not reached until it succeeds. There is no retry cap and no backoff, so the stall persists until the file is fixed or the user resets plugin state.
+  - Failures are counted, not classified: a non-2xx download and a failed vault write count the same. The notice says how many files failed, not why.
   - If no token is stored, behaviour is controlled by the active profile's `initialSyncEnabled` field (see below).
   - Each file record includes a presigned S3 URL for direct download.
   - Paging is cursor-based: the response includes a `nextToken` if more files remain, or `null` if at the end.
