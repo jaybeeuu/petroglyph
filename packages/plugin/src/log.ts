@@ -10,15 +10,52 @@ export const MAX_BUFFERED_ENTRIES = 500;
 export const ROTATE_BYTES = 256 * 1024;
 
 /**
- * A field key whose value is a credential: the query string of a capability
- * URL, an access token, or a signing key. Such a value is never emitted. Any
- * key containing "token" is refused, so a caller must not name a feed cursor
- * `nextToken`; `nextCursor` carries the same value and is not a credential.
+ * Field keys whose value is a credential. The list is explicit and matched on
+ * the whole key, so a caller can log a feed cursor named `nextToken` and a
+ * boolean named `resetToken` while `refreshToken` and `apiKey` stay refused.
  */
-const SENSITIVE_KEY = /(token|jwt|refresh|authorization|bearer|sas|signature|secret|password)/i;
+const CREDENTIAL_KEY = new Set([
+  "accesstoken",
+  "apikey",
+  "auth",
+  "authorization",
+  "bearer",
+  "clientsecret",
+  "cookie",
+  "cookies",
+  "credential",
+  "credentials",
+  "header",
+  "headers",
+  "idtoken",
+  "jwt",
+  "password",
+  "passwd",
+  "refreshtoken",
+  "sas",
+  "sastoken",
+  "secret",
+  "setcookie",
+  "signature",
+  "token",
+  "xapikey",
+]);
 
-/** Matches an absolute URL anywhere in a line, so its query can be stripped. */
-const URL_PATTERN = /https?:\/\/[^\s"'<>]+/g;
+/** A credential dressed as an ordinary value: the scheme word gives it away. */
+const CREDENTIAL_VALUE = /^\s*(basic|bearer|digest)\s+\S/i;
+
+/**
+ * Query and fragment parameter names that carry a capability, so a query is
+ * stripped even when the text before it does not look like a URL.
+ */
+const CREDENTIAL_PARAMETER =
+  /(?:^|[?&;#])(?:code|key|password|secret|se|sig|signature|sp|spr|sr|st|sv|skt|ske|sks|skv|skoid|sktid|token|access_token|refresh_token|x-amz-[a-z-]+|x-goog-[a-z-]+)=/i;
+
+/** A URL scheme in any case; the capability URL need not be lowercase. */
+const ANY_SCHEME = /[a-z][a-z0-9+.-]*:\/\//i;
+
+/** A host with a dot, a dotted quad, or `localhost`, with or without a port. */
+const HOST_LIKE = /^(?:[a-z0-9-]+\.)+[a-z]{2,}$|^(?:\d{1,3}\.){3}\d{1,3}$|^localhost$/i;
 
 /** The concern a log line belongs to. */
 export type LogArea = "startup" | "auth" | "feed" | "download" | "vault" | "profile";
@@ -48,26 +85,59 @@ export interface PluginLogOptions {
 }
 
 /**
- * Replaces the query string of every URL in `text` with nothing, keeping the
- * scheme, host, and path. The query of a presigned URL is the capability, so it
- * must never reach the file.
+ * True when the text before a query names a URL or a bare host. The scheme may
+ * be absent, protocol-relative, or uppercase: a capability URL that the strict
+ * `URL` parser rejects still has a query to strip.
  */
-function stripUrlQueries(text: string): string {
-  return text.replace(URL_PATTERN, (match) => {
-    try {
-      const url = new URL(match);
-      return `${url.protocol}//${url.host}${url.pathname}`;
-    } catch {
-      return match.split("?")[0] ?? match;
-    }
-  });
+function isUrlLike(head: string): boolean {
+  if (ANY_SCHEME.test(head)) return true;
+  const authority = head.replace(/^\/+/, "");
+  const hostPort = (authority.split("/")[0] ?? "").replace(/^[^@]*@/, "");
+  return HOST_LIKE.test(hostPort.replace(/:\d+$/, ""));
+}
+
+/**
+ * Drops the query or fragment of one whitespace-delimited token when it carries
+ * a capability, keeping the scheme, host, and path. A miss would leak a
+ * presigned signature, so a token that only looks like a URL is stripped too.
+ */
+function redactToken(token: string): string {
+  const cut = token.search(/[?#]/);
+  if (cut === -1) {
+    const parameter = CREDENTIAL_PARAMETER.exec(token);
+    return parameter === null ? token : token.slice(0, parameter.index);
+  }
+  const head = token.slice(0, cut);
+  if (isUrlLike(head) || CREDENTIAL_PARAMETER.test(token.slice(cut))) return head;
+  return token;
+}
+
+/**
+ * Removes every query or fragment a credential could hide in, across a whole
+ * line. The query of a presigned URL is the capability, so it never reaches the
+ * file.
+ */
+function redactText(text: string): string {
+  return text.replace(/\S+/g, redactToken);
+}
+
+/** Collapses line breaks so one entry cannot forge a second log line. */
+function oneLine(text: string): string {
+  return text.replace(/\s*[\r\n]+\s*/g, " ");
+}
+
+/** True when `key` names a credential after removing punctuation and case. */
+function isCredentialKey(key: string): boolean {
+  return CREDENTIAL_KEY.has(key.toLowerCase().replace(/[^a-z0-9]/g, ""));
 }
 
 /**
  * A diagnosable text log the agent can read while the plugin runs. Lines are
  * buffered and written in one append per flush; the file rotates at a fixed
  * size so a long session cannot fill the disk. Redaction happens here, not at
- * the call sites, so a future caller cannot leak a credential by accident.
+ * the call sites: a credential key is replaced, and every query or fragment is
+ * stripped from a value that looks like a URL. A caller cannot leak one by
+ * accident.
  */
 export class PluginLog {
   readonly #sink: () => LogSink | undefined;
@@ -120,7 +190,10 @@ export class PluginLog {
       await sink.append(this.#path, text);
       this.#size = size + text.length;
     } catch {
-      // A log write that fails must never break a sync.
+      // A log write that fails must never break a sync. The batch stays buffered
+      // so the next flush retries it, and the size is re-read from the file.
+      this.#entries = [...lines, ...this.#entries].slice(-this.#maxEntries);
+      this.#size = null;
     } finally {
       this.#flushing = false;
     }
@@ -140,12 +213,14 @@ export class PluginLog {
   }
 
   #record(level: LogLevel, area: LogArea, message: string, fields?: LogFields): void {
-    const parts = [this.#now().toISOString(), level.toUpperCase(), area, message];
+    const parts = [this.#now().toISOString(), level.toUpperCase(), area, oneLine(message)];
     for (const [key, value] of Object.entries(fields ?? {})) {
       if (value === undefined) continue;
-      parts.push(`${key}=${SENSITIVE_KEY.test(key) ? "[redacted]" : String(value)}`);
+      const text = oneLine(String(value));
+      const refused = isCredentialKey(key) || CREDENTIAL_VALUE.test(text);
+      parts.push(`${key}=${refused ? "[redacted]" : text}`);
     }
-    this.#entries.push(stripUrlQueries(parts.join(" ")));
+    this.#entries.push(redactText(parts.join(" ")));
     if (this.#entries.length > this.#maxEntries) this.#entries.shift();
   }
 

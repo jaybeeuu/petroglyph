@@ -432,16 +432,21 @@ export class PetroglyphPlugin extends Plugin {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refreshToken }),
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        this._log.warn("auth", "refresh rejected", { status: response.status });
+        return;
+      }
       const body: unknown = await response.json();
       if (!isRecord(body) || !hasStringProp(body, "jwt") || !hasStringProp(body, "refreshToken")) {
+        this._log.warn("auth", "refresh response invalid");
         return;
       }
       this.setCredentials(body.jwt, body.refreshToken, username);
       await this.savePluginData();
       this.scheduleRefresh(body.jwt);
-    } catch {
-      // Network errors are silently ignored; the next scheduled refresh will retry.
+    } catch (error) {
+      // The next scheduled refresh retries; the log records why this one failed.
+      this._log.warn("auth", "refresh failed", { error: describeError(error) });
     }
   }
 
@@ -508,6 +513,7 @@ export class PetroglyphPlugin extends Plugin {
         typeof refreshToken !== "string" ||
         typeof username !== "string"
       ) {
+        this._log.error("auth", "login failed", { reason: "missing auth params" });
         new Notice("Login failed: missing auth params");
         return;
       }
@@ -523,6 +529,7 @@ export class PetroglyphPlugin extends Plugin {
       const code = params["code"];
       const state = params["state"];
       if (typeof code !== "string" || typeof state !== "string") {
+        this._log.error("auth", "onedrive connect failed", { reason: "missing code or state" });
         new Notice("OneDrive connection failed: missing code or state");
         return;
       }
@@ -592,8 +599,8 @@ export class PetroglyphPlugin extends Plugin {
   }
 
   /** Logs what one feed page delivered. */
-  private logFeedPage(files: number, nextCursor: string | null): void {
-    this._log.info("feed", "page", { files, nextCursor: nextCursor ?? "end" });
+  private logFeedPage(files: number, nextToken: string | null): void {
+    this._log.info("feed", "page", { files, nextToken: nextToken ?? "end" });
   }
 
   /** Logs why a drain stopped, so the failure is never silent. */
@@ -897,6 +904,7 @@ export class PetroglyphPlugin extends Plugin {
         body: JSON.stringify(params),
       });
       if (!response.ok) {
+        this._log.error("auth", "onedrive connect failed", { status: response.status });
         new Notice("OneDrive connection failed");
         return;
       }
@@ -906,7 +914,8 @@ export class PetroglyphPlugin extends Plugin {
       this.refreshSettingsUi();
       this.startSyncPolling();
       new Notice("OneDrive connected");
-    } catch {
+    } catch (error) {
+      this._log.error("auth", "onedrive connect failed", { error: describeError(error) });
       new Notice("OneDrive connection failed");
     }
   }
