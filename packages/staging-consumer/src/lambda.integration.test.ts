@@ -179,9 +179,11 @@ describe("forwarder handler against LocalStack event-log stream + FIFO SQS", () 
       data: { profileId: "p1", itemId: "item-1", s3Key: "staging/v1/p1/notes/a.pdf" },
     });
     expect(message.Attributes?.["MessageGroupId"]).toBe("p1");
-    expect(message.Attributes?.["MessageDeduplicationId"]).toBe(
-      "onedrive://profiles/p1#emission-1",
-    );
+    // The id must be legal for real SQS, which rejects the raw event identity
+    // as soon as the provider version string carries punctuation (a quoted
+    // OneDrive eTag breaks it). LocalStack accepts anything, so assert the
+    // property rather than a literal: alphanumeric, and the digest length.
+    expect(message.Attributes?.["MessageDeduplicationId"]).toMatch(/^[A-Za-z0-9]{64}$/);
   }, 60_000);
 });
 

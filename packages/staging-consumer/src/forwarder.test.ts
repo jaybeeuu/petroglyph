@@ -137,7 +137,7 @@ describe("forwardStreamRecords", () => {
     });
   });
 
-  it("derives the FIFO deduplication id from the event identity (source+id)", async () => {
+  it("derives a stable deduplication id from the event identity (source+id)", async () => {
     const { queue, sends } = queueSpy();
 
     await forwardStreamRecords([streamRecord("INSERT", json(stagedDoc))], {
@@ -145,7 +145,29 @@ describe("forwardStreamRecords", () => {
       queue,
     });
 
-    expect(sends[0]?.messageDeduplicationId).toBe("onedrive://profiles/p1#emission-1");
+    const { createHash } = await import("node:crypto");
+    const expected = createHash("sha256").update("onedrive://profiles/p1#emission-1").digest("hex");
+    expect(sends[0]?.messageDeduplicationId).toBe(expected);
+  });
+
+  it("emits a deduplication id SQS accepts when the event id carries a quoted provider eTag", async () => {
+    const { queue, sends } = queueSpy();
+    // OneDrive eTags are quoted ETag literals, and SQS rejects `"` in a
+    // deduplication id: every row failed with InvalidParameterValue until the
+    // id was hashed (petroglyph-ob1r).
+    const quoted = {
+      ...stagedDoc,
+      id: 'default:item-1:file:"{3D6D699F-E5CB-4807-A8FB-106491ED6074},22"',
+    };
+
+    await forwardStreamRecords([streamRecord("INSERT", json(quoted))], {
+      source: ddbStreamEventSource,
+      queue,
+    });
+
+    const dedupeId = sends[0]?.messageDeduplicationId ?? "";
+    expect(dedupeId).toMatch(/^[A-Za-z0-9]+$/);
+    expect(dedupeId.length).toBe(64);
   });
 
   it("forwards deleted item events (s3Key string) as validated business events", async () => {
