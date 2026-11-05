@@ -1,6 +1,82 @@
-import { assert, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import type { SSMClient } from "@aws-sdk/client-ssm";
-import { loadSSMParameters, SSM_MAPPINGS } from "./index.js";
+import type { LambdaEvent } from "hono/aws-lambda";
+
+const ssm = vi.hoisted(() => ({ clients: 0, sends: 0 }));
+
+vi.mock("@aws-sdk/client-ssm", async (importOriginal) => {
+  const actual = await importOriginal();
+  return Object.assign({}, actual as object, {
+    SSMClient: class {
+      constructor() {
+        ssm.clients += 1;
+      }
+
+      send = (): Promise<{ Parameters: { Name?: string; Value?: string }[] }> => {
+        ssm.sends += 1;
+        return Promise.resolve({ Parameters: [] });
+      };
+    },
+  });
+});
+
+import { handler, loadSSMParameters, SSM_MAPPINGS } from "./index.js";
+
+/** The API Gateway v2 shape Hono's aws-lambda adapter consumes. */
+type ApiGatewayV2Event = Extract<LambdaEvent, { rawPath: string }>;
+
+function healthEvent(): ApiGatewayV2Event {
+  return {
+    version: "2.0",
+    routeKey: "GET /health",
+    rawPath: "/health",
+    rawQueryString: "",
+    headers: { host: "test.execute-api.eu-west-2.amazonaws.com" },
+    requestContext: {
+      accountId: "000000000000",
+      apiId: "test",
+      authentication: null,
+      authorizer: {},
+      domainName: "test.execute-api.eu-west-2.amazonaws.com",
+      domainPrefix: "test",
+      http: {
+        method: "GET",
+        path: "/health",
+        protocol: "HTTP/1.1",
+        sourceIp: "127.0.0.1",
+        userAgent: "vitest",
+      },
+      requestId: "request-1",
+      routeKey: "GET /health",
+      stage: "$default",
+      time: "2026-09-01T00:00:00.000Z",
+      timeEpoch: 1756684800000,
+    },
+    isBase64Encoded: false,
+    body: null,
+  };
+}
+
+describe("handler cold start", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("loads the SSM parameters on first invocation, not at import", async () => {
+    expect(ssm.clients).toBe(0);
+    expect(ssm.sends).toBe(0);
+
+    vi.stubEnv("GITHUB_CLIENT_ID_SSM_PATH", "/petroglyph/production/github/client-id");
+
+    const first = await handler(healthEvent());
+    const second = await handler(healthEvent());
+
+    expect(first).toMatchObject({ statusCode: 200 });
+    expect(second).toMatchObject({ statusCode: 200 });
+    expect(ssm.clients).toBe(1);
+    expect(ssm.sends).toBe(1);
+  });
+});
 
 describe("loadSSMParameters", () => {
   it("does not call SSM when no path env vars are set", async () => {

@@ -29,7 +29,7 @@ for test levels, detection, and recovery.
 ## Module scope
 
 **Importing a module must have no effects.** Build an SDK client or a Hono app lazily — a `??=`
-accessor for a client, a `createApp(deps)` factory for a route table — never at module scope. A
+accessor for a client, a `createApp()` factory for a route table — never at module scope. A
 module-scope construction couples every importer to the dependency graph and makes load order
 matter. Lint fails on `new <Sdk>Client()` and `new Hono()` at module scope; see
 [eslint.config.js](eslint.config.js).

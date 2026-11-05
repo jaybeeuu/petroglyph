@@ -35,15 +35,27 @@ export async function loadSSMParameters(
   }
 }
 
-await loadSSMParameters(ssmClient(), SSM_MAPPINGS);
-
-let cachedHandler: ReturnType<typeof handle> | undefined;
+let cachedInit: Promise<ReturnType<typeof handle>> | undefined;
 
 /**
- * Lambda entrypoint. The app is built on first invocation, so importing this
- * module does not construct the route graph (petroglyph-1o2d).
+ * Initialises the lambda on first invocation: load the SSM-backed environment,
+ * then build the route graph. Caching the promise makes both happen exactly
+ * once per instance, including when invocations arrive concurrently. Doing
+ * either at module scope would make importing this module an effect
+ * (petroglyph-1o2d).
  */
-export const handler: ReturnType<typeof handle> = (event, lambdaContext) => {
-  cachedHandler ??= handle(createApp());
-  return cachedHandler(event, lambdaContext);
+function init(): Promise<ReturnType<typeof handle>> {
+  cachedInit ??= (async () => {
+    await loadSSMParameters(ssmClient(), SSM_MAPPINGS);
+    return handle(createApp());
+  })();
+  return cachedInit;
+}
+
+/**
+ * Lambda entrypoint.
+ */
+export const handler: ReturnType<typeof handle> = async (event, lambdaContext) => {
+  const lambdaHandler = await init();
+  return lambdaHandler(event, lambdaContext);
 };

@@ -1,6 +1,5 @@
 // @ts-check
+import rootConfig from "../../eslint.config.js";
 import { config } from "typescript-eslint";
 
-export default config({
-  ignores: ["src/generated/"],
-});
+export default config(...rootConfig, { ignores: ["src/generated/"] });
