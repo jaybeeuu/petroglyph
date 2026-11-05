@@ -10,43 +10,38 @@ export const MAX_BUFFERED_ENTRIES = 500;
 export const ROTATE_BYTES = 256 * 1024;
 
 /**
- * Field keys whose value is a credential. The list is explicit and matched on
- * the whole key, so a caller can log a feed cursor named `nextToken` and a
- * boolean named `resetToken` while `refreshToken` and `apiKey` stay refused.
+ * How an allow-listed value is written. A location loses its query; a text value
+ * runs every shape test; an identifier keeps its own shape, which is often the
+ * diagnostic itself — a feed `nextToken` is base64 of JSON and would otherwise
+ * look like a credential.
  */
-const CREDENTIAL_KEY = new Set([
-  "accesstoken",
-  "apikey",
-  "auth",
-  "authorization",
-  "bearer",
-  "clientsecret",
-  "cookie",
-  "cookies",
-  "credential",
-  "credentials",
-  "header",
-  "headers",
-  "idtoken",
-  "jwt",
-  "password",
-  "passwd",
-  "refreshtoken",
-  "sas",
-  "sastoken",
-  "secret",
-  "setcookie",
-  "signature",
-  "token",
-  "xapikey",
-]);
+type FieldKind = "identifier" | "location" | "text";
 
 /**
- * A field key that names a location, so whatever follows its path is the
- * capability. The key is matched, not the parameters, so a query is stripped
- * before any parameter name has to be recognised.
+ * The field keys a call site may emit, and how each one is written. A key
+ * outside this list loses its value, so the list is the contract: a caller adds
+ * the field here or it is redacted. Every key is lower case, so a field matches
+ * whatever its spelling.
  */
-const URL_KEY = /(url|uri|href|link|presign|signed)/i;
+const FIELD_KIND = new Map<string, FieldKind>([
+  ["activeprofileid", "identifier"],
+  ["apibaseurl", "location"],
+  ["bytes", "identifier"],
+  ["cursor", "identifier"],
+  ["cursors", "identifier"],
+  ["elapsedms", "identifier"],
+  ["error", "text"],
+  ["files", "identifier"],
+  ["itemid", "identifier"],
+  ["nexttoken", "identifier"],
+  ["onedrivestatus", "identifier"],
+  ["path", "location"],
+  ["reason", "text"],
+  ["resettoken", "identifier"],
+  ["status", "identifier"],
+  ["url", "location"],
+  ["version", "identifier"],
+]);
 
 /** An HTTP auth scheme: the word after it is the credential, whatever its shape. */
 const SCHEME_WORD = /^(?:basic|bearer|digest|negotiate|ntlm)$/i;
@@ -55,6 +50,13 @@ const SCHEME_WORD = /^(?:basic|bearer|digest|negotiate|ntlm)$/i;
 const CREDENTIAL_HEADER =
   /^(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key|www-authenticate)$/i;
 
+/** A header name and an auth scheme in one word: `Authorization:Basic`. */
+const HEADER_SCHEME =
+  /^(?:authorization|proxy-authorization|www-authenticate):(?:basic|bearer|digest|negotiate|ntlm)$/i;
+
+/** A word that ends with a scheme after an equals sign: `key=Bearer`. */
+const TRAILING_SCHEME = /=(?:basic|bearer|digest|negotiate|ntlm)$/i;
+
 /**
  * The name of a `name=value` pair that marks the value as a credential. This
  * catches the shape on its own, without the field key or a parameter list.
@@ -62,14 +64,23 @@ const CREDENTIAL_HEADER =
 const CREDENTIAL_NAME =
   /(?:token|secret|password|passwd|passphrase|credential|cookie|session|auth|api[-_]?key|sig|signature|sas|private|nonce)/i;
 
-/** A compact JWT or JWS: base64url of `{"` plus two more dot-separated segments. */
-const JWT_SHAPE = /(?:^|[^A-Za-z0-9_-])eyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+){2,}/;
+/**
+ * Where a location stops being a path: a query, a fragment, or a semicolon
+ * parameter, literal or percent-encoded, however many times it is encoded.
+ */
+const LOCATION_MARKER = /[?#;]|%(?:25)*(?:3f|23|3b)/i;
 
-/** Where a query or a fragment starts, literal or percent-encoded. */
-const QUERY_MARKER = /[?#]|%3f|%23/i;
+/** A JWT, or one half of one split across two fields: base64url of `{"`. */
+const JWT_SHAPE = /eyJ[A-Za-z0-9_-]{8,}(?:\.|$)/;
+
+/** A run of lowercase hex long enough to be a token or a hash, not a word. */
+const HEX_RUN = /[0-9a-f]{32,}/;
 
 /** Text that only an encoded blob produces: long, mixed case, and mixed with digits. */
-const OPAQUE_RUN = /[A-Za-z0-9+/_=~-]{32,}/g;
+const OPAQUE_RUN = /[A-Za-z0-9+/_=]{20,}/g;
+
+/** A word drawn only from the standard base64 alphabet, with optional padding. */
+const BASE64_WORD = /^[A-Za-z0-9+/]{8,}={0,2}$/;
 
 /** Written in place of a credential. */
 const REDACTED = "[redacted]";
@@ -122,32 +133,50 @@ function isUrlLike(head: string): boolean {
   return HOST_LIKE.test(hostPort.replace(/:\d+$/, ""));
 }
 
-/** Where a query or a fragment starts, or -1 when the text has none. */
-function queryStart(text: string): number {
-  const marker = QUERY_MARKER.exec(text);
-  return marker === null ? -1 : marker.index;
-}
-
-/** Drops the query and the fragment, keeping the scheme, host, and path. */
-function stripQuery(text: string): string {
-  const cut = queryStart(text);
-  return cut === -1 ? text : text.slice(0, cut);
+/** The first query, fragment, or parameter marker in `text`, if it has one. */
+function locationMarker(text: string): RegExpExecArray | undefined {
+  return LOCATION_MARKER.exec(text) ?? undefined;
 }
 
 /**
- * True when the tail after a `?`, a `#`, or their encoded form is a query with
- * a parameter, rather than the punctuation of a sentence.
+ * Drops the query, the fragment, and any parameter from a location value. A
+ * location field never carries prose, so every marker ends the path. A literal
+ * `;` is the one exception: a vault path may contain one, so it only ends the
+ * path when a `name=value` pair follows it.
  */
-function isQueryTail(tail: string): boolean {
-  return /[?#&][^=&#\s]*=/.test(tail);
+function stripLocation(value: string): string {
+  const marker = locationMarker(value);
+  if (marker === undefined) return value;
+  const head = value.slice(0, marker.index);
+  const tail = value.slice(marker.index + marker[0].length);
+  if (marker[0] === ";" && head !== "" && !tail.includes("=")) return value;
+  return head === "" ? REDACTED : head;
 }
 
-/** True when a token carries a `name=value` pair whose name marks a credential. */
-function hasCredentialPair(token: string): boolean {
-  for (const pair of token.matchAll(/(?:^|[^A-Za-z0-9_-])([A-Za-z][A-Za-z0-9_.-]*)=/g)) {
-    if (CREDENTIAL_NAME.test(pair[1] ?? "")) return true;
+/**
+ * Drops the same tail from one word of free text, so a capability that follows
+ * a `?` never reaches the file. The punctuation of a sentence survives: a `#`
+ * or a `;` that a host does not precede, and a marker that ends the word, such
+ * as `write?` or `failed;`, leaves the word alone.
+ */
+function trimWordLocation(word: string): string {
+  const marker = locationMarker(word);
+  if (marker === undefined) return word;
+  const head = word.slice(0, marker.index);
+  const tail = word.slice(marker.index + marker[0].length);
+  if (tail === "") return word;
+  if (head === "") return marker[0] === "?" ? REDACTED : word;
+  const optional = marker[0] === "#" || marker[0] === ";";
+  if (optional && !isUrlLike(head) && !tail.includes("=")) return word;
+  return head;
+}
+
+/** The value of a `name=value` pair whose name marks a credential, if any. */
+function credentialPairValue(token: string): string | undefined {
+  for (const pair of token.matchAll(/(?:^|[^A-Za-z0-9_-])([A-Za-z][A-Za-z0-9_.-]*)=([^&=]*)/g)) {
+    if (CREDENTIAL_NAME.test(pair[1] ?? "")) return pair[2] ?? "";
   }
-  return false;
+  return undefined;
 }
 
 /** True when a token holds a long run that only an encoded secret produces. */
@@ -158,56 +187,113 @@ function isOpaque(token: string): boolean {
   return false;
 }
 
+/**
+ * True when a word is base64 of printable text, which is how a Basic credential
+ * and a short encoded token travel. A word that decodes to plain ASCII is not
+ * an ordinary word: of the words a log line carries, only a base64 blob does.
+ */
+function isBase64Text(word: string): boolean {
+  if (!BASE64_WORD.test(word)) return false;
+  const remainder = word.length % 4;
+  const padded = remainder === 0 ? word : word.padEnd(word.length + 4 - remainder, "=");
+  try {
+    return /^[\u0020-\u007e]+$/.test(atob(padded));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when a word carries a credential whatever its name or its text. The
+ * encoded-shape tests are optional, because a path and an identifier share the
+ * same shape as an encoded secret.
+ */
+function isEncodedSecret(word: string, checks: RedactChecks): boolean {
+  if (!checks.encodedRuns) return false;
+  return JWT_SHAPE.test(word) || HEX_RUN.test(word) || isBase64Text(word) || isOpaque(word);
+}
+
 /** Carried between two words: a scheme or a header name marks the next one. */
 interface WordState {
   pending: boolean;
 }
 
-/**
- * Redacts one whitespace-delimited word of a value or of a message. The query
- * of a URL is dropped whatever its parameters; a credential shape is replaced.
- * A word with no credential shape survives, so `status=403` and a question mark
- * in prose still reach the file.
- */
-function redactWord(word: string, state: WordState): string {
-  const cut = queryStart(word);
-  const head = cut === -1 ? word : word.slice(0, cut);
-  const tail = cut === -1 ? "" : word.slice(cut);
-  const kept = tail !== "" && !isUrlLike(head) && !isQueryTail(tail) ? word : head;
-  const bare = head.replace(TRAILING_PUNCTUATION, "");
+/** Which shape tests a value gets. A location and an identifier skip them. */
+interface RedactChecks {
+  encodedRuns: boolean;
+}
 
-  if (state.pending && !SCHEME_WORD.test(bare)) {
-    state.pending = false;
-    return REDACTED;
+/** The checks a free-text value gets, including the encoded-shape tests. */
+const FREE_TEXT: RedactChecks = { encodedRuns: true };
+
+/** The checks a location or an identifier gets; its shape is the diagnostic. */
+const PLAIN_TEXT: RedactChecks = { encodedRuns: false };
+
+/**
+ * Redacts one whitespace-delimited word of a value or of a message. The tail
+ * after a query marker is dropped whatever its parameters; a credential shape is
+ * replaced. A word with no credential shape survives, so `status=403` and a
+ * question mark in prose still reach the file.
+ */
+function redactWord(word: string, state: WordState, checks: RedactChecks): string {
+  const kept = trimWordLocation(word);
+  if (kept === REDACTED) return REDACTED;
+  const bare = kept.replace(TRAILING_PUNCTUATION, "");
+  const pending = state.pending;
+  state.pending = false;
+
+  if (pending) {
+    if (!SCHEME_WORD.test(bare)) return REDACTED;
+    state.pending = true;
+    return kept;
   }
   if (SCHEME_WORD.test(bare) || CREDENTIAL_HEADER.test(bare)) {
     state.pending = true;
     return kept;
   }
-  if (JWT_SHAPE.test(kept) || hasCredentialPair(kept) || isOpaque(kept)) return REDACTED;
+  if (HEADER_SCHEME.test(bare)) {
+    // The word names the header and the scheme, so the credential follows it.
+    state.pending = true;
+    return REDACTED;
+  }
+  const pair = credentialPairValue(kept);
+  if (pair !== undefined) {
+    // `Authorization=Basic <credential>` names the scheme and the value at once.
+    if (SCHEME_WORD.test(pair)) state.pending = true;
+    return REDACTED;
+  }
+  if (TRAILING_SCHEME.test(bare)) {
+    state.pending = true;
+    return kept;
+  }
+  if (isEncodedSecret(bare, checks)) return REDACTED;
   return kept;
 }
 
 /**
  * Redacts a value or a message word by word. Every check is structural, so a
- * credential under an unexpected key, or inside free text, is caught too.
+ * credential inside free text is caught even when no key names one.
  */
-function redactWords(text: string): string {
+function redactWords(text: string, checks: RedactChecks): string {
   const state: WordState = { pending: false };
   return text
     .split(/(\s+)/)
-    .map((piece) => (/^\s*$/.test(piece) ? piece : redactWord(piece, state)))
+    .map((piece) => (/^\s*$/.test(piece) ? piece : redactWord(piece, state, checks)))
     .join("");
 }
 
 /**
- * The safe form of one field value. The value is redacted before it is joined
- * with its key, so the URL check sees the bare value. A key that names a
- * location always loses its query, and a credential key always loses its value.
+ * The safe form of one field. A key outside the allow-list always loses its
+ * value, so an unexpected field cannot leak by construction. An allow-listed
+ * location loses its query, and keeps the encoded-shape tests off its value.
  */
 function redactFieldValue(key: string, value: string): string {
-  if (isCredentialKey(key)) return REDACTED;
-  return redactWords(URL_KEY.test(key) ? stripQuery(value) : value);
+  const kind = FIELD_KIND.get(key.toLowerCase());
+  if (kind === undefined) return REDACTED;
+  const checks = kind === "text" ? FREE_TEXT : PLAIN_TEXT;
+  if (kind !== "location") return redactWords(value, checks);
+  const location = stripLocation(value);
+  return location === REDACTED ? REDACTED : redactWords(location, checks);
 }
 
 /** Collapses line breaks so one entry cannot forge a second log line. */
@@ -215,18 +301,31 @@ function oneLine(text: string): string {
   return text.replace(/\s*[\r\n]+\s*/g, " ");
 }
 
-/** True when `key` names a credential after removing punctuation and case. */
-function isCredentialKey(key: string): boolean {
-  return CREDENTIAL_KEY.has(key.toLowerCase().replace(/[^a-z0-9]/g, ""));
-}
-
 /**
  * A diagnosable text log the agent can read while the plugin runs. Lines are
  * buffered and written in one append per flush; the file rotates at a fixed
- * size so a long session cannot fill the disk. Redaction happens here, not at
- * the call sites: a credential key is replaced, a credential shape is replaced
- * whatever its key, and the query or fragment is dropped from any value that
- * names a location or looks like a URL. A caller cannot leak one by accident.
+ * size so a long session cannot fill the disk.
+ *
+ * Redaction is an allow-list, so it fails closed by construction: a field is
+ * written only when its key is one the call sites declare in `FIELD_KIND`. Any
+ * other key loses its value. An allow-listed key that names a location loses
+ * its query, fragment, and semicolon parameters, whatever their shape, so a
+ * presigned capability cannot reach the file. An allow-listed text value, such
+ * as `error`, runs every shape test, so a credential inside an error message is
+ * still replaced. An identifier keeps its own shape, because that shape is the
+ * diagnostic — a feed `nextToken` is base64 of JSON.
+ *
+ * Accepted residual: the message channel is free text with no key to check, so
+ * it is still filtered by shape. A credential with none of the shapes this pass
+ * knows — no JWT prefix, no long hex run, no long mixed-case run, no word that
+ * decodes as base64 of printable text, and no `name=value` pair — can reach the
+ * file when a call site puts it in the message, and the same holds for such a
+ * shape inside an allow-listed text value. An identifier key keeps its value as
+ * it is, because a server cursor has the shape of a credential. This residual is
+ * acceptable for a plaintext file inside the user's own vault: the
+ * non-negotiable credentials — the JWT, the refresh token, the OneDrive tokens,
+ * and the presigned query string — all have a shape the pass matches, and they
+ * travel in fields, which cannot leak at all.
  */
 export class PluginLog {
   readonly #sink: () => LogSink | undefined;
@@ -306,7 +405,7 @@ export class PluginLog {
       this.#now().toISOString(),
       level.toUpperCase(),
       area,
-      redactWords(oneLine(message)),
+      redactWords(oneLine(message), FREE_TEXT),
     ];
     for (const [key, value] of Object.entries(fields ?? {})) {
       if (value === undefined) continue;
