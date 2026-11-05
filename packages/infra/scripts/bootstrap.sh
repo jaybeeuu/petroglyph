@@ -13,10 +13,18 @@
 # All operations are idempotent — safe to re-run.
 #
 # Usage:
-#   ./bootstrap.sh [--profile <aws-profile>]
+#   ./bootstrap.sh [--profile <aws-profile>] [--check] [--no-profile]
 #
 # Defaults:
 #   --profile    petroglyph-admin
+#
+# --no-profile uses the ambient credentials (env vars or an assumed role)
+# instead of a named profile, which is how CI runs --check under OIDC.
+#
+# --check runs read-only: it compares the live account against this script and
+# exits 1 when anything would change, without writing. CI runs it on every pull
+# request so a policy change that never reached the account fails the PR instead
+# of the next deploy.
 
 set -euo pipefail
 
@@ -31,14 +39,22 @@ REGION="eu-west-2"
 
 # ── Argument parsing ─────────────────────────────────────────────────────────
 
+CHECK_MODE=false
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile)   PROFILE="$2";   shift 2 ;;
+    --check)     CHECK_MODE=true; shift ;;
+    --no-profile) PROFILE="";    shift ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 
-AWS="aws --profile $PROFILE --region $REGION"
+if [[ -n "$PROFILE" ]]; then
+  AWS="aws --profile $PROFILE --region $REGION"
+else
+  AWS="aws --region $REGION"
+fi
 export AWS_PAGER=""
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -47,11 +63,28 @@ info()    { echo "▶  $*"; }
 success() { echo "✓  $*"; }
 fail()    { echo "✗  $*" >&2; exit 1; }
 
+# Every write goes through mutate so --check can prove it changes nothing:
+# the live account is compared against this script, and any write that would
+# have run is recorded as a pending change instead.
+PENDING_CHANGES=()
+mutate() {
+  if $CHECK_MODE; then
+    # Collapse to one readable line: a policy document argument is pages long
+    # and says nothing a reader needs beyond which resource would change.
+    local summary
+    summary=$(printf '%s' "$*" | sed 's/ --policy-document .*//' | tr '\n' ' ' | cut -c1-140)
+    PENDING_CHANGES+=("$summary")
+    echo "  [check] would run: $summary"
+    return 0
+  fi
+  "$@"
+}
+
 # ── Step 1: Verify credentials ────────────────────────────────────────────────
 
 info "Verifying AWS credentials (profile: $PROFILE)..."
 ACCOUNT_ID=$($AWS sts get-caller-identity --query Account --output text 2>/dev/null) \
-  || fail "Cannot authenticate with profile '$PROFILE'. Run: aws sso login --profile $PROFILE"
+  || fail "Cannot authenticate${PROFILE:+ with profile '$PROFILE'} (${PROFILE:+run: aws sso login --profile $PROFILE})"
 success "Authenticated — account $ACCOUNT_ID"
 
 # Derived names
@@ -67,20 +100,20 @@ if $AWS s3api head-bucket --bucket "$TF_STATE_BUCKET" 2>/dev/null; then
   success "State bucket already exists"
 else
   info "Creating state bucket..."
-  $AWS s3api create-bucket \
+  mutate $AWS s3api create-bucket \
     --bucket "$TF_STATE_BUCKET" \
     --create-bucket-configuration LocationConstraint="$REGION"
 
-  $AWS s3api put-bucket-versioning \
+  mutate $AWS s3api put-bucket-versioning \
     --bucket "$TF_STATE_BUCKET" \
     --versioning-configuration Status=Enabled
 
-  $AWS s3api put-public-access-block \
+  mutate $AWS s3api put-public-access-block \
     --bucket "$TF_STATE_BUCKET" \
     --public-access-block-configuration \
       BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
 
-  $AWS s3api put-bucket-encryption \
+  mutate $AWS s3api put-bucket-encryption \
     --bucket "$TF_STATE_BUCKET" \
     --server-side-encryption-configuration \
       '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
@@ -95,7 +128,7 @@ if $AWS dynamodb describe-table --table-name "$DYNAMODB_LOCK_TABLE" &>/dev/null;
   success "Lock table already exists"
 else
   info "Creating lock table..."
-  $AWS dynamodb create-table \
+  mutate $AWS dynamodb create-table \
     --table-name "$DYNAMODB_LOCK_TABLE" \
     --attribute-definitions AttributeName=LockID,AttributeType=S \
     --key-schema AttributeName=LockID,KeyType=HASH \
@@ -110,11 +143,11 @@ if $AWS s3api head-bucket --bucket "$LAMBDA_ARTIFACT_BUCKET" 2>/dev/null; then
   success "Lambda artifact bucket already exists"
 else
   info "Creating Lambda artifact bucket..."
-  $AWS s3api create-bucket \
+  mutate $AWS s3api create-bucket \
     --bucket "$LAMBDA_ARTIFACT_BUCKET" \
     --create-bucket-configuration LocationConstraint="$REGION"
 
-  $AWS s3api put-public-access-block \
+  mutate $AWS s3api put-public-access-block \
     --bucket "$LAMBDA_ARTIFACT_BUCKET" \
     --public-access-block-configuration \
       BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
@@ -136,7 +169,7 @@ else
 exports.handler = async () => ({ statusCode: 200, body: '{"status":"placeholder"}' });
 EOF
   node "$SCRIPT_DIR/make-zip.mjs" "$TMPDIR/index.js" "$TMPDIR/lambda.zip"
-  $AWS s3 cp "$TMPDIR/lambda.zip" "s3://$LAMBDA_ARTIFACT_BUCKET/$PLACEHOLDER_KEY"
+  mutate $AWS s3 cp "$TMPDIR/lambda.zip" "s3://$LAMBDA_ARTIFACT_BUCKET/$PLACEHOLDER_KEY"
   rm -rf "$TMPDIR"
   success "Placeholder zip uploaded"
 fi
@@ -155,7 +188,7 @@ if $AWS iam get-open-id-connect-provider --open-id-connect-provider-arn "$OIDC_P
   success "GitHub OIDC provider already exists"
 else
   info "Creating GitHub OIDC provider..."
-  $AWS iam create-open-id-connect-provider \
+  mutate $AWS iam create-open-id-connect-provider \
     --url "https://token.actions.githubusercontent.com" \
     --client-id-list "sts.amazonaws.com" \
     --thumbprint-list "6938fd4d98bab03faadb97b34396831e3780aea1"
@@ -206,20 +239,20 @@ process.exit(isDeepStrictEqual(generated, live) ? 0 : 1);
         --policy-arn "$policy_arn" \
         --query 'length(Versions)' \
         --output text)
-      while [[ "$version_count" -ge 5 ]]; do
+      while [[ "$version_count" -ge 5 ]] && ! $CHECK_MODE; do
         local oldest_version_id
         oldest_version_id=$($AWS iam list-policy-versions \
           --policy-arn "$policy_arn" \
           --query 'sort_by(Versions[?IsDefaultVersion==`false`], &CreateDate)[0].VersionId' \
           --output text)
-        $AWS iam delete-policy-version \
+        mutate $AWS iam delete-policy-version \
           --policy-arn "$policy_arn" \
           --version-id "$oldest_version_id"
         info "Deleted old policy version $oldest_version_id"
         version_count=$((version_count - 1))
       done
 
-      $AWS iam create-policy-version \
+      mutate mutate $AWS iam create-policy-version \
         --policy-arn "$policy_arn" \
         --policy-document "$policy_doc" \
         --set-as-default
@@ -229,7 +262,7 @@ process.exit(isDeepStrictEqual(generated, live) ? 0 : 1);
     fi
   else
     info "Creating managed policy ${policy_name}..."
-    $AWS iam create-policy \
+    mutate $AWS iam create-policy \
       --policy-name "$policy_name" \
       --policy-document "$policy_doc"
     success "Managed policy ${policy_name} created"
@@ -241,7 +274,7 @@ process.exit(isDeepStrictEqual(generated, live) ? 0 : 1);
     success "Managed policy ${policy_name} already attached"
   else
     info "Attaching managed policy ${policy_name} to role..."
-    $AWS iam attach-role-policy \
+    mutate $AWS iam attach-role-policy \
       --role-name "$GITHUB_ACTIONS_ROLE" \
       --policy-arn "$policy_arn"
     success "Managed policy ${policy_name} attached"
@@ -258,7 +291,7 @@ if $AWS iam get-role --role-name "$GITHUB_ACTIONS_ROLE" &>/dev/null; then
   success "Deploy role already exists"
 else
   info "Creating deploy role..."
-  $AWS iam create-role \
+  mutate $AWS iam create-role \
     --role-name "$GITHUB_ACTIONS_ROLE" \
     --assume-role-policy-document "{
       \"Version\": \"2012-10-17\",
@@ -643,7 +676,7 @@ if $AWS iam get-role --role-name "$PLAN_ROLE" &>/dev/null; then
   success "Plan role already exists"
 else
   info "Creating plan role..."
-  $AWS iam create-role \
+  mutate $AWS iam create-role \
     --role-name "$PLAN_ROLE" \
     --assume-role-policy-document "{
       \"Version\": \"2012-10-17\",
@@ -702,6 +735,40 @@ PLAN_POLICY_DOC=$(cat << EOF
       "Effect": "Allow",
       "Action": "dynamodb:DescribeTable",
       "Resource": "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-*"
+    },
+    {
+      "Sid": "BootstrapDriftRead",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:ListPolicyVersions",
+        "iam:ListAttachedRolePolicies",
+        "iam:GetOpenIDConnectProvider"
+      ],
+      "Resource": [
+        "arn:aws:iam::${ACCOUNT_ID}:role/petroglyph-*",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/petroglyph-*",
+        "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
+      ]
+    },
+    {
+      "Sid": "BootstrapDriftBucketRead",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketVersioning",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "arn:aws:s3:::petroglyph-*"
+    },
+    {
+      "Sid": "BootstrapDriftObjectRead",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::petroglyph-*/*"
     }
   ]
 }
@@ -728,7 +795,7 @@ if (typeof live === "string") live = JSON.parse(live);
 process.exit(isDeepStrictEqual(generated, live) ? 0 : 1);
 ' "$PLAN_POLICY_DOC" <<< "$LIVE_PLAN_POLICY_DOC"; then
     info "Plan inline policy drifted from bootstrap.sh — updating..."
-    $AWS iam put-role-policy \
+    mutate $AWS iam put-role-policy \
       --role-name "$PLAN_ROLE" \
       --policy-name "$PLAN_POLICY_NAME" \
       --policy-document "$PLAN_POLICY_DOC"
@@ -738,7 +805,7 @@ process.exit(isDeepStrictEqual(generated, live) ? 0 : 1);
   fi
 else
   info "Creating plan inline policy..."
-  $AWS iam put-role-policy \
+  mutate $AWS iam put-role-policy \
     --role-name "$PLAN_ROLE" \
     --policy-name "$PLAN_POLICY_NAME" \
     --policy-document "$PLAN_POLICY_DOC"
@@ -748,6 +815,30 @@ fi
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 echo ""
+# ── Check mode verdict ───────────────────────────────────────────────────────
+
+if $CHECK_MODE; then
+  echo ""
+  if [[ ${#PENDING_CHANGES[@]} -gt 0 ]]; then
+    echo "════════════════════════════════════════════════════════════════"
+    echo "  ✗ The live account does not match bootstrap.sh."
+    echo "  ${#PENDING_CHANGES[@]} change(s) would be made:"
+    echo ""
+    printf '    - %s\n' "${PENDING_CHANGES[@]}"
+    echo ""
+    echo "  Run: ./scripts/bootstrap.sh --profile petroglyph-admin"
+    echo "  A policy change that reaches the repo but never reaches the"
+    echo "  account fails the next deploy (CreateFunction / PutBucketCORS /"
+    echo "  PutRule have all bitten this way), so this must be clean."
+    echo "════════════════════════════════════════════════════════════════"
+    exit 1
+  fi
+  echo "════════════════════════════════════════════════════════════════"
+  echo "  ✓ The live account matches bootstrap.sh."
+  echo "════════════════════════════════════════════════════════════════"
+  exit 0
+fi
+
 echo "════════════════════════════════════════════════════════════════"
 echo "  Bootstrap complete."
 echo ""

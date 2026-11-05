@@ -2,12 +2,19 @@ name: Terraform
 
 # PR-time HCL validation and a read-only `terraform plan`.
 #
-# The `paths` filter is deliberately scoped to `.tf` files rather than the whole
-# `packages/infra/**` package. Changes to `packages/infra/scripts/bootstrap.sh`
-# define the plan role this job assumes, so a package-wide filter would attach
-# this job (and its OIDC assumption) to the very PR that introduces the role —
-# before the role exists in the account. `.tf` scoping keeps that PR green and
-# attaches the job only to genuine infrastructure changes.
+# The `paths` filter stays narrow instead of covering the whole
+# `packages/infra/**` package. `bootstrap.sh` is listed explicitly because it is
+# the source of truth for the deploy role's grants and this job now verifies the
+# account against it (the `Deploy-policy drift` step): a policy change that never
+# reached the account must fail here, not in the next deploy.
+#
+# The rest of the package stays out. Originally `bootstrap.sh` was excluded
+# entirely, because it defines the plan role this job assumes and the PR that
+# introduces that role cannot assume it yet. That ordering hazard is a
+# first-bootstrap concern only — the roles exist, and a fresh environment is
+# bootstrapped with admin credentials before CI runs. Should a first bootstrap
+# ever need to re-run in anger, the preflight skip and the role's absence both
+# surface as a clean failure rather than a silent pass.
 #
 # `branches` is unfiltered for the same reason as `validate.yml`: `.tf` changes
 # stacked on an `epic/*` or feature branch must get a plan, not just `main`
@@ -22,6 +29,7 @@ on:
     paths:
       - "packages/infra/**/*.tf"
       - "packages/infra/*.tf"
+      - "packages/infra/scripts/bootstrap.sh"
 
 permissions:
   id-token: write
@@ -98,6 +106,17 @@ jobs:
         with:
           role-to-assume: ${{ env.AWS_PLAN_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+
+      # A policy or resource change that reaches the repo but never reaches the
+      # account fails the next deploy, not the PR (lambda:CreateFunction,
+      # events:ListTargetsByRule and s3:PutBucketCORS have all bitten this way).
+      # bootstrap.sh is the source of truth for those grants, so prove it is
+      # converged before anything merges. Read-only: --check records what it
+      # would write and changes nothing.
+      - name: Deploy-policy drift
+        if: steps.preflight.outputs.available == 'true'
+        working-directory: packages/infra
+        run: ./scripts/bootstrap.sh --check --no-profile
 
       - name: Terraform init
         if: steps.preflight.outputs.available == 'true'
