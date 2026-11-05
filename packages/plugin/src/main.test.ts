@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 import type { App, PluginManifest } from "obsidian";
+import type { FeedEntry } from "./feed.js";
 import type { PetroglyphPlugin } from "./main.js";
 
 /* eslint-disable @typescript-eslint/no-extraneous-class, @typescript-eslint/no-useless-constructor, @typescript-eslint/no-unused-vars, @typescript-eslint/explicit-function-return-type */
@@ -64,6 +66,58 @@ async function makePlugin(initialData?: {
   await plugin.loadPluginData();
 
   return { plugin, savedData };
+}
+
+function makeFeedEntry(overrides: Partial<FeedEntry>): FeedEntry {
+  return {
+    itemId: "item-1",
+    name: "note.pdf",
+    relativePath: "",
+    mimeType: "application/pdf",
+    s3PresignedUrl: "https://s3.example.com/file.pdf",
+    createdAt: "2026-04-11T10:00:00Z",
+    ...overrides,
+  };
+}
+
+interface VaultStub {
+  adapter: {
+    exists: Mock;
+    mkdir: Mock;
+    readBinary: Mock;
+    writeBinary: Mock;
+    write: Mock;
+  };
+}
+
+function makeVaultStub(): VaultStub {
+  return {
+    adapter: {
+      exists: vi.fn(() => Promise.resolve(true)),
+      mkdir: vi.fn(() => Promise.resolve()),
+      readBinary: vi.fn(() => Promise.resolve(new ArrayBuffer(0))),
+      writeBinary: vi.fn(() => Promise.resolve()),
+      write: vi.fn(() => Promise.resolve()),
+    },
+  };
+}
+
+/** A URL that answers with a JSON body. */
+function jsonResponse(body: unknown): Response {
+  return { ok: true, json: () => Promise.resolve(body) } as unknown as Response;
+}
+
+/** A URL that answers with PDF bytes. */
+function bytesResponse(): Response {
+  return {
+    ok: true,
+    arrayBuffer: () => Promise.resolve(new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer),
+  } as unknown as Response;
+}
+
+/** A URL that answers with an error status. */
+function failureResponse(status: number): Response {
+  return { ok: false, status } as unknown as Response;
 }
 
 describe("openAuthUrl", () => {
@@ -1442,6 +1496,154 @@ describe("feed sync", () => {
     await plugin.performSync();
 
     expect(global.fetch).toHaveBeenCalledTimes(MAX_FEED_PAGES);
+  });
+});
+
+describe("failed downloads", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("reports how many files failed to download", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    global.fetch = vi.fn((url: string) => {
+      if (url.includes("/files")) {
+        return Promise.resolve(
+          jsonResponse({
+            files: [
+              makeFeedEntry({ itemId: "item-1", s3PresignedUrl: "https://s3.example.com/ok.pdf" }),
+              makeFeedEntry({
+                itemId: "item-2",
+                s3PresignedUrl: "https://s3.example.com/lost.pdf",
+              }),
+            ],
+            nextToken: null,
+          }),
+        );
+      }
+      if (url === "https://s3.example.com/lost.pdf") {
+        return Promise.resolve(failureResponse(403));
+      }
+      return Promise.resolve(bytesResponse());
+    }) as unknown as typeof fetch;
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: makeVaultStub() };
+
+    await plugin.syncNow();
+
+    expect(Notice).toHaveBeenCalledWith("Sync complete: 1 file, 1 failed");
+  });
+
+  it("reports a failed sync when every download fails", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    global.fetch = vi.fn((url: string) => {
+      if (url.includes("/files")) {
+        return Promise.resolve(
+          jsonResponse({
+            files: [
+              makeFeedEntry({ itemId: "item-1", s3PresignedUrl: "https://s3.example.com/one.pdf" }),
+              makeFeedEntry({ itemId: "item-2", s3PresignedUrl: "https://s3.example.com/two.pdf" }),
+            ],
+            nextToken: null,
+          }),
+        );
+      }
+      return Promise.resolve(failureResponse(403));
+    }) as unknown as typeof fetch;
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: makeVaultStub() };
+
+    await plugin.syncNow();
+
+    expect(Notice).toHaveBeenCalledWith("Sync failed: 2 of 2 files failed");
+  });
+
+  it("counts a vault write error as a failed file", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    global.fetch = vi.fn((url: string) =>
+      Promise.resolve(
+        url.includes("/files")
+          ? jsonResponse({ files: [makeFeedEntry({})], nextToken: null })
+          : bytesResponse(),
+      ),
+    ) as unknown as typeof fetch;
+    const vault = makeVaultStub();
+    vault.adapter.writeBinary = vi.fn(() => Promise.reject(new Error("disk full")));
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+
+    await plugin.syncNow();
+
+    expect(Notice).toHaveBeenCalledWith("Sync failed: 1 of 1 files failed");
+  });
+
+  it("reports plain completion when every file syncs", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    global.fetch = vi.fn((url: string) =>
+      Promise.resolve(
+        url.includes("/files")
+          ? jsonResponse({ files: [makeFeedEntry({})], nextToken: null })
+          : bytesResponse(),
+      ),
+    ) as unknown as typeof fetch;
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: makeVaultStub() };
+
+    await plugin.syncNow();
+
+    expect(Notice).toHaveBeenCalledWith("Sync complete");
+  });
+
+  it("does not advance the cursor past a page whose files failed", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const filesRequests: string[] = [];
+    global.fetch = vi.fn((url: string) => {
+      if (url.includes("/files")) {
+        filesRequests.push(url);
+        return Promise.resolve(
+          jsonResponse({ files: [makeFeedEntry({})], nextToken: "page-2-cursor" }),
+        );
+      }
+      return Promise.resolve(failureResponse(403));
+    }) as unknown as typeof fetch;
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: makeVaultStub() };
+
+    await plugin.performSync();
+
+    expect(filesRequests).toEqual(["https://api.petroglyph.page/files"]);
+    expect(plugin.data.feedCursors?.["default"]).toBeUndefined();
+  });
+
+  it("keeps the earlier cursor when a later page has failed files", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    let page = 0;
+    global.fetch = vi.fn((url: string) => {
+      if (url.includes("/files")) {
+        page += 1;
+        return Promise.resolve(
+          jsonResponse(
+            page === 1
+              ? { files: [], nextToken: "page-2-cursor" }
+              : { files: [makeFeedEntry({})], nextToken: "page-3-cursor" },
+          ),
+        );
+      }
+      return Promise.resolve(failureResponse(403));
+    }) as unknown as typeof fetch;
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: makeVaultStub() };
+
+    await plugin.performSync();
+
+    expect(plugin.data.feedCursors?.["default"]).toBe("page-2-cursor");
   });
 });
 

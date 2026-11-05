@@ -21,10 +21,16 @@ const jwtPayloadSchema = z.object({
 });
 
 /** Why a feed drain stopped early. */
-export type FeedDrainFailure = "rejected" | "invalid" | "network" | "stalled";
+export type FeedDrainFailure = "rejected" | "invalid" | "network" | "stalled" | "files";
 
-/** Outcome of draining the `/files` feed. */
-export type FeedDrain = { ok: true } | { ok: false; reason: FeedDrainFailure };
+/** Failures whose notice does not depend on how many files failed. */
+type FeedFailure = Exclude<FeedDrainFailure, "files">;
+
+/** Outcome of draining the `/files` feed: how many files synced, and how many failed. */
+export type FeedDrain = { synced: number; failed: number } & (
+  | { ok: true }
+  | { ok: false; reason: FeedDrainFailure }
+);
 
 /**
  * Pages one drain may request before giving up. A feed whose cursor stops
@@ -33,12 +39,19 @@ export type FeedDrain = { ok: true } | { ok: false; reason: FeedDrainFailure };
 export const MAX_FEED_PAGES = 200;
 
 /** The notice a failed drain shows when the user asked for it explicitly. */
-const FEED_FAILURE_NOTICES: { [reason in FeedDrainFailure]: string } = {
+const FEED_FAILURE_NOTICES: { [reason in FeedFailure]: string } = {
   rejected: "Sync failed: error fetching files",
   invalid: "Sync failed: invalid files list",
   network: "Sync failed: network or server error",
   stalled: "Sync failed: files feed did not finish",
 };
+
+/** The notice shown when some files failed to download or write. */
+function fileFailureNotice(synced: number, failed: number): string {
+  const attempted = synced + failed;
+  if (synced === 0) return `Sync failed: ${failed} of ${attempted} files failed`;
+  return `Sync complete: ${synced} ${synced === 1 ? "file" : "files"}, ${failed} failed`;
+}
 
 /** The companion note body written beside a synced PDF. */
 function companionNote(entry: FeedEntry): string {
@@ -105,6 +118,10 @@ export class PetroglyphPlugin extends Plugin {
       new Notice("Sync complete");
       return;
     }
+    if (drain.reason === "files") {
+      new Notice(fileFailureNotice(drain.synced, drain.failed));
+      return;
+    }
     new Notice(FEED_FAILURE_NOTICES[drain.reason]);
   }
 
@@ -115,20 +132,23 @@ export class PetroglyphPlugin extends Plugin {
 
   /**
    * Pages GET /files from the profile's stored cursor until the feed is
-   * exhausted, writing each entry into the vault. A cursor the feed rejects
-   * (400) is stale: it is cleared and the drain restarts once from the head of
-   * the feed, so a bad cursor can never wedge syncing.
+   * exhausted, writing each entry into the vault. A page whose files failed
+   * does not advance the cursor, so the next poll retries those files. A cursor
+   * the feed rejects (400) is stale: it is cleared and the drain restarts once
+   * from the head of the feed, so a bad cursor can never wedge syncing.
    */
   private async drainFilesFeed(profileId: string): Promise<FeedDrain> {
     const jwt = this._data.jwt;
-    if (jwt === undefined) return { ok: false, reason: "rejected" };
+    if (jwt === undefined) return { ok: false, reason: "rejected", synced: 0, failed: 0 };
 
     const headers = { Authorization: `Bearer ${jwt}` };
     let cursor = this._data.feedCursors?.[profileId];
     let retriedRejectedCursor = false;
+    let synced = 0;
+    let failed = 0;
 
     for (let page = 0; ; page += 1) {
-      if (page >= MAX_FEED_PAGES) return { ok: false, reason: "stalled" };
+      if (page >= MAX_FEED_PAGES) return { ok: false, reason: "stalled", synced, failed };
 
       const url = new URL(`${this._data.apiBaseUrl}/files`);
       if (cursor !== undefined) url.searchParams.set("after", cursor);
@@ -137,7 +157,7 @@ export class PetroglyphPlugin extends Plugin {
       try {
         response = await fetch(url.toString(), { headers });
       } catch {
-        return { ok: false, reason: "network" };
+        return { ok: false, reason: "network", synced, failed };
       }
 
       if (response.status === 400 && !retriedRejectedCursor) {
@@ -146,23 +166,26 @@ export class PetroglyphPlugin extends Plugin {
         cursor = undefined;
         continue;
       }
-      if (!response.ok) return { ok: false, reason: "rejected" };
+      if (!response.ok) return { ok: false, reason: "rejected", synced, failed };
 
       let payload: unknown;
       try {
         payload = await response.json();
       } catch {
-        return { ok: false, reason: "invalid" };
+        return { ok: false, reason: "invalid", synced, failed };
       }
       const feed = parseFilesFeed(payload);
-      if (feed === null) return { ok: false, reason: "invalid" };
+      if (feed === null) return { ok: false, reason: "invalid", synced, failed };
 
       for (const entry of feed.files) {
-        await this.writeFeedEntry(entry);
+        if ((await this.writeFeedEntry(entry)) === "failed") failed += 1;
+        else synced += 1;
       }
 
+      if (failed > 0) return { ok: false, reason: "files", synced, failed };
+
       await this.saveFeedCursor(profileId, feed.nextToken ?? undefined);
-      if (feed.nextToken === null) return { ok: true };
+      if (feed.nextToken === null) return { ok: true, synced, failed };
       cursor = feed.nextToken;
     }
   }
@@ -181,12 +204,13 @@ export class PetroglyphPlugin extends Plugin {
   /**
    * Writes one staged file into the vault, plus its companion note. An entry
    * whose bytes already match the vault file is skipped, so a repeated poll
-   * does not churn the note's timestamps.
+   * does not churn the note's timestamps. A failed entry is reported, never
+   * thrown: one bad file must not abort the rest of the page.
    */
-  private async writeFeedEntry(entry: FeedEntry): Promise<void> {
+  private async writeFeedEntry(entry: FeedEntry): Promise<"synced" | "failed"> {
     try {
       const response = await fetch(entry.s3PresignedUrl);
-      if (!response.ok) return;
+      if (!response.ok) return "failed";
       const bytes = new Uint8Array(await response.arrayBuffer());
 
       const paths = vaultPathsFor(VAULT_ROOT, entry);
@@ -195,14 +219,15 @@ export class PetroglyphPlugin extends Plugin {
         await this.app.vault.adapter.mkdir(folder);
       }
 
-      if (await this.isCurrentFile(paths.pdf, bytes)) return;
+      if (await this.isCurrentFile(paths.pdf, bytes)) return "synced";
 
       await this.app.vault.adapter.writeBinary(paths.pdf, bytes as unknown as ArrayBuffer);
       if (paths.markdown !== paths.pdf) {
         await this.app.vault.adapter.write(paths.markdown, companionNote(entry));
       }
+      return "synced";
     } catch {
-      // File-level errors are ignored; sync continues with the next entry.
+      return "failed";
     }
   }
 
