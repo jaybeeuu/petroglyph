@@ -334,7 +334,7 @@ export interface components {
       profileId: string;
       userId: string;
       name: string;
-      /** @description OneDrive folder path to sync from */
+      /** @description OneDrive folder path to sync from. Stored in canonical form: leading and trailing slashes are stripped and repeated slashes collapsed, so `/notes/a` is stored as `notes/a`. `/` means the whole drive. An empty string is rejected. A path that is already canonical is unchanged. */
       sourceFolderPath: string;
       /** @description Obsidian vault path to sync to */
       destinationVaultPath: string;
@@ -351,6 +351,7 @@ export interface components {
     };
     CreateProfileRequest: {
       name: string;
+      /** @description Normalised on write; see `Profile.sourceFolderPath` for the canonical form. */
       sourceFolderPath: string;
       destinationVaultPath: string;
       pollingIntervalMinutes?: number;
@@ -358,6 +359,7 @@ export interface components {
     };
     UpdateProfileRequest: {
       name?: string;
+      /** @description Normalised on write; see `Profile.sourceFolderPath` for the canonical form. */
       sourceFolderPath?: string;
       destinationVaultPath?: string;
       pollingIntervalMinutes?: number;

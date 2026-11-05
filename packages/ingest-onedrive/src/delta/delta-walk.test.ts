@@ -653,6 +653,98 @@ describe("walkDelta", () => {
     ]);
   });
 
+  it("routes changes to a profile whose root path carries a leading slash instead of silently dropping every item", async () => {
+    const state = makeState();
+    const store = memStateStore(state);
+    const { client } = scriptedClient([
+      () =>
+        page(
+          [
+            fileItem({
+              id: "i1",
+              name: "a.pdf",
+              parentReference: parentRef("/drive/root:/onyx/NoteAir5C/Notebooks"),
+            }),
+          ],
+          { deltaLink: state.deltaLink },
+        ),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [makeProfile({ rootPath: "/onyx/NoteAir5C/Notebooks" })],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.outcome).toBe("continued");
+    expect(result.events).toMatchObject([
+      { itemId: "i1", relativePath: "onyx/NoteAir5C/Notebooks" },
+    ]);
+  });
+
+  it("treats an empty root path as the whole drive", async () => {
+    const state = makeState();
+    const store = memStateStore(state);
+    const { client } = scriptedClient([
+      () =>
+        page(
+          [
+            fileItem({
+              id: "i1",
+              name: "a.pdf",
+              parentReference: parentRef("/drive/root:/anywhere"),
+            }),
+          ],
+          { deltaLink: state.deltaLink },
+        ),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [makeProfile({ rootPath: "" })],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.events).toMatchObject([{ itemId: "i1", relativePath: "anywhere" }]);
+  });
+
+  it("matches a nested root path by prefix and drops a sibling path", async () => {
+    const state = makeState();
+    const store = memStateStore(state);
+    const { client } = scriptedClient([
+      () =>
+        page(
+          [
+            fileItem({
+              id: "inside",
+              name: "a.pdf",
+              parentReference: parentRef("/drive/root:/notes/sub/deep"),
+            }),
+            fileItem({
+              id: "sibling",
+              name: "b.pdf",
+              parentReference: parentRef("/drive/root:/notes/subway"),
+            }),
+          ],
+          { deltaLink: state.deltaLink },
+        ),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [makeProfile({ rootPath: "notes/sub" })],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.events).toMatchObject([{ itemId: "inside", relativePath: "notes/sub/deep" }]);
+  });
+
   it("counts a drive-root item rather than emitting an empty relativePath or failing the walk", async () => {
     const state = makeState();
     const store = memStateStore(state);

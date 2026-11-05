@@ -150,6 +150,25 @@ describe("profiles CRUD handlers", () => {
       expect(mockPutProfile).toHaveBeenCalledOnce();
     });
 
+    it("stores a leading-slash source folder path without the leading slash", async () => {
+      const existing = makeProfile({ sourceFolderPath: "onyx/NoteAir5C/Notebooks" });
+      mockGetProfile.mockResolvedValue(existing);
+      mockPutProfile.mockResolvedValue(undefined);
+
+      const response = await request("PUT", "/profiles/profile-1", {
+        sourceFolderPath: "/onyx/Other/Notebooks",
+      });
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as SyncProfile;
+      expect(body.sourceFolderPath).toBe("onyx/Other/Notebooks");
+      expect(mockPutProfile).toHaveBeenCalledWith(
+        expect.anything(),
+        "petroglyph-sync-profiles-test",
+        expect.objectContaining({ sourceFolderPath: "onyx/Other/Notebooks" }),
+      );
+    });
+
     it("returns 404 when profile not found", async () => {
       mockGetProfile.mockResolvedValue(null);
 

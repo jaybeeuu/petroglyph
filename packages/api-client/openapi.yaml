@@ -136,7 +136,11 @@ components:
         sourceFolderPath:
           type: string
           minLength: 1
-          description: OneDrive folder path to sync from
+          description: >-
+            OneDrive folder path to sync from. Stored in canonical form: leading
+            and trailing slashes are stripped and repeated slashes collapsed, so
+            `/notes/a` is stored as `notes/a`. `/` means the whole drive. An empty
+            string is rejected. A path that is already canonical is unchanged.
         destinationVaultPath:
           type: string
           minLength: 1
@@ -171,6 +175,9 @@ components:
         sourceFolderPath:
           type: string
           minLength: 1
+          description: >-
+            Normalised on write; see `Profile.sourceFolderPath` for the canonical
+            form.
         destinationVaultPath:
           type: string
           minLength: 1
@@ -190,6 +197,9 @@ components:
         sourceFolderPath:
           type: string
           minLength: 1
+          description: >-
+            Normalised on write; see `Profile.sourceFolderPath` for the canonical
+            form.
         destinationVaultPath:
           type: string
           minLength: 1
