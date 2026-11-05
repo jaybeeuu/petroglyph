@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { CloudEvent, EventSource } from "@petroglyph/events";
 import { fileDeletedEvent, fileStagedEvent } from "@petroglyph/staging-contracts";
 import type { Queue } from "./queue.js";
@@ -20,9 +21,17 @@ export interface ForwardResult {
  * identity that the event log already dedupes on — `source`+`id` — not from
  * the payload shape, so a re-send of the same event dedupes and a payload
  * change does not.
+ *
+ * It is a hash rather than the raw identity because SQS restricts the value to
+ * alphanumerics and a limited set of punctuation, and an event id carries the
+ * provider's own version string verbatim: OneDrive eTags are quoted ETag
+ * literals (`"{GUID},22"`), so SQS rejected every row with
+ * `InvalidParameterValue ... MessageDeduplicationId`. Stripping the illegal
+ * characters would risk two distinct ids colliding; a digest cannot. The
+ * CloudEvent id stays in the message body, so traceability is unchanged.
  */
 function deduplicationId(event: CloudEvent<unknown>): string {
-  return `${event.source}#${event.id}`;
+  return createHash("sha256").update(`${event.source}#${event.id}`).digest("hex");
 }
 
 /**
