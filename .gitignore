@@ -37,6 +37,8 @@ test-output.txt
 
 # SSM migration snapshot (holds plaintext SecureString values)
 packages/infra/ssm-namespace-snapshot-*.json
+# Terraform state dumps (full resource graph, treat as secret)
+packages/infra/state-*.json
 **/.terraform/
 *.tfstate
 *.tfstate.backup
