@@ -339,6 +339,8 @@ When adding a new Lambda:
 
 There is deliberately **no stored copy of any secret value** — not in a password manager, not in this repository, not in a snapshot left behind by a migration. A second copy of a live secret is another attack surface, so recovery means _regenerating_ at the source and writing the new value to SSM. Terraform creates each parameter with `value = "PLACEHOLDER"` and `ignore_changes = [value]`, so nothing in CD can overwrite a real value.
 
+Terraform state needs the same care: a `terraform show -json` dump holds the whole resource graph and can carry secret material, so never commit one. `.gitignore` covers only `packages/infra/state-*.json`; a dump written in another directory, or named without the hyphen, stays tracked. Run `git status` before you commit a dump.
+
 Every parameter in `packages/infra/ssm.tf` is read by deployed code, and the table below is the full inventory. Add one only when a service reads it, and delete it when the last reader goes: a parameter nothing reads is standing attack surface and noise during a recovery. Settings that only Terraform or the application consumes stay out of SSM — staged-PDF retention is the `retention_days` variable, initial sync is the profile's `initialSyncEnabled` field. `packages/infra/scripts/tf-apply.sh` asserts the live set by name and count after every apply, so add or drop a parameter there in the same change.
 
 ### Who reads what
