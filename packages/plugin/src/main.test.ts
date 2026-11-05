@@ -2206,3 +2206,111 @@ describe("state-changed emissions", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("diagnostics log", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("leaves a line naming itemId, status, and byte count when a download fails", async () => {
+    const { LOG_PATH } = await import("./log.js");
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+
+    global.fetch = vi.fn((url) => {
+      if (typeof url === "string" && url.startsWith("https://api.petroglyph.page/files")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              files: [
+                {
+                  itemId: "item-1",
+                  name: "note.pdf",
+                  relativePath: "",
+                  mimeType: "application/pdf",
+                  s3PresignedUrl:
+                    "https://petroglyph.blob.core.windows.net/files/note.pdf?sig=capability-secret",
+                  createdAt: "2026-04-11T10:00:00Z",
+                },
+              ],
+              nextToken: null,
+            }),
+        });
+      }
+      return Promise.resolve({ ok: false, status: 403 });
+    }) as unknown as typeof fetch;
+
+    const files: { [path: string]: string } = {};
+    const adapter = {
+      exists: vi.fn(() => Promise.resolve(true)),
+      mkdir: vi.fn(() => Promise.resolve()),
+      readBinary: vi.fn(() => Promise.resolve(new ArrayBuffer(0))),
+      writeBinary: vi.fn(() => Promise.resolve()),
+      write: vi.fn(() => Promise.resolve()),
+      append: (path: string, data: string) => {
+        files[path] = `${files[path] ?? ""}${data}`;
+        return Promise.resolve();
+      },
+      read: (path: string) => Promise.resolve(files[path] ?? ""),
+      rename: (fromPath: string, toPath: string) => {
+        files[toPath] = files[fromPath] ?? "";
+        files[fromPath] = "";
+        return Promise.resolve();
+      },
+    };
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: { adapter } };
+
+    await plugin.performSync();
+
+    const written = files[LOG_PATH] ?? "";
+    expect(written).toContain("ERROR download download failed");
+    expect(written).toContain("itemId=item-1");
+    expect(written).toContain("status=403");
+    expect(written).toContain("bytes=0");
+    expect(written).not.toContain("capability-secret");
+  });
+
+  it("logs the startup state a fresh session needs", async () => {
+    const { LOG_PATH } = await import("./log.js");
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+
+    const { plugin } = await makePlugin({
+      apiBaseUrl: "https://api.example.com",
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      oneDriveStatus: "connected",
+      activeProfileId: "profile-2",
+      feedCursors: { "profile-2": "cursor-1" },
+    });
+
+    const files: { [path: string]: string } = {};
+    const adapter = {
+      append: (path: string, data: string) => {
+        files[path] = `${files[path] ?? ""}${data}`;
+        return Promise.resolve();
+      },
+      read: (path: string) => Promise.resolve(files[path] ?? ""),
+      rename: () => Promise.resolve(),
+    };
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: { adapter } };
+
+    await plugin.onload();
+
+    const written = files[LOG_PATH] ?? "";
+    expect(written).toContain("INFO startup plugin loaded");
+    expect(written).toContain("apiBaseUrl=https://api.example.com");
+    expect(written).toContain("activeProfileId=profile-2");
+    expect(written).toContain("oneDriveStatus=connected");
+    expect(written).toContain("cursors=1");
+    expect(written).not.toContain("jwt-token");
+  });
+});
