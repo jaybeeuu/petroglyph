@@ -46,6 +46,8 @@ async function flushedText(record: (log: PluginLog) => void): Promise<string> {
   return memory.files[LOG_PATH] ?? "";
 }
 
+const JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc";
+
 describe("PluginLog", () => {
   it("writes one timestamped line per entry when flushed", async () => {
     const memory = createMemorySink();
@@ -326,6 +328,158 @@ describe("PluginLog", () => {
     const contents = await log.contents();
     expect(contents.startsWith("written line\n")).toBe(true);
     expect(contents).toContain("INFO feed buffered line");
+  });
+
+  it("keeps the batch when a flush runs before the sink exists", async () => {
+    const memory = createMemorySink();
+    let sinkAvailable = false;
+    const log = new PluginLog({ sink: () => (sinkAvailable ? memory.sink : undefined) });
+
+    log.info("vault", "wrote", { path: "handwritten/note.pdf" });
+    await log.flush();
+    const buffered = await log.contents();
+    sinkAvailable = true;
+    await log.flush();
+
+    expect(buffered).toContain("path=handwritten/note.pdf");
+    expect(memory.files[LOG_PATH]).toContain("path=handwritten/note.pdf");
+  });
+
+  it.each([
+    { shape: "a JWT under a key that does not name one", fields: { refresh: JWT }, secret: JWT },
+    { shape: "a JWT under a generic key", fields: { value: JWT }, secret: JWT },
+    {
+      shape: "a JWT with a key id segment",
+      fields: { value: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.aaa.bbb.ccc" },
+      secret: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.aaa.bbb.ccc",
+    },
+    {
+      shape: "a name=value pair under a generic key",
+      fields: { value: "session=cookie-benign-key" },
+      secret: "cookie-benign-key",
+    },
+    {
+      shape: "a signed pair under a generic key",
+      fields: { value: "sig=sig-secret-value" },
+      secret: "sig-secret-value",
+    },
+    {
+      shape: "a bearer token under a benign key",
+      fields: { detail: "Bearer ben-token" },
+      secret: "ben-token",
+    },
+    {
+      shape: "an authorization header inside a value",
+      fields: { detail: "Authorization: Bearer hdr-token" },
+      secret: "hdr-token",
+    },
+    {
+      shape: "an opaque encoded blob under a benign key",
+      fields: { detail: "AbCdEf0123456789AbCdEf0123456789Zz" },
+      secret: "AbCdEf0123456789AbCdEf0123456789Zz",
+    },
+  ])("replaces $shape", async ({ fields, secret }) => {
+    const written = await flushedText((log) => {
+      log.error("auth", "state", fields);
+    });
+
+    expect(written).toContain("[redacted]");
+    expect(written).not.toContain(secret);
+  });
+
+  it.each([
+    {
+      shape: "a bearer token after a header name",
+      message: "sent Authorization: Bearer bearer-in-message",
+      secret: "bearer-in-message",
+    },
+    { shape: "a JWT", message: `jwt is ${JWT}`, secret: JWT },
+    {
+      shape: "a cookie pair",
+      message: "set cookie session=msg-cookie-secret",
+      secret: "msg-cookie-secret",
+    },
+    {
+      shape: "an opaque encoded blob",
+      message: "got AbCdEf0123456789AbCdEf0123456789Zz",
+      secret: "AbCdEf0123456789AbCdEf0123456789Zz",
+    },
+  ])("replaces $shape in the message", async ({ message, secret }) => {
+    const written = await flushedText((log) => {
+      log.error("auth", message);
+    });
+
+    expect(written).toContain("[redacted]");
+    expect(written).not.toContain(secret);
+  });
+
+  it.each([
+    "//host.example.com/a.pdf?X-Custom-Thing=capability-secret",
+    "host.example.com/a.pdf?X-Custom-Thing=capability-secret",
+    "a.pdf?Policy=capability-secret",
+    "https://host.example.com/a.pdf%3Fsig=capability-secret",
+    "https://host.example.com/a.pdf#capability-secret",
+  ])("strips the query of a URL value whatever its parameters: %s", async (url) => {
+    const written = await flushedText((log) => {
+      log.error("download", "download failed", { url });
+    });
+
+    expect(written).not.toContain("capability-secret");
+    expect(written).toContain("url=");
+  });
+
+  it.each([
+    { key: "s3PresignedUrl", value: "https://host.example.com/a.pdf?X-Custom=capability-secret" },
+    { key: "href", value: "//host.example.com/a.pdf#capability-secret" },
+    { key: "link", value: "a.pdf%23capability-secret" },
+  ])("strips the query of a field whose key names a location: $key", async ({ key, value }) => {
+    const written = await flushedText((log) => {
+      log.error("download", "download failed", { [key]: value });
+    });
+
+    expect(written).not.toContain("capability-secret");
+  });
+
+  it.each([
+    "https://host.example.com/a.pdf?X-Custom=capability-secret",
+    "a.pdf?Policy=capability-secret",
+    "https://host.example.com/a.pdf%3FPolicy=capability-secret",
+  ])("strips the query of a URL logged under a benign key: %s", async (value) => {
+    const written = await flushedText((log) => {
+      log.error("download", "download failed", { detail: value });
+    });
+
+    expect(written).not.toContain("capability-secret");
+  });
+
+  it("keeps counters, cursors, ids and plain prose readable", async () => {
+    const written = await flushedText((log) => {
+      log.info("feed", "page", { files: 2, nextToken: "page-2-cursor", resetToken: true });
+      log.error("download", "download failed", {
+        itemId: "item-1",
+        status: 403,
+        bytes: 0,
+        elapsedMs: 63,
+      });
+      log.warn("vault", "retry the write? the disk was full");
+    });
+
+    expect(written).toContain("nextToken=page-2-cursor");
+    expect(written).toContain("resetToken=true");
+    expect(written).toContain("itemId=item-1");
+    expect(written).toContain("status=403");
+    expect(written).toContain("bytes=0");
+    expect(written).toContain("elapsedMs=63");
+    expect(written).toContain("retry the write? the disk was full");
+    expect(written).not.toContain("[redacted]");
+  });
+
+  it("keeps a long uppercase item id readable", async () => {
+    const written = await flushedText((log) => {
+      log.info("download", "downloaded", { itemId: "01ABCDEF0123456789ABCDEF0123456789AB" });
+    });
+
+    expect(written).toContain("itemId=01ABCDEF0123456789ABCDEF0123456789AB");
   });
 });
 
