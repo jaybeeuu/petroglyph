@@ -185,6 +185,11 @@ resource "aws_lambda_function" "petroglyph_adapter_onedrive" {
   role    = aws_iam_role.petroglyph_adapter_onedrive_role.arn
   timeout = 300
 
+  # A full delta walk holds the enumerate in memory, so the default 128 MB OOMs
+  # on a real drive (petroglyph-63vq: 127 MB used, Runtime.OutOfMemory at 78s).
+  # This buys headroom until the walk streams per page instead of accumulating.
+  memory_size = 1024
+
   environment {
     variables = {
       EVENT_LOG_TABLE                 = aws_dynamodb_table.event_log.name
@@ -192,6 +197,7 @@ resource "aws_lambda_function" "petroglyph_adapter_onedrive" {
       REFRESH_TOKENS_TABLE            = aws_dynamodb_table.token_vaults.name
       SYNC_PROFILES_TABLE             = aws_dynamodb_table.sync_profiles.name
       STAGED_PDFS_BUCKET              = aws_s3_bucket.staged_pdfs.id
+      DELTA_TRIGGER_QUEUE_URL         = aws_sqs_queue.delta_trigger.url
       ONEDRIVE_CLIENT_ID_SSM_PATH     = aws_ssm_parameter.onedrive_client_id.name
       ONEDRIVE_CLIENT_SECRET_SSM_PATH = aws_ssm_parameter.onedrive_client_secret.name
       GRAPH_BASE_URL                  = local.adapter_graph_base_url

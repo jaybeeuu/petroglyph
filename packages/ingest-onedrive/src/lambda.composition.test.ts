@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mockSsmSend = vi.hoisted(() => vi.fn());
 const mockDocSend = vi.hoisted(() => vi.fn());
 const mockS3Send = vi.hoisted(() => vi.fn());
+const mockSqsSend = vi.hoisted(() => vi.fn());
 const mockFetch = vi.hoisted(() => vi.fn());
 
 vi.mock("@aws-sdk/client-ssm", async (importOriginal) => {
@@ -12,6 +13,15 @@ vi.mock("@aws-sdk/client-ssm", async (importOriginal) => {
   return Object.assign({}, actual as object, {
     SSMClient: class {
       send = mockSsmSend;
+    },
+  });
+});
+
+vi.mock("@aws-sdk/client-sqs", async (importOriginal) => {
+  const actual = await importOriginal();
+  return Object.assign({}, actual as object, {
+    SQSClient: class {
+      send = mockSqsSend;
     },
   });
 });
@@ -51,6 +61,8 @@ const TABLES = {
 };
 
 const STAGED_BUCKET = "petroglyph-staged-pdfs-staging";
+const DELTA_TRIGGER_QUEUE_URL =
+  "https://sqs.eu-west-2.amazonaws.com/000000000000/petroglyph-delta-trigger-staging.fifo";
 const CONNECTION = { userId: "user-1", provider: "onedrive" };
 const PDF_BYTES = new TextEncoder().encode("%PDF-1.7\n1 0 obj");
 
@@ -153,12 +165,14 @@ describe("adapter lambda composition (buildDeltaRunner)", () => {
     mockSsmSend.mockReset().mockResolvedValue({ Parameter: { Value: "ssm-parameter-value" } });
     mockDocSend.mockReset();
     mockS3Send.mockReset().mockResolvedValue({});
+    mockSqsSend.mockReset().mockResolvedValue({});
     mockFetch.mockReset();
     vi.stubEnv("REFRESH_TOKENS_TABLE", TABLES.refreshTokens);
     vi.stubEnv("SYNC_PROFILES_TABLE", TABLES.syncProfiles);
     vi.stubEnv("EVENT_LOG_TABLE", TABLES.eventLog);
     vi.stubEnv("DELTA_TOKENS_TABLE", TABLES.deltaTokens);
     vi.stubEnv("STAGED_PDFS_BUCKET", STAGED_BUCKET);
+    vi.stubEnv("DELTA_TRIGGER_QUEUE_URL", DELTA_TRIGGER_QUEUE_URL);
   });
 
   afterEach(() => {
@@ -226,11 +240,45 @@ describe("adapter lambda composition (buildDeltaRunner)", () => {
     ["EVENT_LOG_TABLE"],
     ["DELTA_TOKENS_TABLE"],
     ["STAGED_PDFS_BUCKET"],
+    ["DELTA_TRIGGER_QUEUE_URL"],
   ])("throws naming %s when the variable is unset", async (name) => {
     vi.stubEnv(name, "");
     wireDynamo();
     wireGraph([]);
 
     await expect(buildDeltaRunner()(CONNECTION)).rejects.toThrow(name);
+  });
+
+  it("enqueues one continuation bell on the delta-trigger queue when the page budget defers the walk", async () => {
+    wireDynamo([makeProfile()]);
+    const nextPage = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=page-2";
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes("/content")) {
+        return Promise.resolve(new Response(PDF_BYTES, { status: 200 }));
+      }
+      const body = url.includes("token=page-2")
+        ? { value: [], "@odata.deltaLink": "https://graph.example/delta?token=done" }
+        : { value: [fileItem("file-1", "notes")], "@odata.nextLink": nextPage };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    });
+
+    const result = await buildDeltaRunner()(CONNECTION);
+
+    expect(result).toMatchObject({ outcome: "completed", landed: 1, pagesCompleted: 1 });
+    expect(mockSqsSend).toHaveBeenCalledTimes(1);
+    const sent = mockSqsSend.mock.calls[0]?.[0] as {
+      input: {
+        QueueUrl: string;
+        MessageBody: string;
+        MessageGroupId: string;
+        MessageDeduplicationId: string;
+      };
+    };
+    expect(sent.input.QueueUrl).toBe(DELTA_TRIGGER_QUEUE_URL);
+    expect(JSON.parse(sent.input.MessageBody)).toEqual(CONNECTION);
+    // Same FIFO group as the connection's other bells, so the continuation
+    // cannot race the walk it continues.
+    expect(sent.input.MessageGroupId).toBe("user-1:onedrive");
+    expect(sent.input.MessageDeduplicationId).toMatch(/^[0-9a-f]{64}$/);
   });
 });

@@ -412,7 +412,7 @@ The adapter's per-connection Graph delta state (Delivery 1), superseding the per
 | `userId`                 | String (PK) | FK to `users`                                                                                              |
 | `profileId`              | String (SK) | Profile identifier. The default profile uses the literal value `"default"`; additional profiles use UUIDs. |
 | `name`                   | String      | Human-readable profile name                                                                                |
-| `sourceFolderPath`       | String      | OneDrive folder path to watch                                                                              |
+| `sourceFolderPath`       | String      | OneDrive folder path to watch, in canonical form — see [glossary](glossary.md#terms)                       |
 | `destinationVaultPath`   | String      | Obsidian vault path to sync files into                                                                     |
 | `pollingIntervalMinutes` | Number      | How often to poll for changes (default: `5`)                                                               |
 | `enabled`                | Boolean     | Whether the profile participates in sync runs (default: `true`)                                            |

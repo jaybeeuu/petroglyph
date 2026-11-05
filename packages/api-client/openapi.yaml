@@ -136,7 +136,11 @@ components:
         sourceFolderPath:
           type: string
           minLength: 1
-          description: OneDrive folder path to sync from
+          description: >-
+            OneDrive folder path to sync from. Stored in canonical form: leading
+            and trailing slashes are stripped and repeated slashes collapsed, so
+            `/notes/a` is stored as `notes/a`. `/` means the whole drive. An empty
+            string is rejected. A path that is already canonical is unchanged.
         destinationVaultPath:
           type: string
           minLength: 1
@@ -171,6 +175,9 @@ components:
         sourceFolderPath:
           type: string
           minLength: 1
+          description: >-
+            Normalised on write; see `Profile.sourceFolderPath` for the canonical
+            form.
         destinationVaultPath:
           type: string
           minLength: 1
@@ -182,6 +189,7 @@ components:
 
     UpdateProfileRequest:
       type: object
+      additionalProperties: false
       properties:
         name:
           type: string
@@ -189,6 +197,9 @@ components:
         sourceFolderPath:
           type: string
           minLength: 1
+          description: >-
+            Normalised on write; see `Profile.sourceFolderPath` for the canonical
+            form.
         destinationVaultPath:
           type: string
           minLength: 1
@@ -199,6 +210,20 @@ components:
           type: boolean
         active:
           type: boolean
+
+    UpdateProfileResponse:
+      allOf:
+        - $ref: "#/components/schemas/SyncProfile"
+        - type: object
+          required:
+            - deactivatedProfileIds
+          properties:
+            deactivatedProfileIds:
+              type: array
+              description: Profiles this request deactivated; empty when it activated none
+              items:
+                type: string
+                format: uuid
 
     FileChange:
       type: object
@@ -514,7 +539,12 @@ paths:
 
     put:
       summary: Update sync profile
-      description: Update an existing sync profile
+      description: |
+        Update an existing sync profile. Properties that the schema does not define are
+        rejected with 400 rather than ignored. Sending `active: true` activates this profile
+        and deactivates any other active profile for the user in the same request; the
+        deactivated profile ids are returned in `deactivatedProfileIds`. Deactivating the
+        active profile is rejected with 409.
       operationId: updateProfile
       requestBody:
         required: true
@@ -528,7 +558,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SyncProfile"
+                $ref: "#/components/schemas/UpdateProfileResponse"
         "400":
           description: Invalid request body
           content:
@@ -543,6 +573,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: Profile not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The request would leave the user with no active profile
           content:
             application/json:
               schema:

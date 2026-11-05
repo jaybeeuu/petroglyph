@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { listProfiles, putProfile } from "@petroglyph/core";
+import { listProfiles, normalizeSourceFolderPath, putProfile } from "@petroglyph/core";
 import { docClient } from "./db.js";
 
 function syncProfilesTableName(): string {
@@ -10,7 +10,7 @@ function syncProfilesTableName(): string {
 
 const createProfileBodySchema = z.object({
   name: z.string().min(1),
-  sourceFolderPath: z.string().min(1),
+  sourceFolderPath: z.string().min(1).transform(normalizeSourceFolderPath),
   destinationVaultPath: z.string().min(1),
   pollingIntervalMinutes: z.number().int().positive().optional(),
   enabled: z.boolean().optional(),

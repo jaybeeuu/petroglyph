@@ -1,3 +1,4 @@
+import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
@@ -5,7 +6,7 @@ import type { SQSBatchResponse, SQSEvent } from "aws-lambda";
 import { OAuthTokenResolver, listProfiles } from "@petroglyph/core";
 import { DynamoDBEventLogWriter } from "@petroglyph/events";
 import { S3StagedObjectStore } from "@petroglyph/staging-contracts";
-import { deltaTriggerSchema } from "./delta-trigger.js";
+import { continuationDedupeId, deltaTriggerSchema, type DeltaTrigger } from "./delta-trigger.js";
 import { DynamoDBTokenStore } from "./tokens/token-store-ddb.js";
 import { OAuthTokenClient } from "./tokens/token-client.js";
 import { MicrosoftGraphClient } from "./tokens/graph-client.js";
@@ -44,6 +45,7 @@ export function createAdapterHandler(deps: {
       }
       try {
         const result = await deps.runDelta(parsed.data);
+        log(describeProgress(parsed.data, result));
         if (result.outcome === "failed") {
           batchItemFailures.push({ itemIdentifier: message.messageId });
         }
@@ -56,9 +58,27 @@ export function createAdapterHandler(deps: {
   };
 }
 
+/**
+ * The per-bell progress line. A deferred walk, a failed walk and a walk that
+ * reached the terminal change token all report the same two numbers, because
+ * they are the only per-invocation progress signal the adapter has: without
+ * them a catch-up that stops advancing looks exactly like a healthy one. The
+ * counts carry no token, resume link or secret — `pagesRemaining` is null when
+ * pages remain, since Graph's delta reports no total.
+ */
+function describeProgress(trigger: DeltaTrigger, result: DeltaSyncResult): string {
+  const remaining =
+    result.pagesRemaining === null ? "more remain" : `${result.pagesRemaining} remaining`;
+  return (
+    `[adapter] delta run for ${trigger.userId}/${trigger.provider} ${result.outcome}: ` +
+    `${result.pagesCompleted} page(s) completed, ${remaining}`
+  );
+}
+
 const ssmClient = new SSMClient({});
 const dynamoClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(dynamoClient);
+const sqsClient = new SQSClient({});
 
 async function readSsmParameter(path: string): Promise<string> {
   const result = await ssmClient.send(
@@ -105,6 +125,7 @@ export function buildDeltaRunner(): (connection: {
       ),
     ]);
     const tokenClient = new OAuthTokenClient({ clientId, clientSecret });
+    const deltaTriggerQueueUrl = requiredEnv("DELTA_TRIGGER_QUEUE_URL");
     const resolver = new OAuthTokenResolver({
       store: new DynamoDBTokenStore({
         client: docClient,
@@ -141,6 +162,19 @@ export function buildDeltaRunner(): (connection: {
       connection,
       profiles,
       initialUrl: env("GRAPH_DRIVE_ROOT_DELTA_URL", DEFAULT_DRIVE_ROOT_DELTA_URL),
+      requestContinuation: async (continuation) => {
+        await sqsClient.send(
+          new SendMessageCommand({
+            QueueUrl: deltaTriggerQueueUrl,
+            MessageBody: JSON.stringify({
+              userId: continuation.connection.userId,
+              provider: continuation.connection.provider,
+            } satisfies DeltaTrigger),
+            MessageGroupId: `${continuation.connection.userId}:${continuation.connection.provider}`,
+            MessageDeduplicationId: continuationDedupeId(continuation.resumeLink),
+          }),
+        );
+      },
     });
   };
 }

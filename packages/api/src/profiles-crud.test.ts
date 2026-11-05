@@ -150,6 +150,25 @@ describe("profiles CRUD handlers", () => {
       expect(mockPutProfile).toHaveBeenCalledOnce();
     });
 
+    it("stores a leading-slash source folder path without the leading slash", async () => {
+      const existing = makeProfile({ sourceFolderPath: "onyx/NoteAir5C/Notebooks" });
+      mockGetProfile.mockResolvedValue(existing);
+      mockPutProfile.mockResolvedValue(undefined);
+
+      const response = await request("PUT", "/profiles/profile-1", {
+        sourceFolderPath: "/onyx/Other/Notebooks",
+      });
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as SyncProfile;
+      expect(body.sourceFolderPath).toBe("onyx/Other/Notebooks");
+      expect(mockPutProfile).toHaveBeenCalledWith(
+        expect.anything(),
+        "petroglyph-sync-profiles-test",
+        expect.objectContaining({ sourceFolderPath: "onyx/Other/Notebooks" }),
+      );
+    });
+
     it("returns 404 when profile not found", async () => {
       mockGetProfile.mockResolvedValue(null);
 
@@ -176,6 +195,62 @@ describe("profiles CRUD handlers", () => {
       });
 
       expect(response.status).toBe(400);
+    });
+
+    it("stores active: true on the profile when the request activates it", async () => {
+      const existing = makeProfile({ active: false });
+      mockGetProfile.mockResolvedValue(existing);
+      mockListProfiles.mockResolvedValue([existing]);
+      mockPutProfile.mockResolvedValue(undefined);
+
+      const response = await request("PUT", "/profiles/profile-1", { active: true });
+
+      expect(response.status).toBe(200);
+      expect(mockPutProfile.mock.calls[0]?.[2]).toMatchObject({
+        profileId: "profile-1",
+        active: true,
+      });
+      const body = (await response.json()) as SyncProfile & {
+        deactivatedProfileIds: string[];
+      };
+      expect(body.active).toBe(true);
+      expect(body.deactivatedProfileIds).toEqual([]);
+    });
+
+    it("deactivates the previously active profile in the same request", async () => {
+      const target = makeProfile({ profileId: "profile-1", active: false });
+      const previouslyActive = makeProfile({ profileId: "profile-2", active: true });
+      mockGetProfile.mockResolvedValue(target);
+      mockListProfiles.mockResolvedValue([target, previouslyActive]);
+      mockPutProfile.mockResolvedValue(undefined);
+
+      const response = await request("PUT", "/profiles/profile-1", { active: true });
+
+      expect(response.status).toBe(200);
+      expect(mockPutProfile.mock.calls.map((call) => call[2] as SyncProfile)).toEqual([
+        expect.objectContaining({ profileId: "profile-1", active: true }),
+        expect.objectContaining({ profileId: "profile-2", active: false }),
+      ]);
+      const body = (await response.json()) as { deactivatedProfileIds: string[] };
+      expect(body.deactivatedProfileIds).toEqual(["profile-2"]);
+    });
+
+    it("rejects unknown body keys instead of ignoring them", async () => {
+      mockGetProfile.mockResolvedValue(makeProfile({ active: false }));
+
+      const response = await request("PUT", "/profiles/profile-1", { actve: true });
+
+      expect(response.status).toBe(400);
+      expect(mockPutProfile).not.toHaveBeenCalled();
+    });
+
+    it("rejects deactivating the active profile", async () => {
+      mockGetProfile.mockResolvedValue(makeProfile({ active: true }));
+
+      const response = await request("PUT", "/profiles/profile-1", { active: false });
+
+      expect(response.status).toBe(409);
+      expect(mockPutProfile).not.toHaveBeenCalled();
     });
 
     it("accepts partial updates with multiple fields", async () => {

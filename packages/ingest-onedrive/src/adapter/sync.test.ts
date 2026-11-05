@@ -3,7 +3,7 @@ import type { CloudEvent, EventLogWriter } from "@petroglyph/events";
 import type { StagedObjectStore, StagedObjectStorePutResult } from "@petroglyph/staging-contracts";
 import type { DeltaStateStore } from "../delta/delta-state-store.js";
 import type { GraphClient } from "../tokens/graph-client.js";
-import { runDeltaSync } from "./sync.js";
+import { runDeltaSync, type DeltaContinuation } from "./sync.js";
 
 const INITIAL_URL = "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name";
 const DELTA_LINK = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=done";
@@ -52,6 +52,7 @@ function makeHarness(deltaItems: unknown[]): {
   documents: CloudEvent<unknown>[];
   deltaState: ReturnType<typeof makeDeltaState>;
   deltaStateStore: DeltaStateStore;
+  continuations: DeltaContinuation[];
   run(): Promise<Awaited<ReturnType<typeof runDeltaSync>>>;
 } {
   const { client } = scriptedClient(deltaItems);
@@ -80,6 +81,7 @@ function makeHarness(deltaItems: unknown[]): {
 
   const deltaState = makeDeltaState();
   const deltaStateStore = deltaState as unknown as DeltaStateStore;
+  const continuations: DeltaContinuation[] = [];
 
   return {
     client,
@@ -90,6 +92,7 @@ function makeHarness(deltaItems: unknown[]): {
     documents,
     deltaState,
     deltaStateStore,
+    continuations,
     run() {
       return runDeltaSync({
         client,
@@ -99,6 +102,10 @@ function makeHarness(deltaItems: unknown[]): {
         connection: { userId: "u1", provider: "onedrive" },
         profiles: [profile],
         initialUrl: INITIAL_URL,
+        requestContinuation: (continuation) => {
+          continuations.push(continuation);
+          return Promise.resolve();
+        },
       });
     },
   };
@@ -113,6 +120,38 @@ function makeDeltaState(): {
     read: vi.fn().mockResolvedValue(null),
     write: vi.fn().mockResolvedValue(undefined),
     clear: vi.fn().mockResolvedValue(undefined),
+  };
+}
+const SECOND_PAGE = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=page-2";
+/** A two-page delta chain whose first page carries one landable PDF. */
+function twoPageClient(): { client: GraphClient; requested: string[] } {
+  const requested: string[] = [];
+  return {
+    requested,
+    client: {
+      request(path) {
+        requested.push(path);
+        if (path === "/me/drive/items/item-1/content") {
+          return Promise.resolve(new Response(pdfBytes, { status: 200 }));
+        }
+        if (path === INITIAL_URL) {
+          return Promise.resolve(
+            jsonResponse({
+              value: [
+                {
+                  id: "item-1",
+                  name: "a.pdf",
+                  parentReference: { path: "/drive/root:/notes" },
+                  file: { mimeType: "application/pdf" },
+                },
+              ],
+              "@odata.nextLink": SECOND_PAGE,
+            }),
+          );
+        }
+        return Promise.resolve(jsonResponse({ value: [], "@odata.deltaLink": DELTA_LINK }));
+      },
+    },
   };
 }
 
@@ -141,7 +180,14 @@ describe("runDeltaSync — adapter driver", () => {
 
     const result = await harness.run();
 
-    expect(result).toEqual({ outcome: "completed", landed: 2, deleted: 1, skipped: 0 });
+    expect(result).toEqual({
+      outcome: "completed",
+      landed: 2,
+      deleted: 1,
+      skipped: 0,
+      pagesCompleted: 1,
+      pagesRemaining: 0,
+    });
     // two files landed → two staged emits; one deleted → one deleted emit
     expect(harness.documents).toHaveLength(3);
     expect(harness.puts).toEqual(["staging/v1/p1/notes/a.pdf", "staging/v1/p1/notes/b.pdf"]);
@@ -224,13 +270,28 @@ describe("runDeltaSync — adapter driver", () => {
       connection: { userId: "u1", provider: "onedrive" },
       profiles: [profile],
       initialUrl: INITIAL_URL,
+      requestContinuation: () => Promise.resolve(),
     };
     const firstRun = await runDeltaSync(options);
     const secondRun = await runDeltaSync(options);
 
     // Two delta runs over two edits of one item: each is a distinct event.
-    expect(firstRun).toEqual({ outcome: "completed", landed: 1, deleted: 0, skipped: 0 });
-    expect(secondRun).toEqual({ outcome: "completed", landed: 1, deleted: 0, skipped: 0 });
+    expect(firstRun).toEqual({
+      outcome: "completed",
+      landed: 1,
+      deleted: 0,
+      skipped: 0,
+      pagesCompleted: 1,
+      pagesRemaining: 0,
+    });
+    expect(secondRun).toEqual({
+      outcome: "completed",
+      landed: 1,
+      deleted: 0,
+      skipped: 0,
+      pagesCompleted: 1,
+      pagesRemaining: 0,
+    });
     expect(written.map((document) => document.id)).toEqual([
       "p1:item-1:file:etag-1",
       "p1:item-1:file:etag-2",
@@ -256,6 +317,7 @@ describe("runDeltaSync — adapter driver", () => {
       connection: { userId: "u1", provider: "onedrive" },
       profiles: [profile],
       initialUrl: INITIAL_URL,
+      requestContinuation: () => Promise.resolve(),
       log: (message) => logs.push(message),
     });
 
@@ -275,7 +337,14 @@ describe("runDeltaSync — adapter driver", () => {
 
     const result = await harness.run();
 
-    expect(result).toEqual({ outcome: "completed", landed: 0, deleted: 0, skipped: 1 });
+    expect(result).toEqual({
+      outcome: "completed",
+      landed: 0,
+      deleted: 0,
+      skipped: 1,
+      pagesCompleted: 1,
+      pagesRemaining: 0,
+    });
     expect(harness.puts).toEqual([]);
     expect(harness.documents).toEqual([]);
   });
@@ -291,9 +360,17 @@ describe("runDeltaSync — adapter driver", () => {
       connection: { userId: "u1", provider: "onedrive" },
       profiles: [],
       initialUrl: INITIAL_URL,
+      requestContinuation: () => Promise.resolve(),
     });
 
-    expect(result).toEqual({ outcome: "completed", landed: 0, deleted: 0, skipped: 0 });
+    expect(result).toEqual({
+      outcome: "completed",
+      landed: 0,
+      deleted: 0,
+      skipped: 0,
+      pagesCompleted: 0,
+      pagesRemaining: 0,
+    });
     expect(harness.deltaState.read).not.toHaveBeenCalled();
   });
 
@@ -303,7 +380,14 @@ describe("runDeltaSync — adapter driver", () => {
 
     const result = await harness.run();
 
-    expect(result).toEqual({ outcome: "failed", landed: 0, deleted: 0, skipped: 0 });
+    expect(result).toEqual({
+      outcome: "failed",
+      landed: 0,
+      deleted: 0,
+      skipped: 0,
+      pagesCompleted: 0,
+      pagesRemaining: null,
+    });
     expect(harness.documents).toEqual([]);
     expect(harness.puts).toEqual([]);
     expect(harness.deltaState.write).not.toHaveBeenCalled();
@@ -328,6 +412,86 @@ describe("runDeltaSync — adapter driver", () => {
 
     const result = await harness.run();
 
-    expect(result).toEqual({ outcome: "completed", landed: 0, deleted: 0, skipped: 2 });
+    expect(result).toEqual({
+      outcome: "completed",
+      landed: 0,
+      deleted: 0,
+      skipped: 2,
+      pagesCompleted: 1,
+      pagesRemaining: 0,
+    });
+  });
+  it("a walk that spends its page budget lands what it fetched, moves the cursor to the resume point and re-enqueues a continuation", async () => {
+    const { client, requested } = twoPageClient();
+    const deltaState = makeDeltaState();
+    const continuations: DeltaContinuation[] = [];
+    const result = await runDeltaSync({
+      client,
+      store: {
+        put: vi.fn().mockResolvedValue({ versionId: "v1" }),
+      } as unknown as StagedObjectStore,
+      eventLog: {
+        putIfAbsent: vi.fn().mockResolvedValue(true),
+      } as unknown as EventLogWriter,
+      deltaStateStore: deltaState as unknown as DeltaStateStore,
+      connection: { userId: "u1", provider: "onedrive" },
+      profiles: [profile],
+      initialUrl: INITIAL_URL,
+      pageBudget: 1,
+      requestContinuation: (continuation) => {
+        continuations.push(continuation);
+        return Promise.resolve();
+      },
+    });
+    // Landed the page it bought, and says plainly that pages remain: graph
+    // reports no total, so the count is unknown rather than zero.
+    expect(result).toEqual({
+      outcome: "completed",
+      landed: 1,
+      deleted: 0,
+      skipped: 0,
+      pagesCompleted: 1,
+      pagesRemaining: null,
+    });
+    expect(requested).not.toContain(SECOND_PAGE);
+    // The token stands at the resume point, so the continuation continues the
+    // walk instead of restarting the whole drive.
+    const written = deltaState.write.mock.calls[0] as
+      | [string, string, { deltaLink: string }]
+      | undefined;
+    expect(written?.[0]).toBe("u1");
+    expect(written?.[1]).toBe("onedrive");
+    expect(written?.[2]).toMatchObject({ deltaLink: SECOND_PAGE });
+    expect(continuations).toEqual([
+      { connection: { userId: "u1", provider: "onedrive" }, resumeLink: SECOND_PAGE },
+    ]);
+  });
+  it("leaves the token and the continuation alone when landing fails, so the retry re-walks the same pages", async () => {
+    const { client } = twoPageClient();
+    const deltaState = makeDeltaState();
+    const continuations: DeltaContinuation[] = [];
+    await expect(
+      runDeltaSync({
+        client,
+        store: {
+          put: vi.fn().mockRejectedValue(new Error("s3 unavailable")),
+        } as unknown as StagedObjectStore,
+        eventLog: {
+          putIfAbsent: vi.fn().mockResolvedValue(true),
+        } as unknown as EventLogWriter,
+        deltaStateStore: deltaState as unknown as DeltaStateStore,
+        connection: { userId: "u1", provider: "onedrive" },
+        profiles: [profile],
+        initialUrl: INITIAL_URL,
+        pageBudget: 1,
+        requestContinuation: (continuation) => {
+          continuations.push(continuation);
+          return Promise.resolve();
+        },
+      }),
+    ).rejects.toThrow("s3 unavailable");
+    // Advancing the token past unlanded changes would lose them for good.
+    expect(deltaState.write).not.toHaveBeenCalled();
+    expect(continuations).toEqual([]);
   });
 });
