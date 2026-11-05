@@ -18,6 +18,7 @@ beads, docs, PRs, and new code — a synonym invented in one place is a concept 
 | **Provider**   | A file source Petroglyph can act on a user's behalf against (today: OneDrive; future: GDrive/Dropbox).                        | Stable string identifier (`onedrive`); appears as the `source` URI prefix.                                                                                                                                                                          |
 | **Connection** | A user's authorised grant against one provider ("jay's authorised Microsoft account").                                        | One per `(userId, provider)` today. Owns the OAuth token lifecycle and `reconnectRequired`; its existence means connect completed. Revisit trigger: multi-account-per-provider would promote it to a `connectionId` entity that profiles reference. |
 | **Profile**    | A sync job: source provider + source directory + destination directory, running over one connection, with `active`/`enabled`. | Keyed `profileId` (`{profileId, userId, source, active, enabled, config?}`); emits events with `source: onedrive://profiles/<profileId>`. Multiple profiles share one connection's tokens.                                                          |
+| **Source folder path** | The provider folder a profile syncs from, stored as `sourceFolderPath`. | Stored in canonical form — no leading or trailing slash, no repeated slashes (`/notes/a/` → `notes/a`). `/` is the whole drive, `""` is rejected; a leading slash can never match a delta `relativePath`, which is always relative to the drive root. |
 | **Grant**      | The OAuth credential (access + refresh + expiry) held for a connection.                                                       | Microsoft rotates refresh tokens on **every** refresh — a rotated-out copy is dead (`invalid_grant`). Tokens are keyed by connection, never per profile.                                                                                            |
 
 ## Sentence checks
@@ -48,3 +49,8 @@ download returns `404`.
   connection.
 - **`reconnectRequired` is sticky** until `/onedrive/connect` rewrites the tokens, and
   `resolveAccessToken` never returns an expired token.
+
+A profile's `sourceFolderPath` is stored canonically (see the table). The walker
+matches it as a raw prefix — `relativePath === rootPath || relativePath.startsWith(rootPath + "/")`
+— with `/` special-cased as whole-drive, so an unnormalised value silently matches
+nothing.
