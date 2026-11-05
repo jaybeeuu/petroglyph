@@ -106,7 +106,7 @@ Mirror an existing package for scaffolding — `packages/staging-consumer` is th
 
 `packages/api-client` generates its types into `src/generated/openapi-types.ts` from that spec, regenerating the spec first. The types are gitignored too.
 
-`packages/api` generates nothing. `packages/contracts/test/parity.test.ts` holds the registry to the routes the three Hono apps register, so a route with no registry entry and a registry entry with no route both fail `pnpm test`.
+`packages/api` generates nothing. `packages/contracts/test/parity.test.ts` holds the registry to the routes the `api` and `staging-delivery` apps register, so a route with no registry entry and a registry entry with no route both fail `pnpm test`.
 
 ## Testing
 
