@@ -1,0 +1,30 @@
+{
+  "name": "@petroglyph/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "generate-openapi": "tsx scripts/generate-openapi.ts",
+    "lint": "eslint .",
+    "prebuild": "pnpm generate-openapi",
+    "pretest": "pnpm generate-openapi",
+    "pretypecheck": "pnpm generate-openapi",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "yaml": "^2.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "tsx": "^4.21.0"
+  }
+}

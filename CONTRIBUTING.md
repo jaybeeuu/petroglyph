@@ -102,9 +102,11 @@ Mirror an existing package for scaffolding — `packages/staging-consumer` is th
 
 ### Generated code
 
-`packages/api-client` generates its OpenAPI types into `src/generated/openapi-types.ts` from its own `openapi.yaml`. The file is gitignored and never committed: it is a build artefact, and `prebuild`, `pretypecheck`, and `pretest` regenerate it, so any build, typecheck, or test run recreates it. A fresh clone has no `src/generated/` directory until one of those scripts runs.
+`packages/contracts` owns the API surface. `src/operations/` declares one operation per served route, and `scripts/generate-openapi.ts` emits `openapi.yaml` at that package's root. The YAML is gitignored and never committed: it is a build artefact, and `prebuild`, `pretypecheck`, and `pretest` regenerate it, so any build, typecheck, or test run recreates it. Change the operation registry, never the YAML.
 
-`packages/api` does not generate types. The API server is the source of the contract; only the client consumes it, so the generation scripts and the `openapi-typescript` dependency belong to `packages/api-client` alone. Do not restore them to `packages/api` for symmetry.
+`packages/api-client` generates its types into `src/generated/openapi-types.ts` from that spec, regenerating the spec first. The types are gitignored too.
+
+`packages/api` generates nothing. `packages/contracts/test/parity.test.ts` holds the registry to the routes the three Hono apps register, so a route with no registry entry and a registry entry with no route both fail `pnpm test`.
 
 ## Testing
 
