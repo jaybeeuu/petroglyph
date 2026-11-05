@@ -9,6 +9,12 @@ const apiDir = join(__dirname, "..");
 const zipPath = join(apiDir, "lambda.zip");
 const extractDir = join(apiDir, ".test-extract");
 
+// The packaged bundle is ~3.5 MB, so the first import of it costs seconds: Vite
+// transforms the file for the vitest module runner and Node then compiles it.
+// Measured at about 4 s on an idle machine and about 20 s while `pnpm test` runs
+// several packages in parallel, so the per-test budget must allow for that.
+const moduleLoad = { timeout: 60_000 };
+
 describe("Lambda packaging smoke test", () => {
   beforeAll(() => {
     // Clean up any previous test extraction
@@ -53,7 +59,7 @@ describe("Lambda packaging smoke test", () => {
     expect(existsSync(pkgPath)).toBe(true);
   });
 
-  it("dist/index.js can be loaded by Node and exports handler", async () => {
+  it("dist/index.js can be loaded by Node and exports handler", moduleLoad, async () => {
     const indexPath = join(extractDir, "dist", "index.js");
 
     // Dynamically import the bundled index.js
@@ -63,9 +69,9 @@ describe("Lambda packaging smoke test", () => {
 
     expect(module).toHaveProperty("handler");
     expect(typeof module.handler).toBe("function");
-  }, 15_000);
+  });
 
-  it("handler export matches terraform config (dist/index.handler)", async () => {
+  it("handler export matches terraform config (dist/index.handler)", moduleLoad, async () => {
     // This test documents that the Terraform config expects dist/index.handler
     // which means the zip must have dist/index.js with a named export "handler"
     const indexPath = join(extractDir, "dist", "index.js");

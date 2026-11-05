@@ -12,29 +12,36 @@ beads, docs, PRs, and new code — a synonym invented in one place is a concept 
 
 ## Terms
 
-| Term                   | Definition                                                                                                                        | Notes                                                                                                                                                                                                                                               |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **User**               | A Petroglyph account holder; the layer-1 identity.                                                                                | `userId` is the JWT `sub` (e.g. `github\|12345`). Internal to Petroglyph — **not** a provider account identifier. Old code misnamed it `tokenHash`.                                                                                                 |
-| **Provider**           | A file source Petroglyph can act on a user's behalf against (today: OneDrive; future: GDrive/Dropbox).                            | Stable string identifier (`onedrive`); appears as the `source` URI prefix.                                                                                                                                                                          |
-| **Connection**         | A user's authorised grant against one provider ("jay's authorised Microsoft account").                                            | One per `(userId, provider)` today. Owns the OAuth token lifecycle and `reconnectRequired`; its existence means connect completed. Revisit trigger: multi-account-per-provider would promote it to a `connectionId` entity that profiles reference. |
-| **Profile**            | A sync job: source provider + source directory + destination directory, running over one connection, with `active`/`syncEnabled`. | Keyed `profileId` (`{profileId, userId, source, active, syncEnabled, config?}`); emits events with `source: onedrive://profiles/<profileId>`. Multiple profiles share one connection's tokens.                                                      |
-| **Grant**              | The OAuth credential (access + refresh + expiry) held for a connection.                                                           | Microsoft rotates refresh tokens on **every** refresh — a rotated-out copy is dead (`invalid_grant`). Tokens are keyed by connection, never per profile.                                                                                            |
-| **Source folder path** | The provider folder a profile syncs from, stored as `sourceFolderPath`.                                                           | Canonical form, `/` = whole drive. See below.                                                                                                                                                                                                       |
+| Term                   | Definition                                                                                                                    | Notes                                                                                                                                                                                                                                                 |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **User**               | A Petroglyph account holder; the layer-1 identity.                                                                            | `userId` is the JWT `sub` (e.g. `github\|12345`). Internal to Petroglyph — **not** a provider account identifier. Old code misnamed it `tokenHash`.                                                                                                   |
+| **Provider**           | A file source Petroglyph can act on a user's behalf against (today: OneDrive; future: GDrive/Dropbox).                        | Stable string identifier (`onedrive`); appears as the `source` URI prefix.                                                                                                                                                                            |
+| **Connection**         | A user's authorised grant against one provider ("jay's authorised Microsoft account").                                        | One per `(userId, provider)` today. Owns the OAuth token lifecycle and `reconnectRequired`; its existence means connect completed. Revisit trigger: multi-account-per-provider would promote it to a `connectionId` entity that profiles reference.   |
+| **Profile**            | A sync job: source provider + source directory + destination directory, running over one connection, with `active`/`enabled`. | Keyed `profileId` (`{profileId, userId, source, active, enabled, config?}`); emits events with `source: onedrive://profiles/<profileId>`. Multiple profiles share one connection's tokens.                                                            |
+| **Source folder path** | The provider folder a profile syncs from, stored as `sourceFolderPath`.                                                       | Stored in canonical form — no leading or trailing slash, no repeated slashes (`/notes/a/` → `notes/a`). `/` is the whole drive, `""` is rejected; a leading slash can never match a delta `relativePath`, which is always relative to the drive root. |
+| **Grant**              | The OAuth credential (access + refresh + expiry) held for a connection.                                                       | Microsoft rotates refresh tokens on **every** refresh — a rotated-out copy is dead (`invalid_grant`). Tokens are keyed by connection, never per profile.                                                                                              |
 
 ## Sentence checks
 
 - A **user** holds a **connection** to a **provider**; the connection owns the **grant**.
 - A **profile** is a scheduled job over one connection; it never holds tokens.
-- A profile's **source folder path** is stored in canonical form; `/` is the whole drive, not `""`.
 - `userId` is Petroglyph-internal; a provider account id is a different namespace.
+
+## Profile selection
+
+Two independent flags decide whether a profile runs and whether its files are served.
+
+- `active` marks the profile the scheduler and the manual sync path run. The legacy `/files/changes`
+  and `POST /sync/run` paths select on `active` alone.
+- `enabled` marks the profile the delivery feed serves. `GET /files` and `GET /files/{itemId}` scope
+  to the first profile that is both `active` and `enabled`.
+
+An active but disabled profile is skipped, so it cannot blank the feed for a later profile that
+qualifies. When no profile qualifies, `GET /files` returns `{ files: [], nextToken: null }` and the
+download returns `404`.
 
 ## Keyed-by facts
 
-- **`sourceFolderPath` is stored in canonical form** — no leading or trailing slash, no repeated
-  slashes (`/notes/a/` → `notes/a`); `/` is the whole drive and `""` is rejected. Graph delta paths
-  are always relative to the drive root, so a leading slash makes the walker's prefix match
-  unsatisfiable: the profile walks, ingests nothing, and reports a clean run. `normalizeSourceFolderPath`
-  in `@petroglyph/core` owns the rule and runs on write and again at walk time.
 - **Token vault keyed `(userId, provider)` = connection.** The credentialed unit is the
   user × provider grant, so `reconnectRequired` is grant-level — all profiles on a connection
   fast-fail together. Per-profile token copies would rot under Microsoft's refresh-token rotation.
@@ -43,12 +50,7 @@ beads, docs, PRs, and new code — a synonym invented in one place is a concept 
 - **`reconnectRequired` is sticky** until `/onedrive/connect` rewrites the tokens, and
   `resolveAccessToken` never returns an expired token.
 
-## Active profile
-
-A user has at most one **active** profile: `active` marks the profile the scheduler and the
-manual sync path run, and consumers take the first profile with `active: true`. Creating the
-first profile, activating a profile through `PUT /profiles/:id`, and deleting the active profile
-each adjust the other profiles to keep that invariant.
-
-Activation is read-then-write, not transactional. Two activations that overlap in time can leave
-two profiles marked active, and the consumer then runs whichever `listProfiles` returns first.
+A profile's `sourceFolderPath` is stored canonically (see the table). The walker
+matches it as a raw prefix — `relativePath === rootPath || relativePath.startsWith(rootPath + "/")`
+— with `/` special-cased as whole-drive, so an unnormalised value silently matches
+nothing.

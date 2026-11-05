@@ -85,8 +85,7 @@ function presignTtlOptions(ttlSeconds: number | undefined): { presignTtlSeconds?
  * no active-enabled profile means no served records.
  */
 function activeEnabledProfile(profiles: SyncProfile[]): SyncProfile | null {
-  const active = profiles.find((profile) => profile.active);
-  return active !== undefined && active.enabled ? active : null;
+  return profiles.find((profile) => profile.active && profile.enabled) ?? null;
 }
 
 /**
