@@ -1,8 +1,10 @@
-import { afterEach, assert, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SSMClient } from "@aws-sdk/client-ssm";
 import type { LambdaEvent } from "hono/aws-lambda";
+import type { createApp } from "./app.js";
 
-const ssm = vi.hoisted(() => ({ clients: 0, sends: 0 }));
+const ssm = vi.hoisted(() => ({ clients: 0, sends: 0, failNextSends: 0 }));
+const app = vi.hoisted(() => ({ created: 0 }));
 
 vi.mock("@aws-sdk/client-ssm", async (importOriginal) => {
   const actual = await importOriginal();
@@ -14,13 +16,28 @@ vi.mock("@aws-sdk/client-ssm", async (importOriginal) => {
 
       send = (): Promise<{ Parameters: { Name?: string; Value?: string }[] }> => {
         ssm.sends += 1;
+        if (ssm.failNextSends > 0) {
+          ssm.failNextSends -= 1;
+          return Promise.reject(new Error("Throttled"));
+        }
         return Promise.resolve({ Parameters: [] });
       };
     },
   });
 });
 
-import { handler, loadSSMParameters, SSM_MAPPINGS } from "./index.js";
+vi.mock("./app.js", async (importOriginal) => {
+  const actual = await importOriginal<{ createApp: typeof createApp }>();
+  return {
+    ...actual,
+    createApp: () => {
+      app.created += 1;
+      return actual.createApp();
+    },
+  };
+});
+
+import { loadSSMParameters, SSM_MAPPINGS, type handler as lambdaHandler } from "./index.js";
 
 /** The API Gateway v2 shape Hono's aws-lambda adapter consumes. */
 type ApiGatewayV2Event = Extract<LambdaEvent, { rawPath: string }>;
@@ -57,12 +74,30 @@ function healthEvent(): ApiGatewayV2Event {
   };
 }
 
+/**
+ * Each handler test needs its own instance of the module, because the module
+ * caches its initialisation. Re-evaluating it gives a fresh cache.
+ */
+async function loadHandler(): Promise<typeof lambdaHandler> {
+  vi.resetModules();
+  const { handler } = await import("./index.js");
+  return handler;
+}
+
 describe("handler cold start", () => {
+  beforeEach(() => {
+    ssm.clients = 0;
+    ssm.sends = 0;
+    ssm.failNextSends = 0;
+    app.created = 0;
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
   it("loads the SSM parameters on first invocation, not at import", async () => {
+    const handler = await loadHandler();
     expect(ssm.clients).toBe(0);
     expect(ssm.sends).toBe(0);
 
@@ -75,6 +110,33 @@ describe("handler cold start", () => {
     expect(second).toMatchObject({ statusCode: 200 });
     expect(ssm.clients).toBe(1);
     expect(ssm.sends).toBe(1);
+    expect(app.created).toBe(1);
+  });
+
+  it("retries initialisation on the next invocation when the SSM load rejects", async () => {
+    const handler = await loadHandler();
+
+    vi.stubEnv("GITHUB_CLIENT_ID_SSM_PATH", "/petroglyph/production/github/client-id");
+    ssm.failNextSends = 1;
+
+    await expect(handler(healthEvent())).rejects.toThrow("Throttled");
+    const second = await handler(healthEvent());
+
+    expect(second).toMatchObject({ statusCode: 200 });
+    expect(ssm.sends).toBe(2);
+  });
+
+  it("shares one SSM load and one route graph between concurrent invocations", async () => {
+    const handler = await loadHandler();
+
+    vi.stubEnv("GITHUB_CLIENT_ID_SSM_PATH", "/petroglyph/production/github/client-id");
+
+    const [first, second] = await Promise.all([handler(healthEvent()), handler(healthEvent())]);
+
+    expect(first).toMatchObject({ statusCode: 200 });
+    expect(second).toMatchObject({ statusCode: 200 });
+    expect(ssm.sends).toBe(1);
+    expect(app.created).toBe(1);
   });
 });
 
