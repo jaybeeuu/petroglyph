@@ -137,12 +137,26 @@ export type FileChangeEvent =
       isFolder: boolean;
     };
 
-export type DeltaWalkOutcome = "continued" | "reset" | "failed";
+export type DeltaWalkOutcome = "continued" | "reset" | "failed" | "deferred";
 
 export interface DeltaWalkResult {
   events: FileChangeEvent[];
   deltaLink?: string;
   outcome: DeltaWalkOutcome;
+  /**
+   * Delta pages fetched and classified by this invocation. Reported so an
+   * operator can read how far one bell got — a walk that never finishes leaves
+   * the same trace whether it is slow, throttled, or stuck.
+   */
+  pagesCompleted: number;
+  /**
+   * The nextLink the walk stopped on when the page budget ran out (outcome
+   * `deferred`). The CALLER persists it: it becomes the stored token only after
+   * this invocation's events are landed, so a crash before then leaves the
+   * previous token authoritative and the retry re-walks the same pages instead
+   * of skipping changes it never processed.
+   */
+  resumeLink?: string;
   /**
    * Emittable items (file/delete) whose parent path is absent or not a
    * recognised drive-root form — "unknown", distinct from a drive-root item
@@ -180,7 +194,24 @@ export interface DeltaWalkOptions {
   profiles: DeltaWalkProfile[];
   /** First-call (no token) full-enumeration URL. */
   initialUrl: string;
+  /**
+   * Maximum delta pages fetched in one invocation; defaults to
+   * DEFAULT_PAGE_BUDGET. The adapter Lambda times out at 300 s and a first walk
+   * over a whole drive is far more work than that, so the walk stops at a page
+   * boundary, reports `deferred`, and hands the caller a resume link. One page
+   * can carry up to 200 items, so this bounds walk requests, not landed items.
+   */
+  pageBudget?: number;
 }
+
+/**
+ * One page per invocation. A page of delta items still has to be fetched, gated
+ * and landed inside the 300 s adapter timeout, and that landing work — not the
+ * page request — is what made the first whole-drive walk outlive the timeout.
+ * A budget of one page means an invocation never queues a second page's work
+ * behind an unlanded first one, and the continuation bell carries the walk on.
+ */
+export const DEFAULT_PAGE_BUDGET = 1;
 
 /**
  * Strips up to the drive root: "/drive/root:/notes/sub" → "notes/sub".
@@ -223,9 +254,16 @@ type Page =
  * stored; pages @odata.nextLink until the terminal @odata.deltaLink; writes
  * the state ONLY on successful completion; 410/syncStateNotFound clears the
  * token and re-enumerates from scratch (outcome reset, didReset true).
+ *
+ * The walk gives up the drive after `pageBudget` pages and reports `deferred`
+ * with a `resumeLink` instead of paging on: a first walk over a whole drive is
+ * more work than one Lambda invocation has, and running into the timeout
+ * advances nothing. The caller lands the events it was given, persists the
+ * resume link, and bells a continuation.
  */
 export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkResult> {
   const stored = await options.store.read(options.connection.userId, options.connection.provider);
+
   // A stored profile path may predate write-side normalization (a leading slash
   // makes the prefix match unsatisfiable, so the profile silently ingests
   // nothing), so canonicalize here too: the walk is where the prefix is used.
@@ -235,6 +273,8 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
         ? profile
         : { ...profile, rootPath: normalizeSourceFolderPath(profile.rootPath) },
   );
+
+  const pageBudget = options.pageBudget ?? DEFAULT_PAGE_BUDGET;
   // Delta shows the latest state per item and may repeat an item within a walk,
   // so the last occurrence seen wins.
   const eventsByItemId = new Map<string, FileChangeEvent>();
@@ -244,6 +284,7 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
   let didReset = false;
   let unresolvedPathCount = 0;
   let driveRootItemCount = 0;
+  let pagesCompleted = 0;
 
   /**
    * Request a page and apply the reset rule once: a rejected token clears the
@@ -272,6 +313,7 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
     unresolvedPathCount,
     driveRootItemCount,
     didReset,
+    pagesCompleted,
   });
 
   let page = await requestPage(stored?.deltaLink ?? options.initialUrl);
@@ -294,6 +336,7 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
     }
 
     const classified = classifyPage(parsed.data.value, profiles);
+    pagesCompleted += 1;
     for (const event of classified.events) {
       eventsByItemId.set(event.itemId, event);
     }
@@ -318,6 +361,7 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
         unresolvedPathCount,
         driveRootItemCount,
         didReset,
+        pagesCompleted,
       };
     }
 
@@ -326,6 +370,21 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
       // Neither link: the walk never reached a terminal change token, so it
       // cannot claim success with the token left unadvanced.
       return failed();
+    }
+
+    if (pagesCompleted >= pageBudget) {
+      // Stop at the page boundary and hand the walk to the caller. Continuing
+      // would run a whole-drive first walk past the Lambda timeout, which is
+      // how the change token stopped advancing in production.
+      return {
+        events: collectEvents(),
+        outcome: "deferred",
+        unresolvedPathCount,
+        driveRootItemCount,
+        didReset,
+        pagesCompleted,
+        resumeLink: nextLink,
+      };
     }
     page = await requestPage(nextLink);
   }

@@ -550,6 +550,15 @@ resource "aws_iam_role_policy" "petroglyph_adapter_onedrive_policy" {
         ]
         Resource = aws_sqs_queue.delta_trigger.arn
       },
+      # The adapter bells its own continuation when a walk spends its page
+      # budget. Without this grant the first whole-drive walk would stop at the
+      # page boundary and never resume.
+      {
+        Sid      = "SQSSendDeltaTriggerContinuation"
+        Effect   = "Allow"
+        Action   = "sqs:SendMessage"
+        Resource = aws_sqs_queue.delta_trigger.arn
+      },
       {
         Sid      = "SSMReadOnedriveSecrets"
         Effect   = "Allow"

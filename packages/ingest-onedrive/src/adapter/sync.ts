@@ -10,6 +10,26 @@ export interface DeltaSyncResult {
   landed: number;
   deleted: number;
   skipped: number;
+  /** Delta pages fetched and classified by this invocation. */
+  pagesCompleted: number;
+  /**
+   * Whole pages left for a later invocation: 0 when the walk reached its
+   * terminal change token, null when pages remain. Graph's delta reports no
+   * total, so "some remain" is the most a deferred walk can honestly say.
+   */
+  pagesRemaining: number | null;
+}
+
+/**
+ * A walk that spent its page budget hands this to the caller: the connection
+ * whose walk stopped, and the opaque nextLink it stopped on. The resume link is
+ * also the natural FIFO deduplication basis — two sends of the same resume
+ * point are the same continuation, two different ones are different chunks of
+ * the same catch-up.
+ */
+export interface DeltaContinuation {
+  connection: { userId: string; provider: string };
+  resumeLink: string;
 }
 
 export interface RunDeltaSyncOptions {
@@ -20,6 +40,14 @@ export interface RunDeltaSyncOptions {
   connection: { userId: string; provider: string };
   profiles: DeltaWalkProfile[];
   initialUrl: string;
+  /** Pages this invocation may walk; see DeltaWalkOptions.pageBudget. */
+  pageBudget?: number;
+  /**
+   * Enqueues the next bell after a walk spends its page budget. Required: a
+   * deferred walk with nothing to continue it stops the catch-up dead, and the
+   * stored resume link silently goes stale.
+   */
+  requestContinuation: (continuation: DeltaContinuation) => Promise<void>;
   log?: (message: string) => void;
 }
 
@@ -33,31 +61,57 @@ export interface RunDeltaSyncOptions {
  * updates to one item carry different eTags and so stay distinct.
  * landed/deleted count only writes the log accepted; a suppressed
  * re-emission ("deduped") counts as skipped.
+ *
+ * A walk that spends its page budget is not a failure: the pages it did fetch
+ * are landed, the resume point becomes the stored token, and a continuation
+ * bell carries the walk on. That keeps one invocation well inside the Lambda
+ * timeout, which a first walk over a whole drive never was.
  */
 export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaSyncResult> {
   const log = options.log ?? console.error;
+  const connection = options.connection;
 
   if (options.profiles.length === 0) {
-    return { outcome: "completed", landed: 0, deleted: 0, skipped: 0 };
+    return {
+      outcome: "completed",
+      landed: 0,
+      deleted: 0,
+      skipped: 0,
+      pagesCompleted: 0,
+      pagesRemaining: 0,
+    };
   }
 
   const walk = await walkDelta({
     client: options.client,
     store: options.deltaStateStore,
-    connection: options.connection,
+    connection,
     profiles: options.profiles,
     initialUrl: options.initialUrl,
+    ...(options.pageBudget === undefined ? {} : { pageBudget: options.pageBudget }),
   });
+
   if (walk.outcome === "failed") {
+    // Page progress on the failure path too: a failed walk that reports no
+    // page count is indistinguishable from one that never started.
     log(
-      `[adapter] delta walk failed for ${options.connection.userId}/${options.connection.provider}`,
+      `[adapter] delta walk failed for ${connection.userId}/${connection.provider} ` +
+        `after ${walk.pagesCompleted} page(s)`,
     );
-    return { outcome: "failed", landed: 0, deleted: 0, skipped: 0 };
+    return {
+      outcome: "failed",
+      landed: 0,
+      deleted: 0,
+      skipped: 0,
+      pagesCompleted: walk.pagesCompleted,
+      pagesRemaining: null,
+    };
   }
 
   let landed = 0;
   let deleted = 0;
   let skipped = 0;
+
   for (const change of walk.events) {
     const outcome = await processChange(change, {
       graph: options.client,
@@ -77,7 +131,38 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
     }
   }
 
-  return { outcome: "completed", landed, deleted, skipped };
+  if (walk.resumeLink !== undefined) {
+    // Persist the resume point only now, with every change this invocation
+    // fetched already in the event log. A crash anywhere above leaves the
+    // previous token authoritative, so the retry re-walks the same pages and
+    // the event log dedupes the repeats — nothing is skipped.
+    await options.deltaStateStore.write(connection.userId, connection.provider, {
+      deltaLink: walk.resumeLink,
+      updatedAt: new Date().toISOString(),
+    });
+    await options.requestContinuation({ connection, resumeLink: walk.resumeLink });
+    log(
+      `[adapter] delta walk deferred for ${connection.userId}/${connection.provider}: ` +
+        `${walk.pagesCompleted} page(s) completed, more remain — continuation enqueued`,
+    );
+    return {
+      outcome: "completed",
+      landed,
+      deleted,
+      skipped,
+      pagesCompleted: walk.pagesCompleted,
+      pagesRemaining: null,
+    };
+  }
+
+  return {
+    outcome: "completed",
+    landed,
+    deleted,
+    skipped,
+    pagesCompleted: walk.pagesCompleted,
+    pagesRemaining: 0,
+  };
 }
 
 /**

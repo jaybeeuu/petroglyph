@@ -179,6 +179,35 @@ aws logs tail /aws/lambda/petroglyph-adapter-catch-up-production --since 12h --p
 
 To force a sweep outside the schedule, invoke the function directly; to bell a single connection instead, send the message by hand (see the Delivery 1 runbook in `.working-docs/`).
 
+### Delta catch-up progress and a stalled walk
+
+One bell walks one delta page. `DEFAULT_PAGE_BUDGET` in `packages/ingest-onedrive/src/delta/delta-walk.ts` is one: the invocation lands that page's changes, stores the page's `@odata.nextLink` as the connection's change token, and enqueues a continuation bell with the same `{userId, provider}` body and a dedupe id hashed from the resume link. A walk that reaches the terminal `@odata.deltaLink` stores that link and enqueues nothing, which ends the catch-up for the connection.
+
+The continuation is the only thing that carries the walk forward. A bell that is dropped, dead-lettered or never sent leaves a non-terminal change token and no pending work, and nothing retries it until the next scheduled sweep (default `rate(6 hours)`) re-bells the connection and resumes from the stored token. Read the depth of `petroglyph-delta-trigger-<workspace>.fifo` and its DLQ ([Checking for stuck messages](#checking-for-stuck-messages)) before calling a catch-up healthy.
+
+Every bell writes one progress line, on the deferred, failed and terminal paths alike:
+
+```
+[adapter] delta run for <userId>/<provider> <outcome>: <N> page(s) completed, more remain
+```
+
+`more remain` means the walk deferred and enqueued a continuation. `0 remaining` means it reached the terminal change token and the connection is caught up. A failed walk logs `[adapter] delta walk failed for <userId>/<provider> after <N> page(s)` first, then the same line with `outcome: failed`, and SQS redelivers the bell.
+
+Three constraints bound how much that budget buys. It bounds pages, not items: a page can carry up to 200 items and landing is the expensive half — a production page of 73 files took about 84 s — so one slow page can still outrun the timeout. The adapter timeout and the delta-trigger queue's visibility timeout are both 300 s, so a redelivered bell arrives only after the full window. And `delta_states.deltaLink` holds a non-terminal `@odata.nextLink` while a catch-up is in flight, so a stored token does not mean the walk finished.
+
+### Diagnosing a catch-up that stopped
+
+`MicrosoftGraphClient` (`packages/ingest-onedrive/src/tokens/graph-client.ts`) sends no `AbortSignal`, so a stalled Graph socket outlives every deadline the invocation is meant to respect, the page budget included.
+
+The first production stall (2026-11-04) logged `INIT_START` and `START`, then no `END`, no `REPORT` and no `Task timed out` line for 40 minutes, while the bell stayed invisible on the queue. Why the runtime wrote nothing is **undetermined**: a hung request explains a 40-minute walk, not the silence, and the same runtime does report its failures here — an out-of-memory walk at 78 s logged `REPORT … Status: error` (`petroglyph-63vq`). Four checks settle it, in this order:
+
+1. Query the whole log group, not one filtered stream, over the bell window: `filter @type = "REPORT"` plus the request id, and count the log streams in that window. This separates "never written" from "never looked at".
+2. Read the adapter function's `Timeout` and `LastModified` and its event source mapping as they were at the incident time. A deploy between the reading and the incident makes a 40-minute invocation possible.
+3. Read the Lambda `Duration` and `Errors` CloudWatch metrics, which do not depend on log lines.
+4. Check the receive count on the bell. `maxReceiveCount` is 3, so a genuine timeout would have produced up to three `START` lines in that window.
+
+The adapter still lacks the instrumentation that would make this quick: a per-bell start line carrying the `messageId`, `ApproximateReceiveCount` and page index.
+
 ### Auditing idle SQS requests
 
 `packages/infra/scripts/audit-sqs-idle-requests.sh` answers one question: is the account's SQS request volume idle polling or real work, and which queues produced it. It sums four metrics per queue over the window — `NumberOfEmptyReceives` for the idles, `NumberOfMessagesSent`/`Received`/`Deleted` for the work — then prints the event source mapping states, so a queue that is still polling is visible beside the number it produced.

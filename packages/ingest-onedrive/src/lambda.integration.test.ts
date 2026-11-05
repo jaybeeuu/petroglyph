@@ -113,6 +113,12 @@ describe("adapter handler against LocalStack S3 + event log", () => {
     vi.stubEnv("STAGED_PDFS_BUCKET", BUCKET);
     vi.stubEnv("ONEDRIVE_CLIENT_ID_SSM_PATH", CLIENT_ID_PATH);
     vi.stubEnv("ONEDRIVE_CLIENT_SECRET_SSM_PATH", CLIENT_SECRET_PATH);
+    // Nothing is sent: the stub drive answers in one page, so the walk reaches
+    // its terminal token and never asks for a continuation.
+    vi.stubEnv(
+      "DELTA_TRIGGER_QUEUE_URL",
+      "http://localhost:4566/000000000000/petroglyph-delta-bell-int.fifo",
+    );
 
     const rawDynamo = new DynamoDBClient({ region: REGION, endpoint, credentials: CREDENTIALS });
     await createTable(rawDynamo, TOKEN_VAULT_TABLE, "userId", "provider");
