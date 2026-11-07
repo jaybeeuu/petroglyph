@@ -56,6 +56,10 @@ jobs:
             packages/*/*.tsbuildinfo
           key: dist-${{ github.sha }}
       - run: pnpm build
+      - name: Check the committed OpenAPI spec matches the operation registry
+        run: |
+          pnpm --filter @petroglyph/contracts generate-openapi
+          git diff --exit-code -- packages/contracts/openapi.yaml
 
   lint:
     needs: [build]

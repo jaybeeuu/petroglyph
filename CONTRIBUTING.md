@@ -102,7 +102,7 @@ Mirror an existing package for scaffolding — `packages/staging-consumer` is th
 
 ### Generated code
 
-`packages/contracts` owns the API surface. `src/operations/` declares one operation per served route, and `scripts/generate-openapi.ts` emits `openapi.yaml` at that package's root. The YAML is gitignored and never committed: it is a build artefact, and `prebuild`, `pretypecheck`, and `pretest` regenerate it, so any build, typecheck, or test run recreates it. Change the operation registry, never the YAML.
+`packages/contracts` owns the API surface. `src/operations/` declares one operation per served route, and `scripts/generate-openapi.ts` emits `openapi.yaml` at that package's root. The YAML is generated from the operation registry and committed, so a change to the API surface shows as a reviewable diff. Never hand-edit it: `prebuild`, `pretypecheck`, and `pretest` regenerate it, and the `build` job's drift check fails when the committed file differs from the registry. Change the operation registry, never the YAML.
 
 `packages/api-client` generates its types into `src/generated/openapi-types.ts` from that spec, regenerating the spec first. The types are gitignored too.
 
