@@ -56,6 +56,24 @@ jobs:
             packages/*/*.tsbuildinfo
           key: dist-${{ github.sha }}
       - run: pnpm build
+      - name: Check the committed OpenAPI spec matches the operation registry
+        run: |
+          set -euo pipefail
+          spec=packages/contracts/openapi.yaml
+          pnpm --filter @petroglyph/contracts generate-openapi
+          if git diff --quiet -- "$spec"; then
+            echo "OK: $spec already matches the operation registry."
+            exit 0
+          fi
+          echo "ERROR: the committed $spec must match the output of the operation registry."
+          echo "The committed OpenAPI spec is out of date. Run this and commit the result:"
+          echo ""
+          echo "    pnpm --filter @petroglyph/contracts generate-openapi"
+          echo ""
+          echo "Change the operation registry, not $spec: that file is generated."
+          echo "Difference between the committed file and the generated file:"
+          git diff -- "$spec"
+          exit 1
 
   lint:
     needs: [build]

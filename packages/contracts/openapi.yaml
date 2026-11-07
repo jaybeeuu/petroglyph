@@ -1,0 +1,126 @@
+openapi: 3.1.0
+info:
+  title: Petroglyph API
+  version: 0.0.0
+  description: "Generated from packages/contracts. Do not edit the YAML by hand: change the operation registry instead."
+paths:
+  /auth/callback:
+    get:
+      operationId: getAuthCallback
+      summary: Complete the GitHub authorisation flow
+      tags:
+        - auth
+  /auth/refresh:
+    post:
+      operationId: postAuthRefresh
+      summary: Refresh the access token
+      tags:
+        - auth
+  /auth/url:
+    get:
+      operationId: getAuthUrl
+      summary: Start the GitHub authorisation flow
+      tags:
+        - auth
+  /files:
+    get:
+      operationId: listFiles
+      summary: List the delivered files for the active profile
+      tags:
+        - files
+  /files/changes:
+    get:
+      operationId: getFilesChanges
+      summary: List files changed since a cursor
+      tags:
+        - files
+      deprecated: true
+  /files/{itemId}:
+    get:
+      operationId: getFile
+      summary: Read one delivered file
+      tags:
+        - files
+  /health:
+    get:
+      operationId: getHealth
+      summary: Report service health
+      tags:
+        - health
+  /onedrive/auth-url:
+    get:
+      operationId: getOnedriveAuthUrl
+      summary: Start the OneDrive authorisation flow
+      tags:
+        - onedrive
+  /onedrive/connect:
+    get:
+      operationId: bridgeOnedriveCallback
+      summary: Bridge the OneDrive OAuth callback into the app
+      tags:
+        - onedrive
+    post:
+      operationId: connectOnedrive
+      summary: Connect an OneDrive account
+      tags:
+        - onedrive
+  /onedrive/lifecycle:
+    post:
+      operationId: postOnedriveLifecycle
+      summary: Receive OneDrive lifecycle notifications
+      tags:
+        - onedrive
+  /profiles:
+    get:
+      operationId: listProfiles
+      summary: List sync profiles
+      tags:
+        - profiles
+    post:
+      operationId: createProfile
+      summary: Create a sync profile
+      tags:
+        - profiles
+  /profiles/{id}:
+    get:
+      operationId: getProfile
+      summary: Read one sync profile
+      tags:
+        - profiles
+    put:
+      operationId: putProfile
+      summary: Replace one sync profile
+      tags:
+        - profiles
+    delete:
+      operationId: deleteProfile
+      summary: Delete one sync profile
+      tags:
+        - profiles
+  /status:
+    get:
+      operationId: getStatus
+      summary: Report the user's sync status
+      tags:
+        - status
+  /sync/jobs/{jobId}:
+    get:
+      operationId: getSyncJob
+      summary: Read one sync job
+      tags:
+        - sync
+      deprecated: true
+  /sync/reset:
+    post:
+      operationId: resetSync
+      summary: Reset the user's sync state
+      tags:
+        - sync
+      deprecated: true
+  /sync/run:
+    post:
+      operationId: runSync
+      summary: Run a sync now
+      tags:
+        - sync
+      deprecated: true
