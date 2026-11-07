@@ -5,13 +5,15 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 const mockSend = vi.hoisted(() => vi.fn());
 
 vi.mock("./db.js", () => ({
-  docClient: { send: mockSend },
+  docClient: () => ({ send: mockSend }),
 }));
 
 const mockFetch = vi.hoisted(() => vi.fn());
 vi.stubGlobal("fetch", mockFetch);
 
-import { app } from "./app.js";
+import { createApp } from "./app.js";
+
+const app = createApp();
 
 // ─── Key pair (generated once for the suite) ────────────────────────────────
 

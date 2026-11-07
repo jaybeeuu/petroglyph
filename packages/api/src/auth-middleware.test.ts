@@ -5,12 +5,14 @@ import { Hono } from "hono";
 const mockSend = vi.hoisted(() => vi.fn().mockResolvedValue({}));
 
 vi.mock("./db.js", () => ({
-  docClient: { send: mockSend },
+  docClient: () => ({ send: mockSend }),
 }));
 
-import { app } from "./app.js";
+import { createApp } from "./app.js";
 import { authMiddleware, type AppVariables } from "./auth-middleware.js";
 import { resetKeyCache } from "./jwt.js";
+
+const app = createApp();
 
 describe("auth middleware", () => {
   let privateKey: CryptoKey;

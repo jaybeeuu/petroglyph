@@ -3,10 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mockSend = vi.hoisted(() => vi.fn().mockResolvedValue({}));
 
 vi.mock("./db.js", () => ({
-  docClient: { send: mockSend },
+  docClient: () => ({ send: mockSend }),
 }));
 
-import { app } from "./app.js";
+import { createApp } from "./app.js";
+
+const app = createApp();
 
 describe("GET /auth/url", () => {
   const returnUri = "obsidian://petroglyph/open";

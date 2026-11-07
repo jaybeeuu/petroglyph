@@ -15,7 +15,16 @@ const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 25;
 const PRESIGNED_URL_EXPIRES_IN_SECONDS = 15 * 60;
 
-const s3Client = new S3Client({});
+let cachedS3Client: S3Client | undefined;
+
+/**
+ * The S3 client, built on first use. Building it at module scope would make
+ * importing this module an effect (petroglyph-1o2d).
+ */
+function s3Client(): S3Client {
+  cachedS3Client ??= new S3Client({});
+  return cachedS3Client;
+}
 
 const fileChangesQuerySchema = z.object({
   after: z.string().min(1).optional(),
@@ -75,7 +84,7 @@ function encodeCursorToken(cursor: CursorToken): string {
 }
 
 async function readInitialSyncEnabled(userId: string): Promise<boolean> {
-  const profiles = await listProfiles(docClient, syncProfilesTableName(), userId);
+  const profiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
   const activeProfile = profiles.find((p) => p.active);
   return activeProfile?.initialSyncEnabled ?? true;
 }
@@ -85,7 +94,7 @@ async function readFileRecordPage(
   limit: number,
   exclusiveStartKey?: CursorToken,
 ): Promise<{ fileRecords: FileRecord[]; nextToken: string | null }> {
-  const result = await docClient.send(
+  const result = await docClient().send(
     new QueryCommand({
       TableName: fileRecordsTableName(),
       KeyConditionExpression: "profileId = :profileId",
@@ -130,7 +139,7 @@ async function readFileRecordPage(
 
 async function presignFileRecord(fileRecord: StagedFileRecord): Promise<FileChange> {
   const s3PresignedUrl = await getSignedUrl(
-    s3Client,
+    s3Client(),
     new GetObjectCommand({
       Bucket: stagedBucketName(),
       Key: fileRecord.s3Key,
@@ -165,7 +174,7 @@ export async function handleFilesChanges(c: Context): Promise<Response> {
     }
   }
 
-  const profiles = await listProfiles(docClient, syncProfilesTableName(), userId);
+  const profiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
   const activeProfile = profiles.find((p) => p.active);
   if (!activeProfile) {
     return c.json({ error: "No active profile configured" }, 400);

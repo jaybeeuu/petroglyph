@@ -38,7 +38,7 @@ function parseOneDriveParams(value: unknown, userId: string): OneDriveParams {
 }
 
 export async function readOneDriveParams(userId: string): Promise<OneDriveParams> {
-  const result = await docClient.send(
+  const result = await docClient().send(
     new GetCommand({
       TableName: refreshTokensTable(),
       Key: { tokenHash: userId },
@@ -115,7 +115,7 @@ async function storeOneDriveParams(
   expiresIn: number,
 ): Promise<void> {
   const expirySeconds = Math.floor(Date.now() / 1000) + expiresIn;
-  await docClient.send(
+  await docClient().send(
     new UpdateCommand({
       TableName: refreshTokensTable(),
       Key: { tokenHash: userId },

@@ -8,7 +8,16 @@ import type {
 } from "aws-lambda";
 import { docClient } from "./db.js";
 
-const sqsClient = new SQSClient({});
+let cachedSqsClient: SQSClient | undefined;
+
+/**
+ * The SQS client, built on first use. Building it at module scope would make
+ * importing this module an effect (petroglyph-1o2d).
+ */
+function sqsClient(): SQSClient {
+  cachedSqsClient ??= new SQSClient({});
+  return cachedSqsClient;
+}
 
 // A TTL deletion is the only REMOVE whose userIdentity identifies the DynamoDB
 // TTL process; regular deletes carry no userIdentity at all.
@@ -112,7 +121,7 @@ async function recreateQueuedJob(job: RemovedJob): Promise<void> {
   }
 
   const createdAt = new Date().toISOString();
-  await docClient.send(
+  await docClient().send(
     new PutCommand({
       TableName: syncJobsTableName(),
       Item: {
@@ -171,7 +180,7 @@ async function relayJob(record: DynamoDBRecord): Promise<void> {
     return;
   }
 
-  await sqsClient.send(
+  await sqsClient().send(
     new SendMessageCommand({
       QueueUrl: syncJobQueueUrl(),
       MessageBody: JSON.stringify(message),

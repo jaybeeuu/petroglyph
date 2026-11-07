@@ -4,7 +4,12 @@ import type { SQSBatchResponse, SQSEvent } from "aws-lambda";
 import { DynamoDBStagedIndexStore, S3StagedObjectStore } from "@petroglyph/staging-contracts";
 import { createDispatchHandler, type DispatchDependencies } from "./dispatch.js";
 
-const docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+let cachedDocClient: DynamoDBDocumentClient | undefined;
+
+function docClient(): DynamoDBDocumentClient {
+  cachedDocClient ??= DynamoDBDocumentClient.from(new DynamoDBClient({}));
+  return cachedDocClient;
+}
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -27,7 +32,7 @@ function createDependencies(): DispatchDependencies {
   const ttlSeconds = stagedRetentionSeconds();
   return {
     index: new DynamoDBStagedIndexStore({
-      client: docClient,
+      client: docClient(),
       tableName: requiredEnv("FILE_RECORDS_TABLE"),
     }),
     objectStore: new S3StagedObjectStore({

@@ -45,7 +45,7 @@ export async function handleOnedriveAuthUrl(
     : uuid;
   const ttl = Math.floor(Date.now() / 1000) + 600;
 
-  await docClient.send(
+  await docClient().send(
     new PutCommand({
       TableName: TABLE_NAME,
       Item: { tokenHash: uuid, type: "onedrive_state", verifier, ttl },

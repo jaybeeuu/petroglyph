@@ -47,7 +47,7 @@ export async function handleSyncJobStatus(c: Context): Promise<Response> {
     throw new Error("Missing userId in sync job status context");
   }
 
-  const result = await docClient.send(
+  const result = await docClient().send(
     new GetCommand({
       TableName: syncJobsTableName(),
       Key: { jobId },

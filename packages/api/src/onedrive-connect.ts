@@ -57,7 +57,7 @@ function parseMicrosoftTokenResponse(data: unknown): MicrosoftTokenResponse {
 }
 
 async function lookupStateItem(state: string): Promise<OnedriveStateItem | null> {
-  const result = await docClient.send(
+  const result = await docClient().send(
     new GetCommand({
       TableName: refreshTokensTable(),
       Key: { tokenHash: state },
@@ -68,7 +68,7 @@ async function lookupStateItem(state: string): Promise<OnedriveStateItem | null>
 }
 
 async function deleteStateItem(state: string): Promise<void> {
-  await docClient.send(
+  await docClient().send(
     new DeleteCommand({
       TableName: refreshTokensTable(),
       Key: { tokenHash: state },
@@ -132,7 +132,7 @@ async function storeTokensInDynamoDB(
 ): Promise<void> {
   const expirySeconds = Math.floor(Date.now() / 1000) + expiresIn;
 
-  await docClient.send(
+  await docClient().send(
     new UpdateCommand({
       TableName: refreshTokensTable(),
       Key: { tokenHash: userId },
@@ -150,7 +150,7 @@ async function storeTokensInDynamoDB(
 
 async function upsertSyncProfile(userId: string): Promise<void> {
   const now = new Date().toISOString();
-  await docClient.send(
+  await docClient().send(
     new UpdateCommand({
       TableName: syncProfilesTable(),
       Key: { userId, profileId: "default" },
@@ -269,7 +269,7 @@ export async function handleOnedriveConnect(
   console.info("[onedrive-connect] Microsoft token exchange succeeded", { userId });
   await storeTokensInDynamoDB(userId, tokens.access_token, tokens.refresh_token, tokens.expires_in);
   console.info("[onedrive-connect] Stored Microsoft tokens in DynamoDB", { userId });
-  await writeInitialConnectionTokens(docClient, {
+  await writeInitialConnectionTokens(docClient(), {
     userId,
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,

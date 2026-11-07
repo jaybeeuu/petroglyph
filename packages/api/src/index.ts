@@ -1,6 +1,6 @@
 import { GetParametersCommand, type SSMClient } from "@aws-sdk/client-ssm";
 import { handle } from "hono/aws-lambda";
-import { app } from "./app.js";
+import { createApp } from "./app.js";
 import { ssmClient } from "./ssm.js";
 
 export const SSM_MAPPINGS = [
@@ -35,6 +35,37 @@ export async function loadSSMParameters(
   }
 }
 
-await loadSSMParameters(ssmClient, SSM_MAPPINGS);
+let cachedInit: Promise<ReturnType<typeof handle>> | undefined;
 
-export const handler = handle(app);
+/**
+ * Initialises the lambda on first invocation: load the SSM-backed environment,
+ * then build the route graph. Caching the promise makes both happen exactly
+ * once per instance, including when invocations arrive concurrently. Doing
+ * either at module scope would make importing this module an effect
+ * (petroglyph-1o2d).
+ *
+ * A failed attempt drops the cached promise, so the next invocation retries
+ * instead of serving the rejection for the life of the sandbox. Only the
+ * pending attempt is cached, so a transient SSM failure costs one extra load.
+ * The reset runs in the rejection handler, after the assignment above it has
+ * completed, and no newer attempt can exist before the reset: a call made
+ * while the attempt is pending returns that same promise.
+ */
+function init(): Promise<ReturnType<typeof handle>> {
+  cachedInit ??= (async () => {
+    await loadSSMParameters(ssmClient(), SSM_MAPPINGS);
+    return handle(createApp());
+  })().catch((error: unknown) => {
+    cachedInit = undefined;
+    throw error;
+  });
+  return cachedInit;
+}
+
+/**
+ * Lambda entrypoint.
+ */
+export const handler: ReturnType<typeof handle> = async (event, lambdaContext) => {
+  const lambdaHandler = await init();
+  return lambdaHandler(event, lambdaContext);
+};

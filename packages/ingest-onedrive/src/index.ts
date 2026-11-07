@@ -4,7 +4,16 @@ import { z } from "zod";
 
 const DEFAULT_PROFILE_ID = "default";
 
-const sqsClient = new SQSClient({});
+let cachedSqsClient: SQSClient | undefined;
+
+/**
+ * The SQS client, built on first use. Building it at module scope would make
+ * importing this module an effect (petroglyph-1o2d).
+ */
+function sqsClient(): SQSClient {
+  cachedSqsClient ??= new SQSClient({});
+  return cachedSqsClient;
+}
 
 const parentReferenceSchema = z.object({
   driveId: z.string().min(1),
@@ -165,7 +174,7 @@ async function enqueueNotificationJobs(notifications: Notification[]): Promise<v
         },
       });
 
-      await sqsClient.send(
+      await sqsClient().send(
         new SendMessageCommand({
           QueueUrl: queueUrl,
           MessageBody: JSON.stringify(message),

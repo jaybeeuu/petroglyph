@@ -18,7 +18,7 @@ const createProfileBodySchema = z.object({
 
 export async function handleListProfiles(c: Context): Promise<Response> {
   const userId = c.get("userId") as string;
-  const profiles = await listProfiles(docClient, syncProfilesTableName(), userId);
+  const profiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
   return c.json(profiles);
 }
 
@@ -37,7 +37,7 @@ export async function handleCreateProfile(c: Context): Promise<Response> {
     return c.json({ error: "Invalid profile data", details: parsed.error.issues }, 400);
   }
 
-  const existingProfiles = await listProfiles(docClient, syncProfilesTableName(), userId);
+  const existingProfiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
   const isFirst = existingProfiles.length === 0;
 
   const now = new Date().toISOString();
@@ -55,7 +55,7 @@ export async function handleCreateProfile(c: Context): Promise<Response> {
     updatedAt: now,
   };
 
-  await putProfile(docClient, syncProfilesTableName(), profile);
+  await putProfile(docClient(), syncProfilesTableName(), profile);
 
   return c.json(profile, 201);
 }

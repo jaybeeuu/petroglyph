@@ -22,11 +22,13 @@ vi.mock("@petroglyph/core", async (importOriginal) => {
 });
 
 vi.mock("./db.js", () => ({
-  docClient: { send: mockDbSend },
+  docClient: () => ({ send: mockDbSend }),
 }));
 
-import { app } from "./app.js";
+import { createApp } from "./app.js";
 import { resetKeyCache } from "./jwt.js";
+
+const app = createApp();
 
 function makeProfile(overrides: Partial<SyncProfile> = {}): SyncProfile {
   return {

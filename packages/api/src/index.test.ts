@@ -1,6 +1,144 @@
-import { assert, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SSMClient } from "@aws-sdk/client-ssm";
-import { loadSSMParameters, SSM_MAPPINGS } from "./index.js";
+import type { LambdaEvent } from "hono/aws-lambda";
+import type { createApp } from "./app.js";
+
+const ssm = vi.hoisted(() => ({ clients: 0, sends: 0, failNextSends: 0 }));
+const app = vi.hoisted(() => ({ created: 0 }));
+
+vi.mock("@aws-sdk/client-ssm", async (importOriginal) => {
+  const actual = await importOriginal();
+  return Object.assign({}, actual as object, {
+    SSMClient: class {
+      constructor() {
+        ssm.clients += 1;
+      }
+
+      send = (): Promise<{ Parameters: { Name?: string; Value?: string }[] }> => {
+        ssm.sends += 1;
+        if (ssm.failNextSends > 0) {
+          ssm.failNextSends -= 1;
+          return Promise.reject(new Error("Throttled"));
+        }
+        return Promise.resolve({ Parameters: [] });
+      };
+    },
+  });
+});
+
+vi.mock("./app.js", async (importOriginal) => {
+  const actual = await importOriginal<{ createApp: typeof createApp }>();
+  return {
+    ...actual,
+    createApp: () => {
+      app.created += 1;
+      return actual.createApp();
+    },
+  };
+});
+
+import { loadSSMParameters, SSM_MAPPINGS, type handler as lambdaHandler } from "./index.js";
+
+/** The API Gateway v2 shape Hono's aws-lambda adapter consumes. */
+type ApiGatewayV2Event = Extract<LambdaEvent, { rawPath: string }>;
+
+function healthEvent(): ApiGatewayV2Event {
+  return {
+    version: "2.0",
+    routeKey: "GET /health",
+    rawPath: "/health",
+    rawQueryString: "",
+    headers: { host: "test.execute-api.eu-west-2.amazonaws.com" },
+    requestContext: {
+      accountId: "000000000000",
+      apiId: "test",
+      authentication: null,
+      authorizer: {},
+      domainName: "test.execute-api.eu-west-2.amazonaws.com",
+      domainPrefix: "test",
+      http: {
+        method: "GET",
+        path: "/health",
+        protocol: "HTTP/1.1",
+        sourceIp: "127.0.0.1",
+        userAgent: "vitest",
+      },
+      requestId: "request-1",
+      routeKey: "GET /health",
+      stage: "$default",
+      time: "2026-09-01T00:00:00.000Z",
+      timeEpoch: 1756684800000,
+    },
+    isBase64Encoded: false,
+    body: null,
+  };
+}
+
+/**
+ * Each handler test needs its own instance of the module, because the module
+ * caches its initialisation. Re-evaluating it gives a fresh cache.
+ */
+async function loadHandler(): Promise<typeof lambdaHandler> {
+  vi.resetModules();
+  const { handler } = await import("./index.js");
+  return handler;
+}
+
+describe("handler cold start", () => {
+  beforeEach(() => {
+    ssm.clients = 0;
+    ssm.sends = 0;
+    ssm.failNextSends = 0;
+    app.created = 0;
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("loads the SSM parameters on first invocation, not at import", async () => {
+    const handler = await loadHandler();
+    expect(ssm.clients).toBe(0);
+    expect(ssm.sends).toBe(0);
+
+    vi.stubEnv("GITHUB_CLIENT_ID_SSM_PATH", "/petroglyph/production/github/client-id");
+
+    const first = await handler(healthEvent());
+    const second = await handler(healthEvent());
+
+    expect(first).toMatchObject({ statusCode: 200 });
+    expect(second).toMatchObject({ statusCode: 200 });
+    expect(ssm.clients).toBe(1);
+    expect(ssm.sends).toBe(1);
+    expect(app.created).toBe(1);
+  });
+
+  it("retries initialisation on the next invocation when the SSM load rejects", async () => {
+    const handler = await loadHandler();
+
+    vi.stubEnv("GITHUB_CLIENT_ID_SSM_PATH", "/petroglyph/production/github/client-id");
+    ssm.failNextSends = 1;
+
+    await expect(handler(healthEvent())).rejects.toThrow("Throttled");
+    const second = await handler(healthEvent());
+
+    expect(second).toMatchObject({ statusCode: 200 });
+    expect(ssm.sends).toBe(2);
+  });
+
+  it("shares one SSM load and one route graph between concurrent invocations", async () => {
+    const handler = await loadHandler();
+
+    vi.stubEnv("GITHUB_CLIENT_ID_SSM_PATH", "/petroglyph/production/github/client-id");
+
+    const [first, second] = await Promise.all([handler(healthEvent()), handler(healthEvent())]);
+
+    expect(first).toMatchObject({ statusCode: 200 });
+    expect(second).toMatchObject({ statusCode: 200 });
+    expect(ssm.sends).toBe(1);
+    expect(app.created).toBe(1);
+  });
+});
 
 describe("loadSSMParameters", () => {
   it("does not call SSM when no path env vars are set", async () => {

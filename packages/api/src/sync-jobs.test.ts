@@ -5,11 +5,13 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 const mockDbSend = vi.hoisted(() => vi.fn());
 
 vi.mock("./db.js", () => ({
-  docClient: { send: mockDbSend },
+  docClient: () => ({ send: mockDbSend }),
 }));
 
-import { app } from "./app.js";
+import { createApp } from "./app.js";
 import { resetKeyCache } from "./jwt.js";
+
+const app = createApp();
 
 describe("GET /sync/jobs/:jobId", () => {
   let privateKey: CryptoKey;

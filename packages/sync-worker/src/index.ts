@@ -17,7 +17,16 @@ function nowEpochSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-const sqsClient = new SQSClient({});
+let cachedSqsClient: SQSClient | undefined;
+
+/**
+ * The SQS client, built on first use. Building it at module scope would make
+ * importing this module an effect (petroglyph-1o2d).
+ */
+function sqsClient(): SQSClient {
+  cachedSqsClient ??= new SQSClient({});
+  return cachedSqsClient;
+}
 
 function fileRecordsTableName(): string {
   return process.env["FILE_RECORDS_TABLE"] ?? "petroglyph-file-records-default";
@@ -86,7 +95,7 @@ function isRecord(value: unknown): value is UnknownRecord {
 }
 
 async function readOneDriveTokens(userId: string): Promise<OneDriveTokens> {
-  const result = await docClient.send(
+  const result = await docClient().send(
     new GetCommand({
       // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy token copy, dies at 5.2.3
       TableName: refreshTokensTableName(),
@@ -147,7 +156,7 @@ async function refreshOneDriveAccessToken(userId: string, refreshToken: string):
   };
 
   const expirySeconds = Math.floor(Date.now() / 1000) + data.expires_in;
-  await docClient.send(
+  await docClient().send(
     new UpdateCommand({
       // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy token copy, dies at 5.2.3
       TableName: refreshTokensTableName(),
@@ -179,7 +188,7 @@ async function resolveOneDriveAccessToken(userId: string): Promise<string> {
 
 async function readDeltaToken(profileId: string): Promise<string | undefined> {
   try {
-    const result = await docClient.send(
+    const result = await docClient().send(
       new GetCommand({
         TableName: deltaTokensTableName(),
         Key: { profileId },
@@ -295,7 +304,7 @@ async function writeFileRecord(
   createdAt: string,
   profileId: string,
 ): Promise<void> {
-  await docClient.send(
+  await docClient().send(
     new PutCommand({
       TableName: fileRecordsTableName(),
       Item: {
@@ -324,7 +333,7 @@ async function sendIngestMessage(file: GraphDriveFileItem, profileId: string): P
     },
   };
 
-  await sqsClient.send(
+  await sqsClient().send(
     new SendMessageCommand({
       QueueUrl: ingestQueueUrl(),
       MessageBody: JSON.stringify(message),
@@ -333,7 +342,7 @@ async function sendIngestMessage(file: GraphDriveFileItem, profileId: string): P
 }
 
 async function storeDeltaToken(profileId: string, deltaToken: string): Promise<void> {
-  await docClient.send(
+  await docClient().send(
     new PutCommand({
       TableName: deltaTokensTableName(),
       Item: {
@@ -369,7 +378,7 @@ async function updateSyncJobStatus(
     expressionAttributeValues[":errorMessage"] = metadata.errorMessage;
   }
 
-  await docClient.send(
+  await docClient().send(
     new UpdateCommand({
       TableName: syncJobsTableName(),
       Key: { jobId },
@@ -418,7 +427,7 @@ async function processSyncJob(message: SyncJobMessage): Promise<number> {
 
 async function claimSyncJob(jobId: string): Promise<boolean> {
   try {
-    await docClient.send(
+    await docClient().send(
       new UpdateCommand({
         TableName: syncJobsTableName(),
         Key: { jobId },

@@ -4,7 +4,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 const mockSend = vi.hoisted(() => vi.fn().mockResolvedValue({}));
 
 vi.mock("./db.js", () => ({
-  docClient: { send: mockSend },
+  docClient: () => ({ send: mockSend }),
 }));
 
 import { createApp } from "./index.js";

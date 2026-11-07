@@ -7,15 +7,17 @@ const mockDbSend = vi.hoisted(() => vi.fn());
 const mockGetSignedUrl = vi.hoisted(() => vi.fn());
 
 vi.mock("./db.js", () => ({
-  docClient: { send: mockDbSend },
+  docClient: () => ({ send: mockDbSend }),
 }));
 
 vi.mock("@aws-sdk/s3-request-presigner", () => ({
   getSignedUrl: mockGetSignedUrl,
 }));
 
-import { app } from "./app.js";
+import { createApp } from "./app.js";
 import { resetKeyCache } from "./jwt.js";
+
+const app = createApp();
 
 describe("GET /files/changes", () => {
   let privateKey: CryptoKey;

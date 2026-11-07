@@ -53,7 +53,7 @@ function isUserItem(value: unknown): value is UserItem {
 }
 
 async function lookupRefreshToken(hash: string): Promise<RefreshTokenItem | undefined> {
-  const result = await docClient.send(
+  const result = await docClient().send(
     new GetCommand({
       TableName: refreshTokensTable(),
       Key: { tokenHash: hash },
@@ -64,7 +64,7 @@ async function lookupRefreshToken(hash: string): Promise<RefreshTokenItem | unde
 }
 
 async function atomicMarkTokenSuperseded(hash: string): Promise<void> {
-  await docClient.send(
+  await docClient().send(
     new UpdateCommand({
       TableName: refreshTokensTable(),
       Key: { tokenHash: hash },
@@ -78,7 +78,7 @@ async function atomicMarkTokenSuperseded(hash: string): Promise<void> {
 async function deleteAllUserTokens(userId: string): Promise<void> {
   let exclusiveStartKey: { [key: string]: unknown } | undefined;
   do {
-    const result = await docClient.send(
+    const result = await docClient().send(
       new ScanCommand({
         TableName: refreshTokensTable(),
         FilterExpression: "userId = :userId",
@@ -92,7 +92,7 @@ async function deleteAllUserTokens(userId: string): Promise<void> {
     await Promise.all(
       items.map((item) => {
         if (typeof item["tokenHash"] !== "string") return Promise.resolve();
-        return docClient.send(
+        return docClient().send(
           new DeleteCommand({
             TableName: refreshTokensTable(),
             Key: { tokenHash: item["tokenHash"] },
@@ -105,7 +105,7 @@ async function deleteAllUserTokens(userId: string): Promise<void> {
 }
 
 async function fetchUser(userId: string): Promise<UserItem | undefined> {
-  const result = await docClient.send(
+  const result = await docClient().send(
     new GetCommand({
       TableName: usersTable(),
       Key: { userId },
@@ -137,7 +137,7 @@ async function storeNewRefreshToken(refreshToken: string, userId: string): Promi
   const hash = createHash("sha256").update(refreshToken).digest("hex");
   const ttl = Math.floor(Date.now() / 1000) + 90 * 24 * 60 * 60;
 
-  await docClient.send(
+  await docClient().send(
     new PutCommand({
       TableName: refreshTokensTable(),
       Item: {

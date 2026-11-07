@@ -97,7 +97,7 @@ function parseUnprocessedFileRecordKeys(
 
 async function deleteDeltaToken(profileId: string): Promise<void> {
   try {
-    await docClient.send(
+    await docClient().send(
       new DeleteCommand({
         TableName: deltaTokensTableName(),
         Key: { profileId },
@@ -117,7 +117,7 @@ async function deleteFileRecordBatch(fileRecordKeys: FileRecordKey[]): Promise<v
   let pendingFileRecordKeys = fileRecordKeys;
 
   for (let attempt = 1; attempt <= MAX_BATCH_DELETE_ATTEMPTS; attempt += 1) {
-    const result = await docClient.send(
+    const result = await docClient().send(
       new BatchWriteCommand({
         RequestItems: {
           [tableName]: pendingFileRecordKeys.map((fileRecordKey) => ({
@@ -143,7 +143,7 @@ async function deleteFileRecords(profileId: string): Promise<void> {
   let exclusiveStartKey: DynamoKey | undefined;
 
   do {
-    const result = await docClient.send(
+    const result = await docClient().send(
       new QueryCommand({
         TableName: fileRecordsTableName(),
         KeyConditionExpression: "profileId = :profileId",

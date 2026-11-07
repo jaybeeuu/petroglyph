@@ -44,14 +44,14 @@ export function createApp(): Hono {
     "/",
     createFilesRouter({
       index: new DynamoDBStagedIndexStore({
-        client: docClient,
+        client: docClient(),
         tableName: fileRecordsTableName(),
       }),
       objectStore: new S3StagedObjectStore({
         bucket: stagedBucketName(),
         region: process.env["AWS_REGION"] ?? "eu-west-2",
       }),
-      listProfiles: (userId) => listProfiles(docClient, syncProfilesTableName(), userId),
+      listProfiles: (userId) => listProfiles(docClient(), syncProfilesTableName(), userId),
     }),
   );
   return app;
