@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { app as apiApp } from "../../api/src/app.js";
+import { createApp as createApiApp } from "../../api/src/app.js";
 import { createFilesRouter, type FilesRouterDependencies } from "../../staging-delivery/src/app.js";
 import { createApp as createStagingDeliveryApp } from "../../staging-delivery/src/index.js";
 import { operationList } from "../src/operations/index.js";
@@ -49,7 +49,7 @@ function createStagingDeliverySurface(): ReturnType<typeof createStagingDelivery
 describe("API surface parity", () => {
   it("serves exactly the routes the registry declares, in both directions", () => {
     const served = collectServedSurface([
-      apiApp,
+      createApiApp(),
       createFilesRouterSurface(),
       createStagingDeliverySurface(),
     ]);
