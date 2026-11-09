@@ -13,7 +13,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "generate-types": "openapi-typescript openapi.yaml -o src/generated/openapi-types.ts",
+    "generate-types": "pnpm --filter @petroglyph/contracts generate-openapi && openapi-typescript ../contracts/openapi.yaml -o src/generated/openapi-types.ts",
     "lint": "eslint .",
     "prebuild": "pnpm generate-types",
     "pretest": "pnpm generate-types",
