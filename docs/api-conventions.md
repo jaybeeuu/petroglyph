@@ -1,7 +1,10 @@
 # API conventions
 
-The response envelope, decided 2026-11-05 (`petroglyph-m0jc.1`). Applies to every
-route on the Petroglyph API, including the staging `/files` surface.
+The response envelope, decided 2026-11-05 (`petroglyph-m0jc.1`). These rules are
+adopted surface by surface, not repo-wide, so a route that predates a rule may
+still break it. Where a route is known to break a rule, this document says so
+next to that rule. `GET /files/changes` is the known exception to the cursor and
+strict-query rule below.
 
 ## Payloads are flat
 
@@ -28,6 +31,29 @@ change for no gain.
 A collection route declares its query parameters strictly. An unknown or
 misspelled parameter is rejected with 400, never stripped: a wrong cursor name
 must not degrade to "start again from page 1".
+
+Strictness is necessary but not sufficient. A handler that reads named keys —
+`c.req.query("nextToken")`, `c.req.query("limit")` — and hands zod an object
+built from them drops a misspelled key before zod sees it, so `.strict()` alone
+cannot catch the mistake. Validate the whole query object (`c.req.query()`) so
+the schema sees exactly what the client sent.
+
+### Known exception: `GET /files/changes`
+
+`GET /files/changes` breaks both halves of the rule above, and the two breaks
+compound into a silent loop:
+
+- it takes the cursor as `?after=`, but returns it in a field named `nextToken`,
+  so a caller that echoes the response field sends `?nextToken=`;
+- its query schema is not strict, and the handler builds the parse input from
+  named keys (`c.req.query("after")`, `c.req.query("limit")`), so an unknown or
+  misspelled parameter is dropped before validation;
+- the ignored cursor means page 1 on every call, with no error to reveal it.
+
+The route is `deprecated: true` in the contracts registry and is due for removal
+under `petroglyph-m0jc.3` (old-surface retirement), so its response field will
+not be renamed. The defect is tracked by `petroglyph-9c77` and will be fixed or
+retired with that bead. Do not build a new caller on it; use `GET /files`.
 
 ## `meta` is reserved
 
