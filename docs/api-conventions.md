@@ -1,10 +1,7 @@
 # API conventions
 
-The response envelope, decided 2026-11-05 (`petroglyph-m0jc.1`). These rules are
-adopted surface by surface, not repo-wide, so a route that predates a rule may
-still break it. Where a route is known to break a rule, this document says so
-next to that rule. `GET /files/changes` is the known exception to the cursor and
-strict-query rule below.
+The response envelope, decided 2026-11-05 (`petroglyph-m0jc.1`). Applies to every
+route on the Petroglyph API, including the staging `/files` surface.
 
 ## Payloads are flat
 
@@ -19,50 +16,12 @@ GET  /profiles/default     { "profileId": "default", "active": true }
 GET  /files                { "files": [ … ], "nextToken": "eyJwcm9maWxl…" }
 ```
 
-## Paged collections carry an opaque continuation token
+## Collections carry an opaque continuation token
 
-A collection route that pages returns `{ <resources>: [ … ], nextToken: string
-| null }`. A collection that fits one response returns the bare array instead,
-as `GET /profiles` does. Resume a paged collection by sending the token back
-verbatim as `?nextToken=`; never parse it, never derive it. Request and response
-use one name for the cursor, so a consumer can echo the response field without
-translating it. `nextToken` keeps its name — it is already implemented, the
-token is opaque, and renaming it to `next_page_token` would be a client change
-for no gain.
-
-A collection route that reads a cursor parameter — `nextToken`, or a
-pre-standard name such as `after` — declares its query parameters strictly. An
-unknown or misspelled parameter is rejected with 400, never stripped: a wrong
-cursor name must not degrade to "start again from page 1". A collection route
-that reads no cursor, such as `GET /profiles`, is outside this rule.
-
-Strictness is necessary but not sufficient. A handler that reads named keys —
-`c.req.query("nextToken")`, `c.req.query("limit")` — and hands zod an object
-built from them drops a misspelled key before zod sees it, so `.strict()` alone
-cannot catch the mistake. Validate the whole query object (`c.req.query()`),
-which keeps every key the client sent in place for the schema to judge.
-
-That read loses duplicate keys: Hono keeps the first value, so
-`?limit=2&limit=99` validates as `limit=2` and the second value is never seen.
-Rejecting duplicates would need `c.req.queries()`, which returns every value;
-no route does that today.
-
-### Known exception: `GET /files/changes`
-
-`GET /files/changes` breaks both the cursor rule and the strict-query rule
-above, and the two breaks compound into a silent loop:
-
-- it takes the cursor as `?after=`, but returns it in a field named `nextToken`,
-  so a caller that echoes the response field sends `?nextToken=`;
-- its query schema is not strict, and the handler builds the parse input from
-  named keys (`c.req.query("after")`, `c.req.query("limit")`), so an unknown or
-  misspelled parameter is dropped before validation;
-- the ignored cursor means page 1 on every call, with no error to reveal it.
-
-The route is `deprecated: true` in the contracts registry and is due for removal
-under `petroglyph-m0jc.3` (old-surface retirement), so its response field will
-not be renamed. The defect is tracked by `petroglyph-9c77` and will be fixed or
-retired with that bead. Do not build a new caller on it; use `GET /files`.
+`{ <resources>: [ … ], nextToken: string | null }`. Resume by sending the token
+back verbatim as `?after=`; never parse it, never derive it. `nextToken` keeps
+its name — it is already implemented, the token is opaque, and renaming it to
+`next_page_token` would be a client change for no gain.
 
 ## `meta` is reserved
 
@@ -86,7 +45,7 @@ It is never used to carry payload, and a payload key may not be named `meta`.
 - `details` — present only for request-validation failures, carrying the zod
   issues. Absent otherwise.
 
-Reserved codes:
+Codes in use:
 
 | code                 | status | meaning                                              |
 | -------------------- | ------ | ---------------------------------------------------- |
@@ -108,19 +67,6 @@ so a client must branch on the 401 status until that middleware returns
 This is RFC 9457-compatible in spirit (`code` ≈ `type`, `message` ≈ `title`).
 Moving to `application/problem+json` later is mechanical, and worth doing only if
 a third-party consumer appears.
-
-### Known deviation: no route emits this shape yet
-
-Every error response on the `api` and `staging-delivery` surfaces is
-`{ "error": "<string>" }` — a flat sentence, not a `code`. No route returns the
-nested `error` object above, so a client cannot branch on a stable code today.
-Two validation failures — `POST /profiles` and `PUT /profiles/:id` — carry the
-zod issues in a top-level `details` beside `error`, not inside it.
-
-The structured shape is the target, adopted surface by surface like the rules
-above; each route moves to it when that route is next changed. No route names a
-`code` yet; until one does, treat its `error` string as prose, not as a value to
-branch on.
 
 ## Notes
 
