@@ -162,7 +162,7 @@ export class PetroglyphPlugin extends Plugin {
       if (page >= MAX_FEED_PAGES) return { ok: false, reason: "stalled", synced, failed };
 
       const url = new URL(`${this._data.apiBaseUrl}/files`);
-      if (cursor !== undefined) url.searchParams.set("after", cursor);
+      if (cursor !== undefined) url.searchParams.set("nextToken", cursor);
 
       let response: Response;
       try {

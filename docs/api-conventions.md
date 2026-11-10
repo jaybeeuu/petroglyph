@@ -19,9 +19,15 @@ GET  /files                { "files": [ … ], "nextToken": "eyJwcm9maWxl…" }
 ## Collections carry an opaque continuation token
 
 `{ <resources>: [ … ], nextToken: string | null }`. Resume by sending the token
-back verbatim as `?after=`; never parse it, never derive it. `nextToken` keeps
-its name — it is already implemented, the token is opaque, and renaming it to
-`next_page_token` would be a client change for no gain.
+back verbatim as `?nextToken=`; never parse it, never derive it. Request and
+response use one name for the cursor, so a consumer can echo the response field
+without translating it. `nextToken` keeps its name — it is already implemented,
+the token is opaque, and renaming it to `next_page_token` would be a client
+change for no gain.
+
+A collection route declares its query parameters strictly. An unknown or
+misspelled parameter is rejected with 400, never stripped: a wrong cursor name
+must not degrade to "start again from page 1".
 
 ## `meta` is reserved
 

@@ -17,10 +17,18 @@ export interface FilesRouterDependencies {
   presignTtlSeconds?: number;
 }
 
-const feedQuerySchema = z.object({
-  after: z.string().min(1).optional(),
-  limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
-});
+/**
+ * The `/files` query. The cursor is `nextToken`, the same name the response
+ * body uses, so a caller can echo the token back without translating it.
+ * `.strict()` is deliberate: a zod object otherwise strips an unknown key and
+ * a misspelled cursor parameter degrades to "start again at page 1".
+ */
+const feedQuerySchema = z
+  .object({
+    nextToken: z.string().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
+  })
+  .strict();
 
 type FeedQuery = z.infer<typeof feedQuerySchema>;
 
@@ -40,17 +48,20 @@ function parseFeedQuery(query: { [key: string]: string }): FeedQueryResult {
 }
 
 const FEED_QUERY_CONSTRAINTS: { [field: string]: string } = {
-  after: "must be a non-empty string",
+  nextToken: "must be a non-empty string",
   limit: `must be an integer between 1 and ${MAX_PAGE_SIZE}`,
 };
 
 /** Reports the offending field and its constraint — never the raw input. */
 function describeFeedQueryError(error: z.ZodError): string {
-  const fields = [...new Set(error.issues.map((issue) => issue.path.join(".") || "query"))];
-  const details = fields.map(
-    (field) => `${field} ${FEED_QUERY_CONSTRAINTS[field] ?? "is invalid"}`,
-  );
-  return `Invalid files query: ${details.join("; ")}`;
+  const details = error.issues.map((issue) => {
+    if (issue.code === "unrecognized_keys") {
+      return issue.keys.map((key) => `${key} is not a supported parameter`).join("; ");
+    }
+    const field = issue.path.join(".") || "query";
+    return `${field} ${FEED_QUERY_CONSTRAINTS[field] ?? "is invalid"}`;
+  });
+  return `Invalid files query: ${[...new Set(details)].join("; ")}`;
 }
 
 /**
@@ -60,12 +71,12 @@ function describeFeedQueryError(error: z.ZodError): string {
  * re-scoping the feed.
  */
 function resolveFeedScope(query: FeedQuery, activeProfileId: string): FeedScope | null {
-  if (query.after === undefined) {
+  if (query.nextToken === undefined) {
     return { profileId: activeProfileId };
   }
   let decoded: FeedCursor;
   try {
-    decoded = decodeFeedCursor(query.after);
+    decoded = decodeFeedCursor(query.nextToken);
   } catch {
     return null;
   }

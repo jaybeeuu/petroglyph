@@ -214,13 +214,62 @@ describe("GET /files feed", () => {
     // The feed reflects the index at read time: a new record appears on the next page.
     index.put({ ...stagedRecord, itemId: "item-3" });
     const next = await app.request(
-      `/files?after=${encodeURIComponent(body.nextToken ?? "")}&limit=2`,
+      `/files?nextToken=${encodeURIComponent(body.nextToken ?? "")}&limit=2`,
     );
     const nextBody = (await next.json()) as {
       files: { itemId: string }[];
       nextToken: string | null;
     };
     expect(nextBody.files.map((f) => f.itemId)).toEqual(["item-2", "item-3"]);
+  });
+
+  it("advances the page when the response cursor is echoed back as nextToken", async () => {
+    const index = new MemoryIndex();
+    index.put({ ...stagedRecord, itemId: "item-1" });
+    index.put({ ...stagedRecord, itemId: "item-2" });
+    index.put({ ...stagedRecord, itemId: "item-3" });
+    const { app } = buildApp({
+      profiles: [profile()],
+      index,
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    const first = await app.request("/files?limit=2");
+    const firstBody = (await first.json()) as {
+      files: { itemId: string }[];
+      nextToken: string | null;
+    };
+    const cursor = firstBody.nextToken;
+    if (cursor === null) throw new Error("expected the first page to offer a next page");
+
+    const second = await app.request(`/files?limit=2&nextToken=${encodeURIComponent(cursor)}`);
+    const secondBody = (await second.json()) as {
+      files: { itemId: string }[];
+      nextToken: string | null;
+    };
+
+    expect(second.status).toBe(200);
+    expect(secondBody.files.map((file) => file.itemId)).toEqual(["item-3"]);
+  });
+
+  it("rejects a parameter the feed does not declare, instead of restarting at page 1", async () => {
+    const index = new MemoryIndex();
+    index.put({ ...stagedRecord, itemId: "item-1" });
+    index.put({ ...stagedRecord, itemId: "item-2" });
+    const { app } = buildApp({
+      profiles: [profile()],
+      index,
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    // `after` is the name this surface used to take: it must be loud now, not stripped.
+    const cursor = encodeFeedCursor({ profileId: "p1", itemId: "item-1" });
+    const res = await app.request(`/files?after=${encodeURIComponent(cursor)}`);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Invalid files query: after is not a supported parameter",
+    });
   });
 
   it("rejects a cursor bound to a profile the user does not own (auth scoping)", async () => {
@@ -231,7 +280,7 @@ describe("GET /files feed", () => {
     });
 
     const foreign = encodeFeedCursor({ profileId: "p9", itemId: "item-1" });
-    const res = await app.request(`/files?after=${encodeURIComponent(foreign)}`);
+    const res = await app.request(`/files?nextToken=${encodeURIComponent(foreign)}`);
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "Invalid files cursor" });
   });
@@ -244,7 +293,7 @@ describe("GET /files feed", () => {
     });
 
     const nonActive = encodeFeedCursor({ profileId: "p2", itemId: "item-1" });
-    const res = await app.request(`/files?after=${encodeURIComponent(nonActive)}`);
+    const res = await app.request(`/files?nextToken=${encodeURIComponent(nonActive)}`);
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "Invalid files cursor" });
   });
@@ -263,17 +312,17 @@ describe("GET /files feed", () => {
     });
   });
 
-  it("names the after field when the cursor is malformed", async () => {
+  it("names the nextToken field when the cursor is malformed", async () => {
     const { app } = buildApp({
       profiles: [profile()],
       index: new MemoryIndex(),
       objectStore: objectStoreSpy().objectStore,
     });
 
-    const res = await app.request("/files?after=");
+    const res = await app.request("/files?nextToken=");
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
-      error: "Invalid files query: after must be a non-empty string",
+      error: "Invalid files query: nextToken must be a non-empty string",
     });
   });
 
@@ -284,7 +333,7 @@ describe("GET /files feed", () => {
       objectStore: objectStoreSpy().objectStore,
     });
 
-    expect((await app.request("/files?after=not-a-cursor")).status).toBe(400);
+    expect((await app.request("/files?nextToken=not-a-cursor")).status).toBe(400);
     expect((await app.request("/files?limit=0")).status).toBe(400);
     expect((await app.request("/files?limit=101")).status).toBe(400);
     expect((await app.request("/files?limit=abc")).status).toBe(400);
