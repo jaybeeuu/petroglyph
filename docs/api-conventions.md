@@ -19,29 +19,38 @@ GET  /profiles/default     { "profileId": "default", "active": true }
 GET  /files                { "files": [ … ], "nextToken": "eyJwcm9maWxl…" }
 ```
 
-## Collections carry an opaque continuation token
+## Paged collections carry an opaque continuation token
 
-`{ <resources>: [ … ], nextToken: string | null }`. Resume by sending the token
-back verbatim as `?nextToken=`; never parse it, never derive it. Request and
-response use one name for the cursor, so a consumer can echo the response field
-without translating it. `nextToken` keeps its name — it is already implemented,
-the token is opaque, and renaming it to `next_page_token` would be a client
-change for no gain.
+A collection route that pages returns `{ <resources>: [ … ], nextToken: string
+| null }`. A collection that fits one response returns the bare array instead,
+as `GET /profiles` does. Resume a paged collection by sending the token back
+verbatim as `?nextToken=`; never parse it, never derive it. Request and response
+use one name for the cursor, so a consumer can echo the response field without
+translating it. `nextToken` keeps its name — it is already implemented, the
+token is opaque, and renaming it to `next_page_token` would be a client change
+for no gain.
 
-A collection route declares its query parameters strictly. An unknown or
-misspelled parameter is rejected with 400, never stripped: a wrong cursor name
-must not degrade to "start again from page 1".
+A collection route that reads a cursor parameter — `nextToken`, or a
+pre-standard name such as `after` — declares its query parameters strictly. An
+unknown or misspelled parameter is rejected with 400, never stripped: a wrong
+cursor name must not degrade to "start again from page 1". A collection route
+that reads no cursor, such as `GET /profiles`, is outside this rule.
 
 Strictness is necessary but not sufficient. A handler that reads named keys —
 `c.req.query("nextToken")`, `c.req.query("limit")` — and hands zod an object
 built from them drops a misspelled key before zod sees it, so `.strict()` alone
-cannot catch the mistake. Validate the whole query object (`c.req.query()`) so
-the schema sees exactly what the client sent.
+cannot catch the mistake. Validate the whole query object (`c.req.query()`),
+which keeps every key the client sent in place for the schema to judge.
+
+That read loses duplicate keys: Hono keeps the first value, so
+`?limit=2&limit=99` validates as `limit=2` and the second value is never seen.
+Rejecting duplicates would need `c.req.queries()`, which returns every value;
+no route does that today.
 
 ### Known exception: `GET /files/changes`
 
-`GET /files/changes` breaks both halves of the rule above, and the two breaks
-compound into a silent loop:
+`GET /files/changes` breaks both the cursor rule and the strict-query rule
+above, and the two breaks compound into a silent loop:
 
 - it takes the cursor as `?after=`, but returns it in a field named `nextToken`,
   so a caller that echoes the response field sends `?nextToken=`;
@@ -77,7 +86,7 @@ It is never used to carry payload, and a payload key may not be named `meta`.
 - `details` — present only for request-validation failures, carrying the zod
   issues. Absent otherwise.
 
-Codes in use:
+Reserved codes:
 
 | code                 | status | meaning                                              |
 | -------------------- | ------ | ---------------------------------------------------- |
@@ -99,6 +108,19 @@ so a client must branch on the 401 status until that middleware returns
 This is RFC 9457-compatible in spirit (`code` ≈ `type`, `message` ≈ `title`).
 Moving to `application/problem+json` later is mechanical, and worth doing only if
 a third-party consumer appears.
+
+### Known deviation: no route emits this shape yet
+
+Every error response on the `api` and `staging-delivery` surfaces is
+`{ "error": "<string>" }` — a flat sentence, not a `code`. No route returns the
+nested `error` object above, so a client cannot branch on a stable code today.
+Two validation failures — `POST /profiles` and `PUT /profiles/:id` — carry the
+zod issues in a top-level `details` beside `error`, not inside it.
+
+The structured shape is the target, adopted surface by surface like the rules
+above; each route moves to it when that route is next changed. No route names a
+`code` yet; until one does, treat its `error` string as prose, not as a value to
+branch on.
 
 ## Notes
 

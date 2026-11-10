@@ -249,7 +249,9 @@ describe("GET /files feed", () => {
     };
 
     expect(second.status).toBe(200);
+    expect(firstBody.files.map((file) => file.itemId)).toEqual(["item-1", "item-2"]);
     expect(secondBody.files.map((file) => file.itemId)).toEqual(["item-3"]);
+    expect(secondBody.nextToken).toBeNull();
   });
 
   it("rejects a parameter the feed does not declare, instead of restarting at page 1", async () => {
