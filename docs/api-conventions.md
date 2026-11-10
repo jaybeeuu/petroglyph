@@ -19,7 +19,7 @@ GET  /files                { "files": [ … ], "nextToken": "eyJwcm9maWxl…" }
 ## Collections carry an opaque continuation token
 
 `{ <resources>: [ … ], nextToken: string | null }`. Resume by sending the token
-back verbatim as `?after=`; never parse it, never derive it. `nextToken` keeps
+back verbatim as `?nextToken=`; never parse it, never derive it. `nextToken` keeps
 its name — it is already implemented, the token is opaque, and renaming it to
 `next_page_token` would be a client change for no gain.
 
