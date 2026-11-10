@@ -368,6 +368,111 @@ describe("walkDelta", () => {
     expect(result.events[0]?.name).toBeUndefined();
   });
 
+  // Production shape (2026-11-06): Graph strips the name and the parent path on
+  // delete, so a deleted item arrives with only its own id and the parent id.
+  it("emits a path-less deleted file as itemId only instead of failing the walk", async () => {
+    const state = makeState();
+    const store = memStateStore(state);
+    const { client } = scriptedClient([
+      () =>
+        page(
+          [
+            {
+              id: "gone-file",
+              deleted: { state: "deleted" },
+              file: { mimeType: "application/pdf" },
+              parentReference: { driveType: "personal", driveId: DRIVE_ID, id: DRIVE_ROOT_ID },
+            },
+          ],
+          { deltaLink: state.deltaLink },
+        ),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [makeProfile({ profileId: "p1", rootPath: "notes" })],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.outcome).toBe("continued");
+    expect(result.unresolvedPathCount).toBe(0);
+    expect(result.events).toEqual([
+      { kind: "deleted", profileId: "p1", itemId: "gone-file", isFolder: false },
+    ]);
+    expect(store.writes).toBe(1);
+  });
+
+  it("completes the walk when a path-less deleted folder carries both folder and deleted facets", async () => {
+    const state = makeState();
+    const store = memStateStore(state);
+    const { client } = scriptedClient([
+      () =>
+        page(
+          [
+            {
+              id: "gone-folder",
+              deleted: { state: "deleted" },
+              folder: { childCount: 2 },
+              parentReference: { driveType: "personal", driveId: DRIVE_ID, id: DRIVE_ROOT_ID },
+            },
+          ],
+          { deltaLink: state.deltaLink },
+        ),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [makeProfile({ profileId: "p1", rootPath: "notes" })],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.outcome).toBe("continued");
+    expect(result.events).toEqual([
+      { kind: "deleted", profileId: "p1", itemId: "gone-folder", isFolder: true },
+    ]);
+    expect(store.writes).toBe(1);
+  });
+
+  it("reports a path-less deletion against every profile, because only the index can place it", async () => {
+    const state = makeState();
+    const store = memStateStore(state);
+    const { client } = scriptedClient([
+      () =>
+        page(
+          [
+            {
+              id: "gone-file",
+              deleted: { state: "deleted" },
+              file: { mimeType: "application/pdf" },
+              parentReference: { driveType: "personal", driveId: DRIVE_ID, id: DRIVE_ROOT_ID },
+            },
+          ],
+          { deltaLink: state.deltaLink },
+        ),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [
+        makeProfile({ profileId: "p1", rootPath: "notes" }),
+        makeProfile({ profileId: "p2", rootPath: "other" }),
+      ],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.outcome).toBe("continued");
+    expect(result.events.map((event) => [event.profileId, event.itemId])).toEqual([
+      ["p1", "gone-file"],
+      ["p2", "gone-file"],
+    ]);
+  });
+
   it("410 Gone resets: clears the stored token, re-enumerates from scratch, outcome reset", async () => {
     const state = makeState({
       deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=opaque-abc",
@@ -609,6 +714,10 @@ describe("walkDelta", () => {
     expect(result.events).toHaveLength(0);
     expect(result.outcome).toBe("failed");
     expect(store.writes).toBe(0);
+    expect(result.failure).toMatchObject({
+      reason: "unresolved-items",
+      unresolvedItemIds: ["no-path-1"],
+    });
   });
 
   it("tolerates an absent parentReference: the page parses and the unresolved item is surfaced, not dropped", async () => {
@@ -633,6 +742,33 @@ describe("walkDelta", () => {
     expect(result.events).toHaveLength(0);
     expect(result.outcome).toBe("failed");
     expect(store.writes).toBe(0);
+    expect(result.failure).toMatchObject({
+      reason: "unresolved-items",
+      unresolvedItemIds: ["no-parent-1"],
+    });
+  });
+
+  it("reports the page status and Graph error code when a page fails, so the cause needs no second probe", async () => {
+    const store = memStateStore(makeState());
+    const { client } = scriptedClient([
+      () => jsonResponse({ error: { code: "generalException", message: "boom" } }, 500),
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [makeProfile()],
+      initialUrl: INITIAL_URL,
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(result.failure).toMatchObject({
+      reason: "page-status",
+      status: 500,
+      errorCode: "generalException",
+      unresolvedItemIds: [],
+    });
   });
 
   it("routes changes to a '/'-rooted profile instead of silently dropping every item", async () => {

@@ -29,7 +29,7 @@ const folderDeleted: FileChangeEvent = {
   ...deletedChange,
   itemId: "folder-1",
   name: "sub",
-  relativePath: "notes/sub",
+  relativePath: "notes",
   isFolder: true,
 };
 
@@ -180,7 +180,7 @@ describe("processChange", () => {
     expect(triple).toContain("null"); // detected
   });
 
-  it("deleted: emits FileDeletedEvent with the derived s3Key and never deletes the object", async () => {
+  it("deleted: emits FileDeletedEvent carrying itemId only — no path, no staging key", async () => {
     const { put, putIfAbsent, run } = makeHarness();
 
     const outcome = await run(deletedChange);
@@ -189,42 +189,75 @@ describe("processChange", () => {
     expect(put).not.toHaveBeenCalled();
     const document = putIfAbsent.mock.calls[0]?.[0] as {
       type: string;
-      data: { changeType: string; s3Key: string | null };
+      data: { [key: string]: unknown };
     };
     expect(document.type).toBe("petroglyph.file.deleted");
-    expect(document.data).toMatchObject({
+    // The adapter does not own the key: Unit 2 resolves it from its own record.
+    expect(document.data).toEqual({
+      profileId: "p1",
+      source: "onedrive",
       changeType: "deleted",
       itemId: "item-1",
-      relativePath: "notes/a.pdf",
-      s3Key: "staging/v1/p1/notes/a.pdf",
     });
   });
 
-  it("folder deletes emit s3Key null (path-level delete) and still never delete objects", async () => {
+  it("a deleted folder with its parent path and name on the wire carries the sweep hint and still never deletes objects", async () => {
     const { put, putIfAbsent, run } = makeHarness();
 
     await run(folderDeleted);
 
     expect(put).not.toHaveBeenCalled();
-    const document = putIfAbsent.mock.calls[0]?.[0] as { data: { s3Key: string | null } };
-    expect(document.data.s3Key).toBeNull();
+    const document = putIfAbsent.mock.calls[0]?.[0] as {
+      data: { relativePath?: string; s3Key?: string | null };
+    };
+    expect(document.data).toMatchObject({ relativePath: "notes/sub", s3Key: null });
   });
 
-  it("deleted item with no name emits s3Key null, never an itemId-derived key", async () => {
+  it("a path-less deleted folder carries no sweep hint — no path can be rebuilt from a parent id", async () => {
     const harness = makeHarness();
-    const anonymousDelete: FileChangeEvent = {
+    const pathlessFolder: FileChangeEvent = {
       kind: "deleted",
       profileId: "p1",
-      itemId: "item-1",
-      relativePath: "notes",
-      isFolder: false,
+      itemId: "folder-1",
+      isFolder: true,
     };
 
-    const outcome = await harness.run(anonymousDelete);
+    const outcome = await harness.run(pathlessFolder);
 
     expect(outcome).toBe("deleted");
-    const document = harness.putIfAbsent.mock.calls[0]?.[0] as { data: { s3Key: string | null } };
-    expect(document.data.s3Key).toBeNull();
+    const document = harness.putIfAbsent.mock.calls[0]?.[0] as {
+      data: { [key: string]: unknown };
+    };
+    expect(document.data).toEqual({
+      profileId: "p1",
+      source: "onedrive",
+      changeType: "deleted",
+      itemId: "folder-1",
+    });
+  });
+
+  it("a deleted folder whose name is omitted carries no sweep hint, never an itemId-derived path", async () => {
+    const harness = makeHarness();
+    const anonymousFolder: FileChangeEvent = {
+      kind: "deleted",
+      profileId: "p1",
+      itemId: "folder-1",
+      relativePath: "notes",
+      isFolder: true,
+    };
+
+    const outcome = await harness.run(anonymousFolder);
+
+    expect(outcome).toBe("deleted");
+    const document = harness.putIfAbsent.mock.calls[0]?.[0] as {
+      data: { [key: string]: unknown };
+    };
+    expect(document.data).toEqual({
+      profileId: "p1",
+      source: "onedrive",
+      changeType: "deleted",
+      itemId: "folder-1",
+    });
   });
 
   it("fetch 404: no land, no event, logged (the next walk re-evaluates)", async () => {

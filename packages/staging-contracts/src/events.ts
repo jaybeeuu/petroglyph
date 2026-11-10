@@ -26,8 +26,17 @@ export const fileStagedDataSchema = z
 export type FileStagedData = z.infer<typeof fileStagedDataSchema>;
 
 /**
- * FileDeletedData — carries where the file was removed FROM in S3 (s3Key
- * string), or null when no object was staged (folder path-level deletes).
+ * FileDeletedData — the item identity, plus OPTIONAL sweep hints.
+ *
+ * The adapter owns only the identity: Graph strips the name and the parent path
+ * on delete, so a deletion cannot be placed by path. Unit 2 resolves the object
+ * from its own index record by `{profileId, itemId}`.
+ *
+ * `relativePath` and `s3Key` are hints for the ONE case the adapter can still
+ * place: a deleted folder whose parent path and name both survived on the wire.
+ * `relativePath` is then the deleted thing's own path and `s3Key` is null, which
+ * asks the consumer to sweep every record under that path. Both are optional,
+ * so the four-field payload is the common case and stored rows still parse.
  */
 export const fileDeletedDataSchema = z
   .object({
@@ -35,8 +44,8 @@ export const fileDeletedDataSchema = z
     source: z.string().min(1),
     changeType: deletedChangeTypeSchema,
     itemId: z.string().min(1),
-    relativePath: z.string().min(1),
-    s3Key: z.string().min(1).nullable(),
+    relativePath: z.string().min(1).optional(),
+    s3Key: z.string().min(1).nullable().optional(),
   })
   .strict();
 

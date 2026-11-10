@@ -214,4 +214,40 @@ describe("dispatch handler against LocalStack staged_records + S3", () => {
     expect(await objectStore.get(s3Key)).toBeNull();
     expect(await index.get("profile-1", "item-1")).toBeNull();
   }, 60_000);
+
+  // Graph strips the name and the parent path on delete, so the adapter emits
+  // only the item identity. The row's stored key is what names the object.
+  it("removes the row and its object for a path-less deleted CloudEvent", async () => {
+    const s3Key = "staging/v1/profile-1/reports/b.pdf";
+    await objectStore.put(s3Key, PDF_BYTES, { contentType: "application/pdf" });
+    await index.upsert({
+      profileId: "profile-1",
+      itemId: "item-2",
+      s3Key,
+      relativePath: "reports",
+      name: "b.pdf",
+      source: "onedrive",
+      mimeType: "application/pdf",
+      status: "staged",
+      createdAt: "2026-09-01T00:00:00.000Z",
+    });
+
+    const response = await handler({
+      Records: [
+        createSqsRecord(
+          createDeletedEvent({
+            profileId: "profile-1",
+            source: "onedrive",
+            changeType: "deleted",
+            itemId: "item-2",
+          }),
+          "message-2",
+        ),
+      ],
+    } satisfies SQSEvent);
+
+    expect(response.batchItemFailures).toEqual([]);
+    expect(await objectStore.get(s3Key)).toBeNull();
+    expect(await index.get("profile-1", "item-2")).toBeNull();
+  }, 60_000);
 });

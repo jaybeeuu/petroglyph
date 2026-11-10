@@ -63,6 +63,25 @@ describe("fileStagedDataSchema", () => {
 });
 
 describe("fileDeletedDataSchema", () => {
+  it("parses a deleted payload carrying only the item identity", () => {
+    const identityOnly = {
+      profileId: "p1",
+      source: "onedrive",
+      changeType: "deleted" as const,
+      itemId: "item-1",
+    };
+    expect(fileDeletedDataSchema.parse(identityOnly)).toEqual(identityOnly);
+  });
+
+  it("parses a stored row that carries a sweep path without a key", () => {
+    const { s3Key: _s3Key, ...withoutKey } = deletedData;
+    expect(fileDeletedDataSchema.parse(withoutKey)).toEqual(withoutKey);
+  });
+
+  it("rejects a sweep hint with an empty path", () => {
+    expect(() => fileDeletedDataSchema.parse({ ...deletedData, relativePath: "" })).toThrow();
+  });
+
   it("parses a deleted payload with a null s3Key", () => {
     expect(fileDeletedDataSchema.parse(deletedData)).toEqual(deletedData);
   });

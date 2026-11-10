@@ -4,7 +4,7 @@ import type { GraphClient } from "../tokens/graph-client.js";
 import type { FileChangeEvent } from "../delta/delta-walk.js";
 import { fetchItemContent } from "./fetch.js";
 import { passesPreDownloadFilter } from "./gate.js";
-import { deriveRemovedKey, landBytes } from "./land.js";
+import { landBytes } from "./land.js";
 import { emitFileDeleted, emitFileStaged } from "./emit.js";
 
 export type ProcessChangeOutcome =
@@ -31,9 +31,11 @@ export interface ProcessChangeDeps {
  *   /content → detectType lands the truth → stage() → FileStagedEvent. A
  *   claim that survives the filter but not the bytes = no put, no event, the
  *   (claim, extension, detected) triple logged as lie telemetry.
- * - deleted: FileDeletedEvent with the DERIVED removal key (null for folders
- *   / when derivation is impossible). The adapter NEVER deletes S3 objects —
- *   Unit 2 acts on the event.
+ * - deleted: FileDeletedEvent carrying the item identity, plus a sweep path
+ *   only when the adapter genuinely knew one (a folder whose parent path and
+ *   name both survived on the wire). No staging key is derived: the adapter
+ *   does not own the key, and Unit 2 deletes the object named by its own
+ *   record. The adapter NEVER deletes S3 objects — Unit 2 acts on the event.
  * - put THEN emit: a crash between leaves an orphan object (invisible
  *   garbage) — beats an event referencing an absent object.
  * - A suppressed emit (the event log already holds source+id) returns
@@ -49,7 +51,6 @@ export async function processChange(
   if (change.kind === "deleted") {
     const written = await emitFileDeleted(deps.eventLog, {
       change,
-      s3Key: change.isFolder ? null : deriveRemovedKey(change),
       emissionId: deps.emissionId,
     });
     return written ? "deleted" : "deduped";

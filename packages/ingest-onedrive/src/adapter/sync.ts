@@ -1,7 +1,12 @@
 import type { EventLogWriter } from "@petroglyph/events";
 import type { StagedObjectStore } from "@petroglyph/staging-contracts";
 import type { DeltaStateStore } from "../delta/delta-state-store.js";
-import { type DeltaWalkProfile, type FileChangeEvent, walkDelta } from "../delta/delta-walk.js";
+import {
+  type DeltaWalkProfile,
+  type FileChangeEvent,
+  type DeltaWalkFailure,
+  walkDelta,
+} from "../delta/delta-walk.js";
 import type { GraphClient } from "../tokens/graph-client.js";
 import { processChange } from "../land/process-change.js";
 
@@ -92,11 +97,13 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
   });
 
   if (walk.outcome === "failed") {
-    // Page progress on the failure path too: a failed walk that reports no
-    // page count is indistinguishable from one that never started.
+    // Page progress AND the cause: a failed walk that reports no page count is
+    // indistinguishable from one that never started, and a bare count leaves
+    // the operator needing a manual Graph probe. The line carries no token,
+    // resume link or presigned URL — item ids only.
     log(
       `[adapter] delta walk failed for ${connection.userId}/${connection.provider} ` +
-        `after ${walk.pagesCompleted} page(s)`,
+        `after ${walk.pagesCompleted} page(s): ${describeFailure(walk.failure)}`,
     );
     return {
       outcome: "failed",
@@ -163,6 +170,29 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
     pagesCompleted: walk.pagesCompleted,
     pagesRemaining: 0,
   };
+}
+
+/**
+ * The failure cause in one line: the walk's reason, the page status or Graph
+ * error code behind it, and the items it could not place. `unresolved` and
+ * `ids` are always reported so a wedged connection names its own blockers.
+ */
+function describeFailure(failure: DeltaWalkFailure | undefined): string {
+  if (failure === undefined) {
+    return "cause unknown";
+  }
+  const parts = [`reason=${failure.reason}`];
+  if (failure.status !== undefined) {
+    parts.push(`status=${failure.status}`);
+  }
+  if (failure.errorCode !== undefined) {
+    parts.push(`errorCode=${failure.errorCode}`);
+  }
+  parts.push(`unresolved=${failure.unresolvedItemIds.length}`);
+  if (failure.unresolvedItemIds.length > 0) {
+    parts.push(`ids=${failure.unresolvedItemIds.join(",")}`);
+  }
+  return parts.join(" ");
 }
 
 /**

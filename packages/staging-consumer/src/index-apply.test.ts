@@ -97,16 +97,19 @@ const deletedItem: FileDeletedData = {
   source: "onedrive",
   changeType: "deleted",
   itemId: "item-1",
-  relativePath: "notes/a.pdf",
-  s3Key: "staging/v1/p1/notes/a.pdf",
 };
 
-const deletedNull: FileDeletedData = {
-  profileId: "p1",
-  source: "onedrive",
-  changeType: "deleted",
-  itemId: "item-3",
-  relativePath: "notes/c.pdf",
+// Legacy event-log row: the adapter used to guess the key, so the event carries
+// one. It must never override the key the index actually stored.
+const deletedStaleKey: FileDeletedData = {
+  ...deletedItem,
+  relativePath: "notes/a.pdf",
+  s3Key: "staging/v1/p1/notes/stale-name.pdf",
+};
+
+const deletedNullKey: FileDeletedData = {
+  ...deletedItem,
+  relativePath: "notes/a.pdf",
   s3Key: null,
 };
 
@@ -178,7 +181,7 @@ describe("applyStaged", () => {
 });
 
 describe("applyDeleted", () => {
-  it("removes the record and deletes the S3 object when the event carries the key; re-delete is a no-op", async () => {
+  it("removes the record and deletes the object at the STORED key; re-delete is a no-op", async () => {
     const store = memStore();
     const { objectStore, deleteCalls } = objectStoreSpy();
     await applyStaged(store, staged, { createdAt: "2026-09-01T00:00:00.000Z" });
@@ -190,14 +193,35 @@ describe("applyDeleted", () => {
     expect(deleteCalls).toEqual(["staging/v1/p1/notes/a.pdf"]);
   });
 
-  it("removes the record but NEVER calls object delete when s3Key is null (item shape)", async () => {
+  it("an event key never overrides the stored key, so a stale guess cannot orphan the object", async () => {
     const store = memStore();
-    store.records.push(recordFor(staged));
+    const { objectStore, deleteCalls } = objectStoreSpy();
+    await applyStaged(store, staged, { createdAt: "2026-09-01T00:00:00.000Z" });
+
+    await applyDeleted(store, objectStore, deletedStaleKey);
+
+    expect(store.records).toHaveLength(0);
+    expect(deleteCalls).toEqual(["staging/v1/p1/notes/a.pdf"]);
+  });
+
+  it("a null event s3Key still deletes the stored object, so removing the record never orphans it", async () => {
+    const store = memStore();
+    const { objectStore, deleteCalls } = objectStoreSpy();
+    await applyStaged(store, staged, { createdAt: "2026-09-01T00:00:00.000Z" });
+
+    await applyDeleted(store, objectStore, deletedNullKey);
+
+    expect(store.records).toHaveLength(0);
+    expect(deleteCalls).toEqual(["staging/v1/p1/notes/a.pdf"]);
+  });
+
+  it("a delete for a record that was never staged removes and deletes nothing", async () => {
+    const store = memStore();
     const { objectStore, deleteCalls } = objectStoreSpy();
 
-    await applyDeleted(store, objectStore, deletedNull);
+    await applyDeleted(store, objectStore, deletedItem);
 
-    expect(store.records).toHaveLength(1); // item-3 never existed
+    expect(store.records).toHaveLength(0);
     expect(deleteCalls).toEqual([]);
   });
 
@@ -237,17 +261,29 @@ describe("applyDeleted", () => {
     ]);
   });
 
-  it("a file-path (s3Key null) delete touches no object and removes only its own record", async () => {
+  // The accepted gap (petroglyph-9lcj, covered long term by petroglyph-1ey8):
+  // a folder deletion with no path on the wire cannot sweep, so a child that
+  // never arrives as its own delta item keeps its record until the row TTL.
+  it("a path-less folder delete removes only its own record and leaves children in place", async () => {
     const store = memStore();
-    store.records.push(
-      recordFor({ ...staged, itemId: "item-3", name: "c.pdf", s3Key: "staging/v1/p1/notes/c.pdf" }),
-    );
-    store.records.push(recordFor(staged2));
+    const child = {
+      ...staged2,
+      itemId: "deep-item",
+      name: "c.pdf",
+      relativePath: "notes/sub",
+      s3Key: "staging/v1/p1/notes/sub/c.pdf",
+    };
+    store.records.push(recordFor(child));
     const { objectStore, deleteCalls } = objectStoreSpy();
 
-    await applyDeleted(store, objectStore, deletedNull);
+    await applyDeleted(store, objectStore, {
+      profileId: "p1",
+      source: "onedrive",
+      changeType: "deleted",
+      itemId: "folder-1",
+    });
 
-    expect(store.records.map((r) => r.itemId)).toEqual(["item-2"]);
+    expect(store.records.map((r) => r.itemId)).toEqual(["deep-item"]);
     expect(deleteCalls).toEqual([]);
   });
 });
