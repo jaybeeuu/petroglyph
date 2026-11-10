@@ -174,8 +174,10 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
 
 /**
  * The failure cause in one line: the walk's reason, the page status or Graph
- * error code behind it, and the items it could not place. `unresolved` and
- * `ids` are always reported so a wedged connection names its own blockers.
+ * error code behind it, and the items it could not place. `reason` and
+ * `unresolved` are always reported. `status` and `errorCode` appear when the
+ * walk recorded them, both when both exist, and `ids` only when at least one
+ * item is unplaced — a wedged connection names its own blockers.
  */
 function describeFailure(failure: DeltaWalkFailure | undefined): string {
   if (failure === undefined) {
