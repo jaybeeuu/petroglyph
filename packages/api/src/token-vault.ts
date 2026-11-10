@@ -1,4 +1,4 @@
-import { PutCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { tokenRecordSchema, type TokenRecord } from "@petroglyph/core";
 
 /** The provider half of the connection key — OneDrive is the only adapter today. */
@@ -45,4 +45,29 @@ export async function writeInitialConnectionTokens(
       Item: { userId: tokens.userId, provider: ONEDRIVE_PROVIDER, ...record },
     }),
   );
+}
+
+/**
+ * The stored connection for one (userId, provider), or null when onboarding
+ * never completed. This reads the vault and nothing else: it resolves no access
+ * token and refreshes no grant, so a caller that only needs the connection's
+ * state cannot reach the provider.
+ *
+ * A row that fails `tokenRecordSchema` throws rather than reporting a healthy
+ * connection: guessing a state from a malformed row would either enqueue a walk
+ * that cannot succeed or refuse one that can.
+ */
+export async function readConnection(
+  client: DynamoDBDocumentClient,
+  userId: string,
+  provider: string,
+): Promise<TokenRecord | null> {
+  const result = await client.send(
+    new GetCommand({
+      TableName: tokenVaultsTableName(),
+      Key: { userId, provider },
+    }),
+  );
+
+  return result.Item === undefined ? null : tokenRecordSchema.parse(result.Item);
 }

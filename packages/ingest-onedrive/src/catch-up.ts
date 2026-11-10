@@ -1,7 +1,7 @@
+import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import type { DeltaTrigger } from "./delta-trigger.js";
+import { createDeltaTriggerSend, type DeltaTrigger } from "@petroglyph/contracts";
 import { DynamoDBTokenStore } from "./tokens/token-store-ddb.js";
 
 /**
@@ -23,9 +23,11 @@ export interface Connection {
 /** The exact message the sweep asks to be published, so the transport stays dumb. */
 export interface CatchUpBell {
   bell: DeltaTrigger;
-  /** FIFO group: one group per connection, so its bells stay ordered. */
-  messageGroupId: string;
-  dedupeId: string;
+  /**
+   * What makes two sweeps the same delivery: the connection and the dedupe
+   * window the sweep ran in. The queue hashes it into the deduplication id.
+   */
+  dedupeIdentity: string;
 }
 
 export interface CatchUpDeps {
@@ -64,11 +66,9 @@ export function createCatchUpHandler(deps: CatchUpDeps): () => Promise<void> {
     for (const connection of connections) {
       if (connection.reconnectRequired) continue;
       const bell: DeltaTrigger = { userId: connection.userId, provider: connection.provider };
-      const connectionKey = `${connection.userId}:${connection.provider}`;
       await deps.enqueue({
         bell,
-        messageGroupId: connectionKey,
-        dedupeId: `${connectionKey}:${bucket}`,
+        dedupeIdentity: `${connection.userId}:${connection.provider}:${bucket}`,
       });
     }
   };
@@ -100,12 +100,13 @@ export function createScheduledSweep(now: () => number): () => Promise<void> {
     listConnections: () => tokenStore.list(),
     enqueue: async (message) => {
       await sqsClient.send(
-        new SendMessageCommand({
-          QueueUrl: queueUrl,
-          MessageBody: JSON.stringify(message.bell),
-          MessageGroupId: message.messageGroupId,
-          MessageDeduplicationId: message.dedupeId,
-        }),
+        new SendMessageCommand(
+          createDeltaTriggerSend({
+            queueUrl,
+            bell: message.bell,
+            dedupeIdentity: message.dedupeIdentity,
+          }),
+        ),
       );
     },
     now,

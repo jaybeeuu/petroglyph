@@ -15,6 +15,11 @@ import { handleListProfiles, handleCreateProfile } from "./profiles.js";
 import { handleGetProfile, handlePutProfile, handleDeleteProfile } from "./profiles-crud.js";
 import { handleStatus } from "./status.js";
 import { handleSyncRun } from "./sync-run.js";
+import {
+  createSyncTriggerDeps,
+  createSyncTriggerHandler,
+  type SyncTriggerDeps,
+} from "./sync-trigger.js";
 import { handleSyncJobStatus } from "./sync-jobs.js";
 import { handleSyncReset } from "./sync-reset.js";
 import { docClient } from "./db.js";
@@ -30,8 +35,17 @@ const EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: "GET", path: "/onedrive/connect" },
 ];
 
-export function createApp(): Hono<{ Variables: AppVariables }> {
+/**
+ * Builds the route graph. Sync Now's collaborators are a parameter so a test
+ * can drive the real route with its own vault reads and its own queue; the
+ * default wires the deployed ones, built on first construction rather than at
+ * module scope.
+ */
+export function createApp(
+  syncTriggerDeps: SyncTriggerDeps = createSyncTriggerDeps(),
+): Hono<{ Variables: AppVariables }> {
   const app = new Hono<{ Variables: AppVariables }>();
+  const handleSyncTrigger = createSyncTriggerHandler(syncTriggerDeps);
 
   app.use(
     "*",
@@ -107,6 +121,8 @@ export function createApp(): Hono<{ Variables: AppVariables }> {
   app.post("/onedrive/connect", (c) => handleOnedriveConnect(c));
 
   app.post("/onedrive/lifecycle", (c) => handleOnedriveLifecycle(c));
+
+  app.post("/onedrive/sync-trigger", (c) => handleSyncTrigger(c));
 
   app.post("/sync/reset", (c) => handleSyncReset(c));
 
