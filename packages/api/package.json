@@ -7,6 +7,7 @@
     "@types/aws-lambda": "^8.10.145",
     "@types/node": "^25.5.2",
     "esbuild": "^0.28.0",
+    "testcontainers": "^10.17.0",
     "tsx": "^4.21.0"
   },
   "scripts": {
@@ -26,6 +27,7 @@
     "@aws-sdk/client-ssm": "^3.1024.0",
     "@aws-sdk/lib-dynamodb": "^3.1024.0",
     "@aws-sdk/s3-request-presigner": "^3.1024.0",
+    "@petroglyph/contracts": "workspace:*",
     "@petroglyph/core": "workspace:*",
     "hono": "^4.12.10",
     "jose": "^6.2.2",

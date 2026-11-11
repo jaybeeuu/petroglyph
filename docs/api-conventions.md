@@ -57,6 +57,13 @@ Codes in use:
 | `reconnect_required` | 409    | the grant is dead; a human must reconnect            |
 | `provider_error`     | 502    | the upstream provider failed                         |
 
+The `unauthorized` row is the target, not what ships today. The shared JWT middleware
+(`packages/api/src/auth-middleware.ts`) still emits the pre-conventions shape:
+`{ "error": "UNAUTHORIZED" }` — flat, and `SCREAMING_SNAKE` rather than a snake_case `code`.
+Every JWT-protected route inherits it, including routes that otherwise follow this envelope,
+so a client must branch on the 401 status until that middleware returns
+`{ "error": { "code": "unauthorized", "message": … } }`.
+
 This is RFC 9457-compatible in spirit (`code` ≈ `type`, `message` ≈ `title`).
 Moving to `application/problem+json` later is mechanical, and worth doing only if
 a third-party consumer appears.

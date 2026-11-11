@@ -13,6 +13,7 @@ import { getOnedriveAuthUrl } from "./get-onedrive-auth-url.operation.js";
 import { bridgeOnedriveCallback } from "./bridge-onedrive-callback.operation.js";
 import { connectOnedrive } from "./connect-onedrive.operation.js";
 import { postOnedriveLifecycle } from "./post-onedrive-lifecycle.operation.js";
+import { postOnedriveSyncTrigger } from "./post-onedrive-sync-trigger.operation.js";
 import { runSync } from "./run-sync.operation.js";
 import { resetSync } from "./reset-sync.operation.js";
 import { getSyncJob } from "./get-sync-job.operation.js";
@@ -42,6 +43,7 @@ export const operations = defineRegistry({
   bridgeOnedriveCallback,
   connectOnedrive,
   postOnedriveLifecycle,
+  postOnedriveSyncTrigger,
   runSync,
   resetSync,
   getSyncJob,

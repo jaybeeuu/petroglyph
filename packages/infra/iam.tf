@@ -82,6 +82,7 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
         Action = "sqs:SendMessage"
         Resource = [
           aws_sqs_queue.ingest.arn,
+          aws_sqs_queue.delta_trigger.arn,
         ]
       },
       {

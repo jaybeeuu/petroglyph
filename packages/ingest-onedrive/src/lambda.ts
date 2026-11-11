@@ -6,7 +6,11 @@ import type { SQSBatchResponse, SQSEvent } from "aws-lambda";
 import { OAuthTokenResolver, listProfiles } from "@petroglyph/core";
 import { DynamoDBEventLogWriter } from "@petroglyph/events";
 import { S3StagedObjectStore } from "@petroglyph/staging-contracts";
-import { continuationDedupeId, deltaTriggerSchema, type DeltaTrigger } from "./delta-trigger.js";
+import {
+  createDeltaTriggerSend,
+  deltaTriggerSchema,
+  type DeltaTrigger,
+} from "@petroglyph/contracts";
 import { DynamoDBTokenStore } from "./tokens/token-store-ddb.js";
 import { OAuthTokenClient } from "./tokens/token-client.js";
 import { MicrosoftGraphClient } from "./tokens/graph-client.js";
@@ -180,15 +184,19 @@ export function buildDeltaRunner(): (connection: {
       initialUrl: env("GRAPH_DRIVE_ROOT_DELTA_URL", DEFAULT_DRIVE_ROOT_DELTA_URL),
       requestContinuation: async (continuation) => {
         await sqsClient().send(
-          new SendMessageCommand({
-            QueueUrl: deltaTriggerQueueUrl,
-            MessageBody: JSON.stringify({
-              userId: continuation.connection.userId,
-              provider: continuation.connection.provider,
-            } satisfies DeltaTrigger),
-            MessageGroupId: `${continuation.connection.userId}:${continuation.connection.provider}`,
-            MessageDeduplicationId: continuationDedupeId(continuation.resumeLink),
-          }),
+          new SendMessageCommand(
+            createDeltaTriggerSend({
+              queueUrl: deltaTriggerQueueUrl,
+              bell: {
+                userId: continuation.connection.userId,
+                provider: continuation.connection.provider,
+              } satisfies DeltaTrigger,
+              // The resume link is the identity of one continuation: one per page
+              // boundary, so two sends of the same point collapse into one walk
+              // while two different points do not.
+              dedupeIdentity: continuation.resumeLink,
+            }),
+          ),
         );
       },
     });

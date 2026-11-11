@@ -165,7 +165,7 @@ Webhooks are best-effort: Graph may never deliver one. The sweep is the reliabil
 
 - A connection with `reconnectRequired: true` is skipped — no walk can succeed until a human reconnects it, so belling it would only fill the DLQ.
 - A vault row that fails the connection schema is skipped and logged — `[ingest-onedrive] skipping malformed connection in token vault: <userId>:<provider>`, or `unknown` when even the identity is unreadable. The sweep still bells the healthy connections, so the skipped connection gets no bells until its row is repaired. A reconnect (`POST /onedrive/connect`) rewrites the whole row and clears the error. A systemic schema break is loud, not silent: N malformed rows emit N ERROR lines per sweep.
-- The dedupe id is `<userId>:<provider>:<bucket>`, where the bucket is an epoch-aligned five-minute window, the same length as the SQS deduplication window. The buckets are aligned to the epoch, not to the first send, so the collapse window is five minutes minus the distance from the send to the next boundary: a retry before the boundary collapses, a retry after it re-bells, and the re-bell costs one no-op walk because the stored deltaLink is unchanged. A unit test in `packages/ingest-onedrive/src/catch-up.test.ts` pins that boundary behaviour.
+- The dedupe identity is `<userId>:<provider>:<bucket>`, where the bucket is an epoch-aligned five-minute window, the same length as the SQS deduplication window. The queue publishes the sha256 of that identity as `MessageDeduplicationId`, so the id on the wire is a 64-character hex digest — read it as opaque, and do not expect to parse a user id out of it. The buckets are aligned to the epoch, not to the first send, so the collapse window is five minutes minus the distance from the send to the next boundary: a retry before the boundary collapses, a retry after it re-bells, and the re-bell costs one no-op walk because the stored deltaLink is unchanged. A unit test in `packages/ingest-onedrive/src/catch-up.test.ts` pins that boundary behaviour.
 - The rule is gated on `local.sqs_esm_enabled` like the queue consumers, so a quiesced QA does not enqueue bells nothing will drain.
 - The sweep is sequential: one bell per connection, sent one at a time, inside the function's 60 s `timeout`. A send costs 20–50 ms, so a few hundred connections fit and a few thousand do not. Past that size Lambda kills the invocation mid-sweep, and the retry restarts at the first connection. A larger vault needs a bounded send pool (about 8 in flight) plus a deadline that throws at about 45 s, so the invocation fails visibly instead of being killed. Treat `timeout` and `var.adapter_catch_up_schedule` as one setting.
 
@@ -178,6 +178,14 @@ aws logs tail /aws/lambda/petroglyph-adapter-catch-up-production --since 12h --p
 ```
 
 To force a sweep outside the schedule, invoke the function directly; to bell a single connection instead, send the message by hand (see the Delivery 1 runbook in `.working-docs/`).
+
+### Sync Now (manual bell)
+
+`POST /onedrive/sync-trigger` enqueues one delta bell for the caller's OneDrive connection and answers `202 { "status": "queued" }`. It is the third producer of the bell body, beside the sweep and the adapter's own page continuation, and it publishes the same body to the same queue. The API does no work itself: no Graph call, no token resolution, no job record. The adapter walks and the plugin keeps polling `GET /files`. Two 409s answer instead of a bell — `no_connection` when onboarding never stored a connection, `reconnect_required` when the grant is dead.
+
+The plugin's `syncNow()` today drains the feed and calls nothing on the server, so pressing Sync Now stages no new files until that call is wired in.
+
+A press answers `202` even when SQS collapses the message, so read `202` as "a bell is enqueued", not "a second walk will start". The dedupe identity here is the connection alone (`<userId>:<provider>`), with no time bucket, so every press inside one five-minute window collapses into the first.
 
 ### Delta catch-up progress and a stalled walk
 

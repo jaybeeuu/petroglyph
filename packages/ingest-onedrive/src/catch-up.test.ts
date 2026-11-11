@@ -38,7 +38,7 @@ describe("createCatchUpHandler", () => {
     );
   });
 
-  it("groups each connection's bells on its own FIFO group", async () => {
+  it("addresses each connection's bells by that connection's own identity", async () => {
     const enqueue = vi.fn().mockResolvedValue(undefined);
     const handler = createCatchUpHandler({
       listConnections: () =>
@@ -52,12 +52,12 @@ describe("createCatchUpHandler", () => {
 
     await handler();
 
-    expect(enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({ messageGroupId: "github|1:onedrive" }),
-    );
-    expect(enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({ messageGroupId: "github|2:onedrive" }),
-    );
+    const [firstCall, secondCall] = enqueue.mock.calls as [
+      [{ dedupeIdentity: string }],
+      [{ dedupeIdentity: string }],
+    ];
+    expect(firstCall[0].dedupeIdentity).toMatch(/^github\|1:onedrive:/);
+    expect(secondCall[0].dedupeIdentity).toMatch(/^github\|2:onedrive:/);
   });
 
   it("skips a connection that needs reconnecting", async () => {
@@ -80,7 +80,7 @@ describe("createCatchUpHandler", () => {
     );
   });
 
-  it("shares one dedupe id across sweeps in the same window", async () => {
+  it("shares one dedupe identity across sweeps in the same window", async () => {
     const enqueue = vi.fn().mockResolvedValue(undefined);
     const handler = createCatchUpHandler({
       listConnections: () => Promise.resolve([createConnection()]),
@@ -92,13 +92,13 @@ describe("createCatchUpHandler", () => {
     await handler();
 
     const [firstCall, secondCall] = enqueue.mock.calls as [
-      [{ dedupeId: string }],
-      [{ dedupeId: string }],
+      [{ dedupeIdentity: string }],
+      [{ dedupeIdentity: string }],
     ];
-    expect(firstCall[0].dedupeId).toBe(secondCall[0].dedupeId);
+    expect(firstCall[0].dedupeIdentity).toBe(secondCall[0].dedupeIdentity);
   });
 
-  it("uses a different dedupe id once the window has passed", async () => {
+  it("uses a different dedupe identity once the window has passed", async () => {
     const enqueue = vi.fn().mockResolvedValue(undefined);
     let nowMs = NOW_MS;
     const handler = createCatchUpHandler({
@@ -112,10 +112,10 @@ describe("createCatchUpHandler", () => {
     await handler();
 
     const [firstCall, secondCall] = enqueue.mock.calls as [
-      [{ dedupeId: string }],
-      [{ dedupeId: string }],
+      [{ dedupeIdentity: string }],
+      [{ dedupeIdentity: string }],
     ];
-    expect(firstCall[0].dedupeId).not.toBe(secondCall[0].dedupeId);
+    expect(firstCall[0].dedupeIdentity).not.toBe(secondCall[0].dedupeIdentity);
   });
 
   it("re-bells when a retry crosses a bucket boundary inside the five-minute window", async () => {
@@ -139,10 +139,10 @@ describe("createCatchUpHandler", () => {
     await handler();
 
     const [firstCall, secondCall] = enqueue.mock.calls as [
-      [{ dedupeId: string }],
-      [{ dedupeId: string }],
+      [{ dedupeIdentity: string }],
+      [{ dedupeIdentity: string }],
     ];
-    expect(firstCall[0].dedupeId).not.toBe(secondCall[0].dedupeId);
+    expect(firstCall[0].dedupeIdentity).not.toBe(secondCall[0].dedupeIdentity);
   });
 
   it("fails the sweep when a bell cannot be enqueued, so the schedule retries", async () => {

@@ -70,6 +70,12 @@ paths:
       summary: Receive OneDrive lifecycle notifications
       tags:
         - onedrive
+  /onedrive/sync-trigger:
+    post:
+      operationId: postOnedriveSyncTrigger
+      summary: Enqueue a OneDrive delta walk for the caller's connection (Sync Now)
+      tags:
+        - onedrive
   /profiles:
     get:
       operationId: listProfiles
