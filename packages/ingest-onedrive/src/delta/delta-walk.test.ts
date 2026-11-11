@@ -1,7 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { normalizeRelativePath, walkDelta, type DeltaWalkProfile } from "./delta-walk.js";
+import {
+  normalizeRelativePath,
+  walkDelta,
+  type DeltaWalkOptions,
+  type DeltaWalkProfile,
+  type DeltaWalkResult,
+  type FileChangeEvent,
+} from "./delta-walk.js";
 import type { DeltaState, DeltaStateStore } from "./delta-state-store.js";
 import type { GraphClient } from "../tokens/graph-client.js";
+
+/**
+ * The walk hands each page to `handlePage` and keeps nothing, which these tests
+ * observe by collecting the pages it handled. The page boundary itself is
+ * pinned by the hand-off test below.
+ */
+async function walk(
+  options: Omit<DeltaWalkOptions, "handlePage">,
+): Promise<DeltaWalkResult & { events: FileChangeEvent[] }> {
+  const events: FileChangeEvent[] = [];
+  const result = await walkDelta({
+    ...options,
+    handlePage: (handed) => {
+      events.push(...handed);
+      return Promise.resolve();
+    },
+  });
+  return { ...result, events };
+}
 
 const INITIAL_URL =
   "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,eTag,parentReference,file,folder,deleted";
@@ -134,7 +160,7 @@ describe("walkDelta", () => {
         }),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -181,7 +207,7 @@ describe("walkDelta", () => {
     const store = memStateStore(state);
     const { client, paths } = scriptedClient([() => page([], { deltaLink: state.deltaLink })]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -204,7 +230,7 @@ describe("walkDelta", () => {
         page([], { deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=done" }),
     ]);
 
-    await walkDelta({
+    await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -226,7 +252,7 @@ describe("walkDelta", () => {
     const store = memStateStore(state);
     const { client } = scriptedClient([() => page([])]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -252,7 +278,7 @@ describe("walkDelta", () => {
       () => jsonResponse({ error: { code: "serviceUnavailable" } }, 503),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -284,7 +310,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -324,7 +350,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -354,7 +380,7 @@ describe("walkDelta", () => {
         }),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -388,7 +414,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -422,7 +448,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -455,7 +481,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -486,7 +512,7 @@ describe("walkDelta", () => {
         }),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -510,7 +536,7 @@ describe("walkDelta", () => {
       () =>
         page([], { deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=fresh" }),
     ]);
-    const syncResult = await walkDelta({
+    const syncResult = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client: syncClient,
       store: syncStore,
@@ -524,7 +550,7 @@ describe("walkDelta", () => {
     const { client: errClient } = scriptedClient([
       () => jsonResponse({ error: { code: "serviceUnavailable" } }, 503),
     ]);
-    const errResult = await walkDelta({
+    const errResult = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client: errClient,
       store: errStore,
@@ -543,7 +569,7 @@ describe("walkDelta", () => {
         page([], { deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=fresh" }),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -565,7 +591,7 @@ describe("walkDelta", () => {
       () => jsonResponse({ error: { code: "syncStateNotFound" } }, 410),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -596,7 +622,7 @@ describe("walkDelta", () => {
         }),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -635,7 +661,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -667,7 +693,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -702,7 +728,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -730,7 +756,7 @@ describe("walkDelta", () => {
         }),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -754,7 +780,7 @@ describe("walkDelta", () => {
       () => jsonResponse({ error: { code: "generalException", message: "boom" } }, 500),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -782,7 +808,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -813,7 +839,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -844,7 +870,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -877,7 +903,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -899,7 +925,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -923,7 +949,7 @@ describe("walkDelta", () => {
         }),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -954,7 +980,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -974,7 +1000,7 @@ describe("walkDelta", () => {
         }),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -998,7 +1024,7 @@ describe("walkDelta", () => {
         }),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -1019,7 +1045,7 @@ describe("walkDelta", () => {
           deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=final",
         }),
     ]);
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -1052,7 +1078,7 @@ describe("walkDelta", () => {
         ),
     ]);
 
-    const result = await walkDelta({
+    const result = await walk({
       connection: { userId: "github|12345", provider: "onedrive" },
       client,
       store,
@@ -1062,5 +1088,42 @@ describe("walkDelta", () => {
 
     expect(result.events).toHaveLength(1);
     expect(result.events[0]).toMatchObject({ kind: "file", itemId: "dup-1", name: "second.pdf" });
+  });
+
+  it("hands a page to its handler before requesting the next page, so no page outlives the work it caused", async () => {
+    const store = memStateStore(null);
+    const secondPage = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=page-2";
+    const handled: string[] = [];
+    let handledWhenPage2Requested: string[] = [];
+    const { client } = scriptedClient([
+      () => page([fileItem({ id: "i1", name: "a.pdf" })], { nextLink: secondPage }),
+      () => {
+        // The whole point: page 1's changes are already handled and released
+        // by the time page 2 is fetched, so peak memory is one page, not a drive.
+        handledWhenPage2Requested = [...handled];
+        return page([fileItem({ id: "i2", name: "b.pdf" })], {
+          deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=final",
+        });
+      },
+    ]);
+
+    const result = await walkDelta({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [makeProfile()],
+      initialUrl: INITIAL_URL,
+      pageBudget: 10,
+      handlePage: (events) => {
+        handled.push(...events.map((event) => event.itemId));
+        return Promise.resolve();
+      },
+    });
+
+    expect(handledWhenPage2Requested).toEqual(["i1"]);
+    expect(handled).toEqual(["i1", "i2"]);
+    expect(result.deltaLink).toBe(
+      "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=final",
+    );
   });
 });

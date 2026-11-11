@@ -162,7 +162,6 @@ export interface DeltaWalkFailure {
 }
 
 export interface DeltaWalkResult {
-  events: FileChangeEvent[];
   deltaLink?: string;
   outcome: DeltaWalkOutcome;
   /**
@@ -234,6 +233,14 @@ export interface DeltaWalkOptions {
    * can carry up to 200 items, so this bounds walk requests, not landed items.
    */
   pageBudget?: number;
+  /**
+   * Land and emit one page's changes. Awaited before the next page is
+   * requested, and the walk keeps nothing once it returns, so peak memory is
+   * the page being handled — not the drive (petroglyph-63vq). This ordering is
+   * the contract: a page whose changes are unlanded never coexists with the
+   * next page's body.
+   */
+  handlePage: (events: FileChangeEvent[]) => Promise<void>;
 }
 
 /**
@@ -293,8 +300,14 @@ type Page =
  * The walk gives up the drive after `pageBudget` pages and reports `deferred`
  * with a `resumeLink` instead of paging on: a first walk over a whole drive is
  * more work than one Lambda invocation has, and running into the timeout
- * advances nothing. The caller lands the events it was given, persists the
+ * advances nothing. The caller lands the page it was given, persists the
  * resume link, and bells a continuation.
+ *
+ * Each page is handed to `handlePage` before the next one is requested, and the
+ * walk retains nothing across that call, so peak memory follows the page size
+ * and not the drive (petroglyph-63vq). The change token is advanced only after
+ * that page is handled, so a crash mid-landing re-walks the page instead of
+ * skipping changes the token would otherwise cover.
  */
 export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkResult> {
   const stored = await options.store.read(options.connection.userId, options.connection.provider);
@@ -310,13 +323,6 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
   );
 
   const pageBudget = options.pageBudget ?? DEFAULT_PAGE_BUDGET;
-  // Delta shows the latest state per item and may repeat an item within a walk,
-  // so the last occurrence seen wins. Keyed by profile AND item: one path-less
-  // deletion is reported against every candidate profile, and those are
-  // distinct events for the same item id.
-  const eventsByItemId = new Map<string, FileChangeEvent>();
-  const collectEvents = (): FileChangeEvent[] => [...eventsByItemId.values()];
-  const eventKey = (event: FileChangeEvent): string => `${event.profileId}:${event.itemId}`;
 
   let outcome: DeltaWalkOutcome = "continued";
   let didReset = false;
@@ -347,7 +353,6 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
   };
 
   const failed = (failure: DeltaWalkFailure): DeltaWalkResult => ({
-    events: collectEvents(),
     outcome: "failed",
     unresolvedPathCount,
     failure,
@@ -392,9 +397,6 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
 
     const classified = classifyPage(parsed.data.value, profiles);
     pagesCompleted += 1;
-    for (const event of classified.events) {
-      eventsByItemId.set(eventKey(event), event);
-    }
     unresolvedPathCount += classified.unresolvedPathCount;
     unresolvedItemIds = [...unresolvedItemIds, ...classified.unresolvedItemIds];
     driveRootItemCount += classified.driveRootItemCount;
@@ -404,6 +406,12 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
       return failed(pageFailure("unresolved-items", page.status, page.body));
     }
 
+    // Land and emit THIS page before the next one is requested. Awaiting here is
+    // what bounds memory: the page's items and their content are released
+    // before the next page exists, and the token below moves only once they are
+    // handled (petroglyph-63vq).
+    await options.handlePage(dedupePage(classified.events));
+
     const deltaLink = parsed.data["@odata.deltaLink"];
     if (deltaLink !== undefined) {
       await options.store.write(options.connection.userId, options.connection.provider, {
@@ -411,7 +419,6 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
         updatedAt: new Date().toISOString(),
       });
       return {
-        events: collectEvents(),
         deltaLink,
         outcome,
         unresolvedPathCount,
@@ -433,7 +440,6 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
       // would run a whole-drive first walk past the Lambda timeout, which is
       // how the change token stopped advancing in production.
       return {
-        events: collectEvents(),
         outcome: "deferred",
         unresolvedPathCount,
         driveRootItemCount,
@@ -449,14 +455,26 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
 interface PageClassification {
   events: FileChangeEvent[];
   unresolvedPathCount: number;
+  unresolvedItemIds: string[];
   driveRootItemCount: number;
 }
 
-interface PageClassification {
-  events: FileChangeEvent[];
-  unresolvedPathCount: number;
-  unresolvedItemIds: string[];
-  driveRootItemCount: number;
+/**
+ * One page's changes, deduplicated by profile AND item: delta may report the
+ * latest state of an item more than once in a page, so the last occurrence
+ * wins. Keyed by both because one path-less deletion is reported against every
+ * candidate profile, and those are distinct events for the same item id.
+ *
+ * Deduplication is per page, not per walk: the walk no longer holds earlier
+ * pages, so a repeat across pages is landed twice — the event log dedupes the
+ * same revision, and a later page carries the newer one (petroglyph-63vq).
+ */
+function dedupePage(events: FileChangeEvent[]): FileChangeEvent[] {
+  const byIdentity = new Map<string, FileChangeEvent>();
+  for (const event of events) {
+    byIdentity.set(`${event.profileId}:${event.itemId}`, event);
+  }
+  return [...byIdentity.values()];
 }
 
 function classifyPage(items: DriveItem[], profiles: DeltaWalkProfile[]): PageClassification {

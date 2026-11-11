@@ -59,16 +59,16 @@ export interface RunDeltaSyncOptions {
 /**
  * The adapter's lambda driver: one bell/Sync-Now trigger → walk the delta →
  * fetch + gate + land every change → emit business events to the registry.
- * The walker owns the change token; a failed walk processes nothing and the
- * caller redelivers. Each change's CE id is deterministic
+ * The walker owns the change token; a failed walk processes nothing the walk
+ * did not reach, and the caller redelivers. Each change's CE id is deterministic
  * (profileId:itemId:kind:version), so a redelivered trigger — or a restage of
  * the same revision — dedupes centrally at the event log, while two DISTINCT
  * updates to one item carry different eTags and so stay distinct.
  * landed/deleted count only writes the log accepted; a suppressed
  * re-emission ("deduped") counts as skipped.
  *
- * A walk that spends its page budget is not a failure: the pages it did fetch
- * are landed, the resume point becomes the stored token, and a continuation
+ * A walk that spends its page budget is not a failure: the page it did fetch is
+ * already landed, the resume point becomes the stored token, and a continuation
  * bell carries the walk on. That keeps one invocation well inside the Lambda
  * timeout, which a first walk over a whole drive never was.
  */
@@ -87,6 +87,12 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
     };
   }
 
+  // Counted as the walk hands each page over; a failed walk still reports what
+  // it managed to land, because a redelivery must be readable from the log.
+  let landed = 0;
+  let deleted = 0;
+  let skipped = 0;
+
   const walk = await walkDelta({
     client: options.client,
     store: options.deltaStateStore,
@@ -94,6 +100,30 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
     profiles: options.profiles,
     initialUrl: options.initialUrl,
     ...(options.pageBudget === undefined ? {} : { pageBudget: options.pageBudget }),
+    // Land each page as the walk hands it over: the walk holds nothing between
+    // pages, so peak memory is one page's changes and one item's content, not
+    // the whole drive (petroglyph-63vq). A throw here (S3, DynamoDB) rejects the
+    // walk, so the token stays where it was and the retry re-walks the page.
+    handlePage: async (events) => {
+      for (const change of events) {
+        const outcome = await processChange(change, {
+          graph: options.client,
+          store: options.store,
+          eventLog: options.eventLog,
+          emissionId: emissionIdFor(change, log),
+          log,
+        });
+        if (outcome === "landed") {
+          landed += 1;
+        } else if (outcome === "deleted") {
+          deleted += 1;
+        } else {
+          // "deduped" lands here: the log already held source+id, so no write
+          // happened and it must not inflate the landed/deleted counters.
+          skipped += 1;
+        }
+      }
+    },
   });
 
   if (walk.outcome === "failed") {
@@ -107,35 +137,12 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
     );
     return {
       outcome: "failed",
-      landed: 0,
-      deleted: 0,
-      skipped: 0,
+      landed,
+      deleted,
+      skipped,
       pagesCompleted: walk.pagesCompleted,
       pagesRemaining: null,
     };
-  }
-
-  let landed = 0;
-  let deleted = 0;
-  let skipped = 0;
-
-  for (const change of walk.events) {
-    const outcome = await processChange(change, {
-      graph: options.client,
-      store: options.store,
-      eventLog: options.eventLog,
-      emissionId: emissionIdFor(change, log),
-      log,
-    });
-    if (outcome === "landed") {
-      landed += 1;
-    } else if (outcome === "deleted") {
-      deleted += 1;
-    } else {
-      // "deduped" lands here: the log already held source+id, so no write
-      // happened and it must not inflate the landed/deleted counters.
-      skipped += 1;
-    }
   }
 
   if (walk.resumeLink !== undefined) {
