@@ -2,6 +2,15 @@ import { Notice, Plugin } from "obsidian";
 import { z } from "zod";
 import { parseFilesFeed, vaultPathsFor } from "./feed.js";
 import type { FeedEntry } from "./feed.js";
+import {
+  LOG_PATH,
+  PluginLog,
+  appLogSink,
+  appVaultAdapter,
+  describeError,
+  logAbsolutePath,
+  revealInOs,
+} from "./log.js";
 import { PetroglyphSettingTab } from "./settings.js";
 import type { PluginData, SyncProfile } from "./types.js";
 import { hasStringProp, isRecord } from "./validate.js";
@@ -15,6 +24,7 @@ const DEFAULT_DATA: PluginData = {
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const DEFAULT_PROFILE_ID = "default";
 const VAULT_ROOT = "handwritten";
+const LOG_FLUSH_INTERVAL_MS = 2000;
 
 const jwtPayloadSchema = z.object({
   exp: z.number(),
@@ -114,6 +124,7 @@ export class PetroglyphPlugin extends Plugin {
       return;
     }
     const drain = await this.drainFilesFeed(this.resolveProfileId());
+    await this._log.flush();
     if (drain.ok) {
       new Notice("Sync complete");
       return;
@@ -156,9 +167,11 @@ export class PetroglyphPlugin extends Plugin {
       let response: Response;
       try {
         response = await fetch(url.toString(), { headers });
-      } catch {
+      } catch (error) {
+        this.logFeedFailure("network", describeError(error));
         return { ok: false, reason: "network", synced, failed };
       }
+      this.logFeedRequest(url, response.status);
 
       if (response.status === 400 && !retriedRejectedCursor) {
         retriedRejectedCursor = true;
@@ -166,7 +179,10 @@ export class PetroglyphPlugin extends Plugin {
         cursor = undefined;
         continue;
       }
-      if (!response.ok) return { ok: false, reason: "rejected", synced, failed };
+      if (!response.ok) {
+        this.logFeedFailure("rejected", `status ${String(response.status)}`);
+        return { ok: false, reason: "rejected", synced, failed };
+      }
 
       let payload: unknown;
       try {
@@ -175,7 +191,11 @@ export class PetroglyphPlugin extends Plugin {
         return { ok: false, reason: "invalid", synced, failed };
       }
       const feed = parseFilesFeed(payload);
-      if (feed === null) return { ok: false, reason: "invalid", synced, failed };
+      if (feed === null) {
+        this.logFeedFailure("invalid");
+        return { ok: false, reason: "invalid", synced, failed };
+      }
+      this.logFeedPage(feed.files.length, feed.nextToken);
 
       for (const entry of feed.files) {
         if ((await this.writeFeedEntry(entry)) === "failed") failed += 1;
@@ -209,9 +229,12 @@ export class PetroglyphPlugin extends Plugin {
    */
   private async writeFeedEntry(entry: FeedEntry): Promise<"synced" | "failed"> {
     try {
+      const startedAt = Date.now();
       const response = await fetch(entry.s3PresignedUrl);
+      this.logDownloadFailure(entry, startedAt, response);
       if (!response.ok) return "failed";
       const bytes = new Uint8Array(await response.arrayBuffer());
+      this.logDownloadComplete(entry, startedAt, response.status, bytes.byteLength);
 
       const paths = vaultPathsFor(VAULT_ROOT, entry);
       const folder = paths.pdf.substring(0, paths.pdf.lastIndexOf("/"));
@@ -219,14 +242,20 @@ export class PetroglyphPlugin extends Plugin {
         await this.app.vault.adapter.mkdir(folder);
       }
 
-      if (await this.isCurrentFile(paths.pdf, bytes)) return "synced";
+      if (await this.isCurrentFile(paths.pdf, bytes)) {
+        this.logVault("skipped identical", paths.pdf);
+        return "synced";
+      }
 
       await this.app.vault.adapter.writeBinary(paths.pdf, bytes as unknown as ArrayBuffer);
+      this.logVault("wrote", paths.pdf);
       if (paths.markdown !== paths.pdf) {
         await this.app.vault.adapter.write(paths.markdown, companionNote(entry));
       }
       return "synced";
-    } catch {
+    } catch (error) {
+      this.logDownloadError(entry, error);
+      // File-level errors are ignored; sync continues with the next entry.
       return "failed";
     }
   }
@@ -314,10 +343,12 @@ export class PetroglyphPlugin extends Plugin {
     }
   }
 
+  private readonly _log = new PluginLog({ sink: () => appLogSink(this.app) });
   private _data: PluginData = { ...DEFAULT_DATA };
   private _refreshTimeoutId: number | null = null;
   private _statusPollIntervalId: number | null = null;
   private _syncPollIntervalId: number | null = null;
+  private _logFlushIntervalId: number | null = null;
 
   get data(): Readonly<PluginData> {
     return this._data;
@@ -401,16 +432,21 @@ export class PetroglyphPlugin extends Plugin {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refreshToken }),
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        this._log.warn("auth", "refresh rejected", { status: response.status });
+        return;
+      }
       const body: unknown = await response.json();
       if (!isRecord(body) || !hasStringProp(body, "jwt") || !hasStringProp(body, "refreshToken")) {
+        this._log.warn("auth", "refresh response invalid");
         return;
       }
       this.setCredentials(body.jwt, body.refreshToken, username);
       await this.savePluginData();
       this.scheduleRefresh(body.jwt);
-    } catch {
-      // Network errors are silently ignored; the next scheduled refresh will retry.
+    } catch (error) {
+      // The next scheduled refresh retries; the log records why this one failed.
+      this._log.warn("auth", "refresh failed", { error: describeError(error) });
     }
   }
 
@@ -418,11 +454,15 @@ export class PetroglyphPlugin extends Plugin {
     if (this._data.jwt === undefined || !this._data.oneDriveConnected) return;
 
     await this.drainFilesFeed(this.resolveProfileId());
+    await this._log.flush();
   }
 
   override async onload(): Promise<void> {
     await this.loadPluginData();
     await this.loadProfiles();
+
+    await this.logStartup();
+    this.startLogFlushing();
 
     this.addSettingTab(new PetroglyphSettingTab(this.app, this));
 
@@ -448,6 +488,20 @@ export class PetroglyphPlugin extends Plugin {
         name: "Full Reset (remote + local)",
         callback: () => this.fullReset(),
       });
+      this.addCommand({
+        id: "petroglyph-open-log",
+        name: "Open log",
+        callback: () => {
+          void this.openLog();
+        },
+      });
+      this.addCommand({
+        id: "petroglyph-copy-diagnostics",
+        name: "Copy diagnostics",
+        callback: () => {
+          void this.copyDiagnostics();
+        },
+      });
     }
 
     this.registerObsidianProtocolHandler("petroglyph/auth/callback", async (params) => {
@@ -459,6 +513,7 @@ export class PetroglyphPlugin extends Plugin {
         typeof refreshToken !== "string" ||
         typeof username !== "string"
       ) {
+        this._log.error("auth", "login failed", { reason: "missing auth params" });
         new Notice("Login failed: missing auth params");
         return;
       }
@@ -474,6 +529,7 @@ export class PetroglyphPlugin extends Plugin {
       const code = params["code"];
       const state = params["state"];
       if (typeof code !== "string" || typeof state !== "string") {
+        this._log.error("auth", "onedrive connect failed", { reason: "missing code or state" });
         new Notice("OneDrive connection failed: missing code or state");
         return;
       }
@@ -501,6 +557,116 @@ export class PetroglyphPlugin extends Plugin {
     if (this._syncPollIntervalId !== null) {
       window.clearInterval(this._syncPollIntervalId);
       this._syncPollIntervalId = null;
+    }
+    if (this._logFlushIntervalId !== null) {
+      window.clearInterval(this._logFlushIntervalId);
+      this._logFlushIntervalId = null;
+    }
+    void this._log.flush();
+  }
+
+  /** Logs the state a fresh session needs to interpret the log file. */
+  private async logStartup(): Promise<void> {
+    const manifest: unknown = this.manifest;
+    this._log.info("startup", "plugin loaded", {
+      version:
+        isRecord(manifest) && typeof manifest["version"] === "string"
+          ? manifest["version"]
+          : "unknown",
+      apiBaseUrl: this._data.apiBaseUrl,
+      activeProfileId: this.resolveProfileId(),
+      oneDriveStatus: this._data.oneDriveStatus ?? "unknown",
+      cursors: Object.keys(this._data.feedCursors ?? {}).length,
+    });
+    await this._log.flush();
+  }
+
+  /** Writes buffered log lines on a timer; the end of a drain also flushes. */
+  private startLogFlushing(): void {
+    if (this._logFlushIntervalId !== null) return;
+    this._logFlushIntervalId = window.setInterval(() => {
+      void this._log.flush();
+    }, LOG_FLUSH_INTERVAL_MS);
+  }
+
+  /** Logs one feed request: its URL, the cursor it carried, and the status. */
+  private logFeedRequest(url: URL, status: number): void {
+    this._log.info("feed", "requested", {
+      url: url.toString(),
+      cursor: url.searchParams.get("after") ?? "head",
+      status,
+    });
+  }
+
+  /** Logs what one feed page delivered. */
+  private logFeedPage(files: number, nextToken: string | null): void {
+    this._log.info("feed", "page", { files, nextToken: nextToken ?? "end" });
+  }
+
+  /** Logs why a drain stopped, so the failure is never silent. */
+  private logFeedFailure(reason: FeedDrainFailure, error?: string): void {
+    this._log.error("feed", "drain stopped", { reason, error });
+  }
+
+  /** Logs a download that did not return a success status. */
+  private logDownloadFailure(entry: FeedEntry, startedAt: number, response: Response): void {
+    if (response.ok) return;
+    this._log.error("download", "download failed", {
+      itemId: entry.itemId,
+      url: entry.s3PresignedUrl,
+      status: response.status,
+      bytes: 0,
+      elapsedMs: Date.now() - startedAt,
+    });
+  }
+
+  /** Logs a completed download with its byte count and elapsed time. */
+  private logDownloadComplete(
+    entry: FeedEntry,
+    startedAt: number,
+    status: number,
+    bytes: number,
+  ): void {
+    this._log.info("download", "downloaded", {
+      itemId: entry.itemId,
+      url: entry.s3PresignedUrl,
+      status,
+      bytes,
+      elapsedMs: Date.now() - startedAt,
+    });
+  }
+
+  /** Logs a download that threw, so the error is not swallowed silently. */
+  private logDownloadError(entry: FeedEntry, error: unknown): void {
+    this._log.error("download", "download threw", {
+      itemId: entry.itemId,
+      url: entry.s3PresignedUrl,
+      error: describeError(error),
+    });
+  }
+
+  /** Logs what happened to one vault path. */
+  private logVault(outcome: string, path: string): void {
+    this._log.info("vault", outcome, { path });
+  }
+
+  /** Reveals the log file in the OS file manager, so a human can hand it over. */
+  async openLog(): Promise<void> {
+    await this._log.flush();
+    const absolutePath = logAbsolutePath(appVaultAdapter(this.app), LOG_PATH);
+    if (absolutePath === undefined || !revealInOs(absolutePath)) {
+      new Notice(`Petroglyph log: ${LOG_PATH}`);
+    }
+  }
+
+  /** Copies the whole log to the clipboard, for pasting into a report. */
+  async copyDiagnostics(): Promise<void> {
+    await this._log.flush();
+    try {
+      await navigator.clipboard.writeText(await this._log.contents());
+      new Notice("Petroglyph diagnostics copied");
+    } catch {
+      new Notice(`Could not copy diagnostics. The log is at ${LOG_PATH}.`);
     }
   }
 
@@ -738,6 +904,7 @@ export class PetroglyphPlugin extends Plugin {
         body: JSON.stringify(params),
       });
       if (!response.ok) {
+        this._log.error("auth", "onedrive connect failed", { status: response.status });
         new Notice("OneDrive connection failed");
         return;
       }
@@ -747,7 +914,8 @@ export class PetroglyphPlugin extends Plugin {
       this.refreshSettingsUi();
       this.startSyncPolling();
       new Notice("OneDrive connected");
-    } catch {
+    } catch (error) {
+      this._log.error("auth", "onedrive connect failed", { error: describeError(error) });
       new Notice("OneDrive connection failed");
     }
   }

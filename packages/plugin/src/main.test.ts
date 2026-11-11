@@ -2206,3 +2206,217 @@ describe("state-changed emissions", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("diagnostics log", () => {
+  /** An in-memory vault adapter that keeps the log file in `files`. */
+  function createLogSink(): {
+    files: { [path: string]: string };
+    adapter: {
+      append: (path: string, data: string) => Promise<void>;
+      read: (path: string) => Promise<string>;
+      rename: (fromPath: string, toPath: string) => Promise<void>;
+    };
+  } {
+    const files: { [path: string]: string } = {};
+    return {
+      files,
+      adapter: {
+        append: (path, data) => {
+          files[path] = `${files[path] ?? ""}${data}`;
+          return Promise.resolve();
+        },
+        read: (path) => Promise.resolve(files[path] ?? ""),
+        rename: (fromPath, toPath) => {
+          files[toPath] = files[fromPath] ?? "";
+          files[fromPath] = "";
+          return Promise.resolve();
+        },
+      },
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("leaves a line naming itemId, status, and byte count when a download fails", async () => {
+    const { LOG_PATH } = await import("./log.js");
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+
+    global.fetch = vi.fn((url) => {
+      if (typeof url === "string" && url.startsWith("https://api.petroglyph.page/files")) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              files: [
+                {
+                  itemId: "item-1",
+                  name: "note.pdf",
+                  relativePath: "",
+                  mimeType: "application/pdf",
+                  s3PresignedUrl:
+                    "https://petroglyph.blob.core.windows.net/files/note.pdf?sig=capability-secret",
+                  createdAt: "2026-04-11T10:00:00Z",
+                },
+              ],
+              nextToken: null,
+            }),
+        });
+      }
+      return Promise.resolve({ ok: false, status: 403 });
+    }) as unknown as typeof fetch;
+
+    const files: { [path: string]: string } = {};
+    const adapter = {
+      exists: vi.fn(() => Promise.resolve(true)),
+      mkdir: vi.fn(() => Promise.resolve()),
+      readBinary: vi.fn(() => Promise.resolve(new ArrayBuffer(0))),
+      writeBinary: vi.fn(() => Promise.resolve()),
+      write: vi.fn(() => Promise.resolve()),
+      append: (path: string, data: string) => {
+        files[path] = `${files[path] ?? ""}${data}`;
+        return Promise.resolve();
+      },
+      read: (path: string) => Promise.resolve(files[path] ?? ""),
+      rename: (fromPath: string, toPath: string) => {
+        files[toPath] = files[fromPath] ?? "";
+        files[fromPath] = "";
+        return Promise.resolve();
+      },
+    };
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: { adapter } };
+
+    await plugin.performSync();
+
+    const written = files[LOG_PATH] ?? "";
+    expect(written).toContain("ERROR download download failed");
+    expect(written).toContain("itemId=item-1");
+    expect(written).toContain("status=403");
+    expect(written).toContain("bytes=0");
+    expect(written).not.toContain("capability-secret");
+  });
+
+  it("logs the startup state a fresh session needs", async () => {
+    const { LOG_PATH } = await import("./log.js");
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+
+    const { plugin } = await makePlugin({
+      apiBaseUrl: "https://api.example.com",
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      oneDriveStatus: "connected",
+      activeProfileId: "profile-2",
+      feedCursors: { "profile-2": "cursor-1" },
+    });
+
+    const files: { [path: string]: string } = {};
+    const adapter = {
+      append: (path: string, data: string) => {
+        files[path] = `${files[path] ?? ""}${data}`;
+        return Promise.resolve();
+      },
+      read: (path: string) => Promise.resolve(files[path] ?? ""),
+      rename: () => Promise.resolve(),
+    };
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: { adapter } };
+
+    await plugin.onload();
+
+    const written = files[LOG_PATH] ?? "";
+    expect(written).toContain("INFO startup plugin loaded");
+    expect(written).toContain("apiBaseUrl=https://api.example.com");
+    expect(written).toContain("activeProfileId=profile-2");
+    expect(written).toContain("oneDriveStatus=connected");
+    expect(written).toContain("cursors=1");
+    expect(written).not.toContain("jwt-token");
+  });
+  it("logs why a token refresh could not reach the API", async () => {
+    const { LOG_PATH } = await import("./log.js");
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+    const { files, adapter } = createLogSink();
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      refreshToken: "refresh-token",
+      username: "alice",
+    });
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: { adapter } };
+    global.fetch = vi.fn(() => Promise.reject(new Error("offline"))) as unknown as typeof fetch;
+    await plugin.onload();
+    await plugin.performRefresh();
+    await vi.advanceTimersByTimeAsync(2000);
+    const written = files[LOG_PATH] ?? "";
+    expect(written).toContain("WARN auth refresh failed");
+    expect(written).toContain("error=Error: offline");
+  });
+  it("logs a token refresh the API rejected", async () => {
+    const { LOG_PATH } = await import("./log.js");
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+    const { files, adapter } = createLogSink();
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      refreshToken: "refresh-token",
+      username: "alice",
+    });
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: { adapter } };
+    global.fetch = vi.fn(() =>
+      Promise.resolve({ ok: false, status: 401 }),
+    ) as unknown as typeof fetch;
+    await plugin.onload();
+    await plugin.performRefresh();
+    await vi.advanceTimersByTimeAsync(2000);
+    const written = files[LOG_PATH] ?? "";
+    expect(written).toContain("WARN auth refresh rejected");
+    expect(written).toContain("status=401");
+  });
+  it("logs an auth callback that carried no credentials", async () => {
+    const { LOG_PATH } = await import("./log.js");
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+    const { files, adapter } = createLogSink();
+    const { plugin } = await makePlugin();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: { adapter } };
+    await plugin.onload();
+    const registerProtocolHandler = plugin.registerObsidianProtocolHandler; // eslint-disable-line @typescript-eslint/unbound-method
+    const handler = vi
+      .mocked(registerProtocolHandler)
+      .mock.calls.find((call) => call[0] === "petroglyph/auth/callback")?.[1];
+    await handler?.({ action: "callback", jwt: "jwt-token", username: "alice" });
+    await vi.advanceTimersByTimeAsync(2000);
+    const written = files[LOG_PATH] ?? "";
+    expect(written).toContain("ERROR auth login failed");
+    expect(written).toContain("reason=missing auth params");
+  });
+  it("logs a OneDrive connection the API rejected", async () => {
+    const { LOG_PATH } = await import("./log.js");
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+    const { files, adapter } = createLogSink();
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: { adapter } };
+    global.fetch = vi.fn(() =>
+      Promise.resolve({ ok: false, status: 502 }),
+    ) as unknown as typeof fetch;
+    await plugin.onload();
+    await plugin.handleOneDriveCallback({ code: "code-1", state: "state-1" });
+    await vi.advanceTimersByTimeAsync(2000);
+    const written = files[LOG_PATH] ?? "";
+    expect(written).toContain("ERROR auth onedrive connect failed");
+    expect(written).toContain("status=502");
+  });
+});
