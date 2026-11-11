@@ -593,7 +593,7 @@ export class PetroglyphPlugin extends Plugin {
   private logFeedRequest(url: URL, status: number): void {
     this._log.info("feed", "requested", {
       url: url.toString(),
-      cursor: url.searchParams.get("after") ?? "head",
+      cursor: url.searchParams.get("nextToken") ?? "head",
       status,
     });
   }
