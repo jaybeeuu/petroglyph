@@ -50,11 +50,18 @@ export function emitFileStaged(
 export function emitFileDeleted(
   eventLog: EventLogWriter,
   options: {
-    change: Pick<DeletedChange, "profileId" | "itemId" | "relativePath"> & { name?: string };
-    s3Key: string | null;
+    change: Pick<DeletedChange, "profileId" | "itemId"> & {
+      name?: string;
+      relativePath?: string;
+      isFolder: boolean;
+    };
     emissionId: string;
   },
 ): Promise<boolean> {
+  // Only a folder whose parent path AND name both survived on the wire has a
+  // path the adapter can honestly name. Everything else is carried by itemId:
+  // Unit 2 resolves the object from its own record, so no key is guessed here.
+  const sweepPath = options.change.isFolder ? deletedOwnPath(options.change) : undefined;
   const document = parseCloudEvent(
     {
       specversion: "1.0",
@@ -70,10 +77,7 @@ export function emitFileDeleted(
         source: "onedrive",
         changeType: "deleted",
         itemId: options.change.itemId,
-        // The REMOVED item's own path (parent + name) — Unit 2 sweeps records
-        // under this path, so the path must be the thing itself, not its parent.
-        relativePath: deletedOwnPath(options.change),
-        s3Key: options.s3Key,
+        ...(sweepPath === undefined ? {} : { relativePath: sweepPath, s3Key: null }),
       },
     },
     fileDeletedEvent,
@@ -82,13 +86,18 @@ export function emitFileDeleted(
 }
 
 /**
- * The deleted thing's own normalized path — parent/name, or name at the root.
- * A deleted item may omit its name on the wire; with no name there is no
- * item-level path, so the parent path is the most specific path we hold.
+ * The deleted thing's own normalized path — parent/name, or name at the root —
+ * and ONLY when both halves are known. Graph strips the name and the parent
+ * path on delete, so an absent half means the path is unknowable and no sweep
+ * hint may be invented: the consumer sweeps under this path, so a wrong one
+ * would delete the wrong records.
  */
-export function deletedOwnPath(change: { name?: string; relativePath: string }): string {
-  if (change.name === undefined) {
-    return change.relativePath;
+export function deletedOwnPath(change: {
+  name?: string;
+  relativePath?: string;
+}): string | undefined {
+  if (change.name === undefined || change.relativePath === undefined) {
+    return undefined;
   }
   return change.relativePath === "" ? change.name : `${change.relativePath}/${change.name}`;
 }

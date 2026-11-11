@@ -38,11 +38,17 @@ export async function applyStaged(
 
 /**
  * Deletes apply from the event (6.5.2.2 is the ONLY deleter — the adapter
- * never touches S3). s3Key string → object deleted by key + record removed
- * by itemId; a re-delete of an already-removed record is a true no-op.
- * s3Key null → the REMOVED PATH (folder path-level, or a path-unknown
- * item) sweeps every record under it and deletes their objects; a
- * file-path sweep matches nothing.
+ * never touches S3). The object is named by the STORED record's `s3Key`, never
+ * by the event: the adapter does not own the key, and a null or absent event
+ * key must not remove the record while leaving the object behind.
+ *
+ * A record that was never staged is a true no-op — the re-delete of an already
+ * removed record included.
+ *
+ * The sweep stays for the one deletion the adapter can place: a deleted folder
+ * whose own path it knew. The event then carries `relativePath` with no
+ * `s3Key`, and every record under that path loses its object and its row.
+ * A path-less deletion carries no hint, so nothing is swept.
  */
 export async function applyDeleted(
   store: StagedIndexStore,
@@ -50,12 +56,12 @@ export async function applyDeleted(
   data: FileDeletedData,
 ): Promise<void> {
   const existing = await store.get(data.profileId, data.itemId);
-  if (existing !== null && data.s3Key !== null) {
-    await objectStore.delete(data.s3Key);
+  if (existing !== null) {
+    await objectStore.delete(existing.s3Key);
   }
   await store.remove(data.profileId, data.itemId);
 
-  if (data.s3Key === null) {
+  if (data.relativePath !== undefined && (data.s3Key === undefined || data.s3Key === null)) {
     const under = await store.listUnderPath(data.profileId, data.relativePath);
     for (const record of under) {
       await objectStore.delete(record.s3Key);

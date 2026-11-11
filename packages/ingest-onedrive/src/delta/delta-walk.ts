@@ -27,6 +27,8 @@ interface FolderItem {
 /**
  * A parsed driveItem carrying the `deleted` facet. A deleted folder carries
  * BOTH `folder` and `deleted`, so deletion is the discriminator that wins.
+ * Graph strips the name and the parent path on delete, so `name` and
+ * `parentPath` are routinely absent and nothing may be rebuilt from them.
  */
 interface DeletedItem {
   kind: "deleted";
@@ -133,11 +135,31 @@ export type FileChangeEvent =
       itemId: string;
       /** Absent when delta omitted it; never substituted with `itemId`. */
       name?: string;
-      relativePath: string;
+      /**
+       * The PARENT folder path, present only when the wire carried it. Absent
+       * on the delete Graph stripped — the common case, since a deletion is
+       * carried by `itemId` alone and Unit 2 resolves it from its own record.
+       */
+      relativePath?: string;
       isFolder: boolean;
     };
 
 export type DeltaWalkOutcome = "continued" | "reset" | "failed" | "deferred";
+
+/**
+ * Why a walk failed. Carried on the result so the caller can log the cause
+ * without a second Graph probe: a page count alone cannot tell a throttled walk
+ * from one that met a change it could not place.
+ */
+export interface DeltaWalkFailure {
+  reason: "unresolved-items" | "page-status" | "invalid-page" | "no-links" | "token-rejected";
+  /** HTTP status of the page that failed, when a page was involved. */
+  status?: number;
+  /** Graph error code from the failed page body, when present. */
+  errorCode?: string;
+  /** Emittable items the walk could not place. Empty unless the reason is unresolved-items. */
+  unresolvedItemIds: string[];
+}
 
 export interface DeltaWalkResult {
   events: FileChangeEvent[];
@@ -158,14 +180,24 @@ export interface DeltaWalkResult {
    */
   resumeLink?: string;
   /**
-   * Emittable items (file/delete) whose parent path is absent or not a
-   * recognised drive-root form — "unknown", distinct from a drive-root item
-   * which normalises to "". Folders are never emitted, so a path-less folder
-   * (the drive root) is ignored rather than counted. A non-zero count fails the
-   * walk so unresolvable changes are visible, never silently dropped while the
-   * change token advances.
+   * FILE items whose parent path is absent or not a recognised drive-root form
+   * — "unknown", distinct from a drive-root item which normalises to "".
+   * Folders are never emitted, so a path-less folder (the drive root) is
+   * ignored rather than counted. A FILE needs a folder path to land under, so a
+   * non-zero count fails the walk: an unresolvable file is visible, never
+   * silently dropped while the change token advances.
+   *
+   * A path-less DELETION is deliberately not counted: it is carried by
+   * `itemId` and resolved by Unit 2 from its own record, so no path is needed
+   * and failing the walk would wedge the connection forever.
    */
   unresolvedPathCount: number;
+  /**
+   * Set only when `outcome` is "failed": the reason plus the status, Graph
+   * error code and unresolved item ids an operator needs to read the cause
+   * from the log alone.
+   */
+  failure?: DeltaWalkFailure;
   /**
    * Items that resolved to the drive root and so have no folder segment for a
    * staging key. Distinct from `unresolvedPathCount` (path unknown). Counted so
@@ -218,7 +250,8 @@ export const DEFAULT_PAGE_BUDGET = 1;
  * Returns undefined when the path is absent or not in a recognised drive-root
  * form — "path unknown", distinct from "" ("item is at the drive root").
  * Graph returns `parentReference.path` for normal delta items; the drive root
- * omits it, so a path-less file/delete is the unexpected, fail-loud case.
+ * omits it. A path-less FILE is the unexpected, fail-loud case; a path-less
+ * deletion is the expected one, since Graph strips the path on delete.
  */
 export function normalizeRelativePath(parentPath: string | undefined): string | undefined {
   if (parentPath === undefined) {
@@ -231,12 +264,14 @@ export function normalizeRelativePath(parentPath: string | undefined): string | 
   return (match[1] ?? "").replace(/\/+$/, "");
 }
 
-function isResetResponse(status: number, body: unknown): boolean {
-  if (status === 410) {
-    return true;
-  }
+/** The Graph error code a failed page body carries, when it carries one. */
+function graphErrorCode(body: unknown): string | undefined {
   const code = (body as { error?: { code?: unknown } } | null)?.error?.code;
-  return code === "syncStateNotFound";
+  return typeof code === "string" ? code : undefined;
+}
+
+function isResetResponse(status: number, body: unknown): boolean {
+  return status === 410 || graphErrorCode(body) === "syncStateNotFound";
 }
 
 /**
@@ -247,7 +282,7 @@ function isResetResponse(status: number, body: unknown): boolean {
  */
 type Page =
   | { kind: "page"; status: number; body: unknown; didReset: boolean }
-  | { kind: "unavailable" };
+  | { kind: "unavailable"; status: number; body: unknown };
 
 /**
  * Delta walk + change-token management. Full enumeration when no token is
@@ -276,13 +311,17 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
 
   const pageBudget = options.pageBudget ?? DEFAULT_PAGE_BUDGET;
   // Delta shows the latest state per item and may repeat an item within a walk,
-  // so the last occurrence seen wins.
+  // so the last occurrence seen wins. Keyed by profile AND item: one path-less
+  // deletion is reported against every candidate profile, and those are
+  // distinct events for the same item id.
   const eventsByItemId = new Map<string, FileChangeEvent>();
   const collectEvents = (): FileChangeEvent[] => [...eventsByItemId.values()];
+  const eventKey = (event: FileChangeEvent): string => `${event.profileId}:${event.itemId}`;
 
   let outcome: DeltaWalkOutcome = "continued";
   let didReset = false;
   let unresolvedPathCount = 0;
+  let unresolvedItemIds: string[] = [];
   let driveRootItemCount = 0;
   let pagesCompleted = 0;
 
@@ -302,25 +341,41 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
     const freshBody: unknown = await fresh.json().catch(() => null);
     if (isResetResponse(fresh.status, freshBody)) {
       // A reset that immediately resets again cannot be recovered from.
-      return { kind: "unavailable" };
+      return { kind: "unavailable", status: fresh.status, body: freshBody };
     }
     return { kind: "page", status: fresh.status, body: freshBody, didReset: true };
   };
 
-  const failed = (): DeltaWalkResult => ({
+  const failed = (failure: DeltaWalkFailure): DeltaWalkResult => ({
     events: collectEvents(),
     outcome: "failed",
     unresolvedPathCount,
+    failure,
     driveRootItemCount,
     didReset,
     pagesCompleted,
   });
 
+  /** The cause for a page that answered with a status, and maybe a Graph code. */
+  const pageFailure = (
+    reason: DeltaWalkFailure["reason"],
+    status: number,
+    body: unknown,
+  ): DeltaWalkFailure => {
+    const errorCode = graphErrorCode(body);
+    return {
+      reason,
+      status,
+      ...(errorCode === undefined ? {} : { errorCode }),
+      unresolvedItemIds,
+    };
+  };
+
   let page = await requestPage(stored?.deltaLink ?? options.initialUrl);
 
   while (true) {
     if (page.kind === "unavailable") {
-      return failed();
+      return failed(pageFailure("token-rejected", page.status, page.body));
     }
     if (page.didReset) {
       // The token was cleared and the drive re-enumerated — surface the reset.
@@ -328,24 +383,25 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
       didReset = true;
     }
     if (page.status !== 200) {
-      return failed();
+      return failed(pageFailure("page-status", page.status, page.body));
     }
     const parsed = deltaPageSchema.safeParse(page.body);
     if (!parsed.success) {
-      return failed();
+      return failed(pageFailure("invalid-page", page.status, page.body));
     }
 
     const classified = classifyPage(parsed.data.value, profiles);
     pagesCompleted += 1;
     for (const event of classified.events) {
-      eventsByItemId.set(event.itemId, event);
+      eventsByItemId.set(eventKey(event), event);
     }
     unresolvedPathCount += classified.unresolvedPathCount;
+    unresolvedItemIds = [...unresolvedItemIds, ...classified.unresolvedItemIds];
     driveRootItemCount += classified.driveRootItemCount;
     if (unresolvedPathCount > 0) {
-      // Delta returned items we cannot place. Fail rather than report a clean
-      // walk that advanced the change token past changes we never routed.
-      return failed();
+      // A FILE with no folder path cannot be landed. Fail rather than report a
+      // clean walk that advanced the change token past changes we never routed.
+      return failed(pageFailure("unresolved-items", page.status, page.body));
     }
 
     const deltaLink = parsed.data["@odata.deltaLink"];
@@ -369,7 +425,7 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
     if (nextLink === undefined) {
       // Neither link: the walk never reached a terminal change token, so it
       // cannot claim success with the token left unadvanced.
-      return failed();
+      return failed(pageFailure("no-links", page.status, page.body));
     }
 
     if (pagesCompleted >= pageBudget) {
@@ -396,23 +452,38 @@ interface PageClassification {
   driveRootItemCount: number;
 }
 
+interface PageClassification {
+  events: FileChangeEvent[];
+  unresolvedPathCount: number;
+  unresolvedItemIds: string[];
+  driveRootItemCount: number;
+}
+
 function classifyPage(items: DriveItem[], profiles: DeltaWalkProfile[]): PageClassification {
   const events: FileChangeEvent[] = [];
   let unresolvedPathCount = 0;
+  const unresolvedItemIds: string[] = [];
   let driveRootItemCount = 0;
   for (const item of items) {
     const relativePath = normalizeRelativePath(item.parentPath);
     if (relativePath === undefined) {
-      // A path-less folder is the drive root; folders are never emitted, so it
-      // is not an unplaceable change. A path-less file/delete is — fail loudly.
-      if (item.kind !== "folder") {
+      // Path unknown. A folder is the drive root (never emitted, never
+      // unplaceable). A DELETION needs no path: Graph strips the name and the
+      // parent path on delete, so the adapter carries the item id and Unit 2
+      // resolves it from its own record — the only rule that can be true.
+      // A FILE needs a folder path to land under, so it fails the walk loudly.
+      if (item.kind === "deleted") {
+        events.push(...deletionsForEveryProfile(item, profiles));
+      } else if (item.kind === "file") {
         unresolvedPathCount += 1;
+        unresolvedItemIds.push(item.itemId);
       }
       continue;
     }
     if (relativePath === "") {
       // Drive root: no folder segment, so no safe staging key. Count and skip,
-      // never emit an empty relativePath into stage().
+      // never emit an empty relativePath into stage(). A root item is never
+      // staged, so its deletion has no record to remove either.
       driveRootItemCount += 1;
       continue;
     }
@@ -425,9 +496,9 @@ function classifyPage(items: DriveItem[], profiles: DeltaWalkProfile[]): PageCla
         break;
       }
       case "deleted": {
-        const event = classifyDeleted(item, profiles, relativePath);
-        if (event !== null) {
-          events.push(event);
+        const profile = routeToProfile(profiles, relativePath);
+        if (profile !== undefined) {
+          events.push(deletionEvent(item, profile, relativePath));
         }
         break;
       }
@@ -441,7 +512,7 @@ function classifyPage(items: DriveItem[], profiles: DeltaWalkProfile[]): PageCla
       }
     }
   }
-  return { events, unresolvedPathCount, driveRootItemCount };
+  return { events, unresolvedPathCount, unresolvedItemIds, driveRootItemCount };
 }
 
 function routeToProfile(
@@ -478,21 +549,36 @@ function classifyFile(
   };
 }
 
-function classifyDeleted(
+/**
+ * The deletion fact for one profile. `relativePath` is the PARENT folder path,
+ * present only when the wire carried it; a path-less deletion carries the item
+ * id alone.
+ */
+function deletionEvent(
   item: DeletedItem,
-  profiles: DeltaWalkProfile[],
-  relativePath: string,
-): FileChangeEvent | null {
-  const profile = routeToProfile(profiles, relativePath);
-  if (profile === undefined) {
-    return null;
-  }
+  profile: DeltaWalkProfile,
+  relativePath: string | undefined,
+): FileChangeEvent {
   return {
     kind: "deleted",
     profileId: profile.profileId,
     itemId: item.itemId,
     ...(item.name === undefined ? {} : { name: item.name }),
-    relativePath,
+    ...(relativePath === undefined ? {} : { relativePath }),
     isFolder: item.isFolder,
   };
+}
+
+/**
+ * A deletion with no path cannot be routed: the item id names the change, but
+ * not the profile whose index holds its record. So every profile of the
+ * connection is a candidate and Unit 2's lookup decides — removing a record
+ * that does not exist is a no-op, and one drive cannot hold the same item under
+ * two profiles, so at most one of these events removes anything.
+ */
+function deletionsForEveryProfile(
+  item: DeletedItem,
+  profiles: DeltaWalkProfile[],
+): FileChangeEvent[] {
+  return profiles.map((profile) => deletionEvent(item, profile, undefined));
 }

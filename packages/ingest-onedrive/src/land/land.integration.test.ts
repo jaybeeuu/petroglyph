@@ -4,7 +4,12 @@ import { CreateBucketCommand, HeadObjectCommand, S3Client } from "@aws-sdk/clien
 import { DynamoDBClient, CreateTableCommand, ScanCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBEventLogWriter, type EventLogWriter } from "@petroglyph/events";
-import { S3StagedObjectStore, detectType, fileStagedEvent } from "@petroglyph/staging-contracts";
+import {
+  S3StagedObjectStore,
+  detectType,
+  fileDeletedEvent,
+  fileStagedEvent,
+} from "@petroglyph/staging-contracts";
 import { processChange } from "./process-change.js";
 import type { GraphClient } from "../tokens/graph-client.js";
 import type { FileChangeEvent } from "../delta/delta-walk.js";
@@ -160,5 +165,27 @@ describe("fetch+gate+land against LocalStack S3 + DDB", () => {
     expect(stored).not.toBeNull();
     if (stored === null) throw new Error("expected stored object");
     expect(new TextDecoder().decode(stored.body)).toBe("%PDF-1.7 second");
+  }, 30_000);
+
+  it("emits a path-less deletion that the registry accepts, carrying the item identity only", async () => {
+    const log = capturingEventLog(eventLog);
+    const graph: GraphClient = {
+      request: () => Promise.reject(new Error("a deletion must never fetch content")),
+    };
+
+    const outcome = await processChange(
+      { kind: "deleted", profileId: "p1", itemId: "item-2", isFolder: false },
+      { graph, store, eventLog: log, emissionId: "emission-int-delete" },
+    );
+
+    expect(outcome).toBe("deleted");
+    // Equality, not a partial match: no path and no key may be invented.
+    expect(fileDeletedEvent.parse(log.docs[0])["data"]).toEqual({
+      profileId: "p1",
+      source: "onedrive",
+      changeType: "deleted",
+      itemId: "item-2",
+    });
+    expect(log.writes).toEqual([true]);
   }, 30_000);
 });
