@@ -14,6 +14,15 @@ import {
 // pinned a `terraform workspace select` that had already broken CD for every
 // environment (#185). A test here fails when the behaviour changes, not when
 // the wording does.
+//
+// Each test executes every `run:` step of a whole job, and each step spawns a
+// stub `terraform`, `aws` or `pnpm` process per invocation. That is dozens of
+// process starts per test, so they take seconds even on an idle machine and
+// far longer when other suites spawn processes beside them. Each test carries
+// an explicit budget rather than relying on Vitest's 5 s default (see
+// docs/testing.md), sized to the measured worst case: about 3 s per test on a
+// heavily loaded machine with the package's files run one at a time.
+const TIMEOUT_MS = 30_000;
 
 const ARTIFACT_BUCKET = "petroglyph-lambda-artifacts-123456789012";
 const API_FUNCTION_URL = "https://abc123defg.lambda-url.eu-west-2.on.aws/";
@@ -139,121 +148,156 @@ function selectedWorkspace(job: string): string {
 }
 
 describe("deploy workflow artifact uploads", () => {
-  it("uploads each lambda zip under a key derived from the zip's content hash", () => {
-    const run = runDeployJob({
-      job: "deploy-qa",
-      githubSha: COMMIT_SHA,
-      secrets: { LAMBDA_ARTIFACT_BUCKET: ARTIFACT_BUCKET },
-    });
-    const uploads = stubCalls(run, "aws").filter(isS3Copy);
+  it(
+    "uploads each lambda zip under a key derived from the zip's content hash",
+    () => {
+      const run = runDeployJob({
+        job: "deploy-qa",
+        githubSha: COMMIT_SHA,
+        secrets: { LAMBDA_ARTIFACT_BUCKET: ARTIFACT_BUCKET },
+      });
+      const uploads = stubCalls(run, "aws").filter(isS3Copy);
 
-    for (const artifact of LAMBDA_ARTIFACTS) {
-      const upload = uploads.find((call) => call.args[2] === artifact.zipPath);
-      expect(upload?.args[3], artifact.name).toBe(
-        `s3://${ARTIFACT_BUCKET}/${artifactKey(artifact)}`,
-      );
-    }
+      for (const artifact of LAMBDA_ARTIFACTS) {
+        const upload = uploads.find((call) => call.args[2] === artifact.zipPath);
+        expect(upload?.args[3], artifact.name).toBe(
+          `s3://${ARTIFACT_BUCKET}/${artifactKey(artifact)}`,
+        );
+      }
 
-    const commitShaArguments = run.calls
-      .flatMap((call) => call.args)
-      .filter((argument) => argument.includes(COMMIT_SHA));
-    expect(commitShaArguments).toEqual([]);
-  });
+      const commitShaArguments = run.calls
+        .flatMap((call) => call.args)
+        .filter((argument) => argument.includes(COMMIT_SHA));
+      expect(commitShaArguments).toEqual([]);
+    },
+    TIMEOUT_MS,
+  );
 
-  it("skips the upload when an object already exists under the artifact key", () => {
-    const run = runDeployJob({
-      job: "deploy-qa",
-      secrets: { LAMBDA_ARTIFACT_BUCKET: ARTIFACT_BUCKET },
-      existingObjects: LAMBDA_ARTIFACTS.map(artifactKey),
-    });
-    const aws = stubCalls(run, "aws");
-    const probedKeys = aws.filter(isS3HeadObject).map(headObjectKey);
-    const uploadedObjects = aws.filter(isS3Copy).map((call) => call.args[3]);
+  it(
+    "skips the upload when an object already exists under the artifact key",
+    () => {
+      const run = runDeployJob({
+        job: "deploy-qa",
+        secrets: { LAMBDA_ARTIFACT_BUCKET: ARTIFACT_BUCKET },
+        existingObjects: LAMBDA_ARTIFACTS.map(artifactKey),
+      });
+      const aws = stubCalls(run, "aws");
+      const probedKeys = aws.filter(isS3HeadObject).map(headObjectKey);
+      const uploadedObjects = aws.filter(isS3Copy).map((call) => call.args[3]);
 
-    for (const artifact of LAMBDA_ARTIFACTS) {
-      expect(probedKeys, artifact.name).toContain(artifactKey(artifact));
-      expect(uploadedObjects, artifact.name).not.toContain(
-        `s3://${ARTIFACT_BUCKET}/${artifactKey(artifact)}`,
-      );
-    }
-  });
+      for (const artifact of LAMBDA_ARTIFACTS) {
+        expect(probedKeys, artifact.name).toContain(artifactKey(artifact));
+        expect(uploadedObjects, artifact.name).not.toContain(
+          `s3://${ARTIFACT_BUCKET}/${artifactKey(artifact)}`,
+        );
+      }
+    },
+    TIMEOUT_MS,
+  );
 
-  it("passes the content-hash artifact keys to terraform apply", () => {
-    const variables = terraformVariables(runDeployJob({ job: "deploy-qa" }));
+  it(
+    "passes the content-hash artifact keys to terraform apply",
+    () => {
+      const variables = terraformVariables(runDeployJob({ job: "deploy-qa" }));
 
-    for (const artifact of LAMBDA_ARTIFACTS) {
-      expect(variables.get(artifact.applyVariable), artifact.name).toBe(artifactKey(artifact));
-    }
-  });
+      for (const artifact of LAMBDA_ARTIFACTS) {
+        expect(variables.get(artifact.applyVariable), artifact.name).toBe(artifactKey(artifact));
+      }
+    },
+    TIMEOUT_MS,
+  );
 });
 
 describe("deploy workflow deployed smoke", () => {
-  it("runs the smoke after the apply with the API function URL terraform recorded", () => {
-    const run = runDeployJob({
-      job: "deploy-qa",
-      outputs: { api_function_url: API_FUNCTION_URL },
-    });
-    const applyIndex = run.calls.findIndex(isTerraformApply);
-    const smokeIndex = run.calls.findIndex((call) => call.command === "pnpm");
-    const smoke = required(run.calls[smokeIndex], "run the deployed smoke");
+  it(
+    "runs the smoke after the apply with the API function URL terraform recorded",
+    () => {
+      const run = runDeployJob({
+        job: "deploy-qa",
+        outputs: { api_function_url: API_FUNCTION_URL },
+      });
+      const applyIndex = run.calls.findIndex(isTerraformApply);
+      const smokeIndex = run.calls.findIndex((call) => call.command === "pnpm");
+      const smoke = required(run.calls[smokeIndex], "run the deployed smoke");
 
-    expect(applyIndex).toBeGreaterThanOrEqual(0);
-    expect(smokeIndex).toBeGreaterThan(applyIndex);
-    expect(smoke.args).toEqual(["--filter", "@petroglyph/api", "smoke-test"]);
-    expect(smoke.environment.LAMBDA_FUNCTION_URL).toBe(API_FUNCTION_URL);
-  });
+      expect(applyIndex).toBeGreaterThanOrEqual(0);
+      expect(smokeIndex).toBeGreaterThan(applyIndex);
+      expect(smoke.args).toEqual(["--filter", "@petroglyph/api", "smoke-test"]);
+      expect(smoke.environment.LAMBDA_FUNCTION_URL).toBe(API_FUNCTION_URL);
+    },
+    TIMEOUT_MS,
+  );
 });
 
 describe("deploy workflow environments", () => {
-  it("binds each deploy job to the GitHub environment matching the workspace it deploys", () => {
-    const workflow = readDeployWorkflow();
-    const workspaceByJob = new Map(
-      ["deploy-qa", "deploy-production"].map((job) => [job, selectedWorkspace(job)]),
-    );
+  it(
+    "binds each deploy job to the GitHub environment matching the workspace it deploys",
+    () => {
+      const workflow = readDeployWorkflow();
+      const workspaceByJob = new Map(
+        ["deploy-qa", "deploy-production"].map((job) => [job, selectedWorkspace(job)]),
+      );
 
-    for (const [job, workspace] of workspaceByJob) {
-      expect(workspace, job).not.toBe("");
-      expect(workflow.jobs[job]?.environment, job).toBe(workspace);
-    }
-    expect(workspaceByJob.get("deploy-qa")).not.toBe(workspaceByJob.get("deploy-production"));
-  });
+      for (const [job, workspace] of workspaceByJob) {
+        expect(workspace, job).not.toBe("");
+        expect(workflow.jobs[job]?.environment, job).toBe(workspace);
+      }
+      expect(workspaceByJob.get("deploy-qa")).not.toBe(workspaceByJob.get("deploy-production"));
+    },
+    TIMEOUT_MS,
+  );
 
-  it("deploys production to its custom domain and qa to the raw execute-api URL", () => {
-    const production = terraformVariables(runDeployJob({ job: "deploy-production" }));
-    const qa = terraformVariables(runDeployJob({ job: "deploy-qa" }));
+  it(
+    "deploys production to its custom domain and qa to the raw execute-api URL",
+    () => {
+      const production = terraformVariables(runDeployJob({ job: "deploy-production" }));
+      const qa = terraformVariables(runDeployJob({ job: "deploy-qa" }));
 
-    expect(production.get("api_custom_domain")).toBe("api.petroglyph.page");
-    expect(qa.get("api_custom_domain")).toBe("");
-  });
+      expect(production.get("api_custom_domain")).toBe("api.petroglyph.page");
+      expect(qa.get("api_custom_domain")).toBe("");
+    },
+    TIMEOUT_MS,
+  );
 });
 
 describe("deploy workflow terraform workspace", () => {
-  it("selects an existing workspace with TF_WORKSPACE unset for that step only", () => {
-    const run = runDeployJob({ job: "deploy-qa", existingWorkspaces: ["qa"] });
-    const terraform = stubCalls(run, "terraform");
-    const select = required(
-      terraform.find((call) => isWorkspaceCommand(call, "select")),
-      "select the workspace",
-    );
-    const apply = required(terraform.find(isTerraformApply), "apply after selecting the workspace");
+  it(
+    "selects an existing workspace with TF_WORKSPACE unset for that step only",
+    () => {
+      const run = runDeployJob({ job: "deploy-qa", existingWorkspaces: ["qa"] });
+      const terraform = stubCalls(run, "terraform");
+      const select = required(
+        terraform.find((call) => isWorkspaceCommand(call, "select")),
+        "select the workspace",
+      );
+      const apply = required(
+        terraform.find(isTerraformApply),
+        "apply after selecting the workspace",
+      );
 
-    // Terraform refuses `workspace select` while TF_WORKSPACE is set, so the
-    // step has to clear it; the apply below still needs the workspace.
-    expect(select.args).toEqual(["workspace", "select", "qa"]);
-    expect(select.environment.TF_WORKSPACE).toBeNull();
-    expect(terraform.filter((call) => isWorkspaceCommand(call, "new"))).toEqual([]);
-    expect(terraform.indexOf(select)).toBeLessThan(terraform.indexOf(apply));
-    expect(apply.environment.TF_WORKSPACE).toBe("qa");
-  });
+      // Terraform refuses `workspace select` while TF_WORKSPACE is set, so the
+      // step has to clear it; the apply below still needs the workspace.
+      expect(select.args).toEqual(["workspace", "select", "qa"]);
+      expect(select.environment.TF_WORKSPACE).toBeNull();
+      expect(terraform.filter((call) => isWorkspaceCommand(call, "new"))).toEqual([]);
+      expect(terraform.indexOf(select)).toBeLessThan(terraform.indexOf(apply));
+      expect(apply.environment.TF_WORKSPACE).toBe("qa");
+    },
+    TIMEOUT_MS,
+  );
 
-  it("creates the workspace when terraform does not have it yet", () => {
-    const run = runDeployJob({ job: "deploy-qa", existingWorkspaces: [] });
-    const terraform = stubCalls(run, "terraform");
-    const workspaceCommands = terraform
-      .filter((call) => call.args[0] === "workspace")
-      .map((call) => call.args.join(" "));
+  it(
+    "creates the workspace when terraform does not have it yet",
+    () => {
+      const run = runDeployJob({ job: "deploy-qa", existingWorkspaces: [] });
+      const terraform = stubCalls(run, "terraform");
+      const workspaceCommands = terraform
+        .filter((call) => call.args[0] === "workspace")
+        .map((call) => call.args.join(" "));
 
-    expect(workspaceCommands).toEqual(["workspace select qa", "workspace new qa"]);
-    expect(terraform.some(isTerraformApply)).toBe(true);
-  });
+      expect(workspaceCommands).toEqual(["workspace select qa", "workspace new qa"]);
+      expect(terraform.some(isTerraformApply)).toBe(true);
+    },
+    TIMEOUT_MS,
+  );
 });
