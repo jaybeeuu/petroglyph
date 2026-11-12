@@ -212,6 +212,32 @@ Vitest automatically picks up `__mocks__` directories adjacent to the source fil
 
 When adding tests that touch new Obsidian APIs, extend the mock first.
 
+### Build, install, reload
+
+Obsidian loads a plugin from `<vault>/.obsidian/plugins/petroglyph/`. A plugin change needs three steps, in this order.
+
+**1. Build the staged plugin folder.**
+
+```sh
+pnpm --filter @petroglyph/plugin package
+```
+
+This writes `packages/plugin/release/`, holding `main.js`, `manifest.json` and `styles.css`, with `obsidian` left external. The folder is gitignored. `packages/plugin/release/` is the staged folder, not `dist/`: `pnpm build` and `pnpm dev` write `dist/`, so a development build cannot be mistaken for a release.
+
+The plugin version lives only in `packages/plugin/manifest.json`. The package copies that file verbatim into the staged folder, and `packages/plugin/package.json` has no `version` field, so the two cannot disagree. Bump `manifest.json` to release a new version.
+
+**2. Copy the staged folder into a vault.**
+
+```sh
+pnpm --filter @petroglyph/plugin install:vault -- /path/to/vault
+```
+
+Pass the vault path as the only argument. The script refuses to run without one, refuses a directory with no `.obsidian/`, and refuses when nothing has been staged. It copies into `<vault>/.obsidian/plugins/petroglyph/`. No vault path is stored in the repository, and there is no default path.
+
+**3. Reload Obsidian.**
+
+Run **Reload app without saving** from the command palette, or restart Obsidian. Obsidian does not load the new build until it reloads.
+
 ## Troubleshooting
 
 | Symptom                                             | Likely cause                                      | Fix                                                            |

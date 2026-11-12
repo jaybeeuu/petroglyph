@@ -32,6 +32,7 @@ export default config(
       ".vscode",
       "node_modules/",
       "**/dist/",
+      "**/release/",
       "**/*.tsbuildinfo",
       ".pnpm-store/",
     ],
