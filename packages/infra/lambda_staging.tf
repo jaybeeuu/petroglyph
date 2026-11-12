@@ -185,9 +185,10 @@ resource "aws_lambda_function" "petroglyph_adapter_onedrive" {
   role    = aws_iam_role.petroglyph_adapter_onedrive_role.arn
   timeout = 300
 
-  # A full delta walk holds the enumerate in memory, so the default 128 MB OOMs
+  # A full delta walk used to accumulate every page, so the default 128 MB OOMed
   # on a real drive (petroglyph-63vq: 127 MB used, Runtime.OutOfMemory at 78s).
-  # This buys headroom until the walk streams per page instead of accumulating.
+  # The walk now lands and emits per page, so peak memory follows one page, not
+  # the drive; 1024 MB stays as headroom for one large page.
   memory_size = 1024
 
   environment {
