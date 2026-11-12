@@ -58,6 +58,10 @@ Vitest gives every test 5000 ms unless it is handed a budget of its own. A test 
 
 ## Suite parallelism
 
-`packages/ingest-onedrive` runs its test files one at a time (`fileParallelism: false` in its `vitest.config.ts`) because four of its suites each start their own LocalStack container. Run together on a loaded machine, four LocalStack JVMs exhaust the RAM and the `beforeAll` budget expires; the failure looks like a code defect but is memory pressure. Keep the package serial unless the container count falls, and expect its suite to take longer than a parallel one.
+Two packages run their test files one at a time (`fileParallelism: false` in their `vitest.config.ts`). Expect both suites to take longer than a parallel one.
+
+`packages/ingest-onedrive` runs serially because four of its suites each start their own LocalStack container. Run together on a loaded machine, four LocalStack JVMs exhaust the RAM and the `beforeAll` budget expires; the failure looks like a code defect but is memory pressure. Keep the package serial unless the container count falls.
+
+`packages/infra` runs serially because every suite there executes shell scripts that spawn stub processes. Run in parallel on a loaded machine, the deploy-workflow tests took up to 63 s each instead of the 1-3 s they take alone, and the package took 91 s instead of 25 s. Serial execution brings those times back into range; the deploy-workflow tests also carry an explicit 120 s budget of their own (see [Test timeouts](#test-timeouts)).
 
 [CONTRIBUTING.md](../CONTRIBUTING.md) holds the workspace commands and package script conventions.
