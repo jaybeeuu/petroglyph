@@ -7,6 +7,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./hono": {
+      "types": "./dist/endpoint.d.ts",
+      "default": "./dist/endpoint.js"
+    },
+    "./operations": {
+      "types": "./dist/operations/index.d.ts",
+      "default": "./dist/operations/index.js"
     }
   },
   "scripts": {
@@ -21,11 +29,21 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@hono/zod-validator": "^0.9.1",
     "yaml": "^2.8.3",
     "zod": "^4.3.6"
   },
+  "peerDependencies": {
+    "hono": "^4.12.10"
+  },
+  "peerDependenciesMeta": {
+    "hono": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^25.5.2",
+    "hono": "^4.12.10",
     "tsx": "^4.21.0"
   }
 }

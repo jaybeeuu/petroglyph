@@ -1,8 +1,9 @@
 import { markConnected, registerGraphSubscription } from "./onedrive-lifecycle.js";
 import { z } from "zod";
 import { DeleteCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import type { Context } from "hono";
-import type { AppVariables } from "./auth-middleware.js";
+import { defineEndpoint } from "@petroglyph/contracts/hono";
+import { bridgeOnedriveCallback, connectOnedrive } from "@petroglyph/contracts/operations";
+import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
 import { writeInitialConnectionTokens } from "./token-vault.js";
 
@@ -27,12 +28,6 @@ const microsoftTokenResponseSchema = z.object({
   expires_in: z.number(),
 });
 
-const connectBodySchema = z.object({
-  code: z.string().min(1),
-  state: z.string().min(1),
-});
-
-type ConnectRequestBody = z.infer<typeof connectBodySchema>;
 type OnedriveStateItem = z.infer<typeof onedriveStateItemSchema>;
 type MicrosoftTokenResponse = z.infer<typeof microsoftTokenResponseSchema>;
 
@@ -41,11 +36,6 @@ class UpstreamError extends Error {
     super(message);
     this.name = "UpstreamError";
   }
-}
-
-function parseConnectBody(body: unknown): ConnectRequestBody | null {
-  const parsed = connectBodySchema.safeParse(body);
-  return parsed.success ? parsed.data : null;
 }
 
 function parseMicrosoftTokenResponse(data: unknown): MicrosoftTokenResponse {
@@ -182,105 +172,106 @@ async function upsertSyncProfile(userId: string): Promise<void> {
   );
 }
 
-export function handleOnedriveCallbackBridge(c: Context<{ Variables: AppVariables }>): Response {
-  const oauthError = c.req.query("error");
-  const oauthErrorDescription = c.req.query("error_description");
-  const stateFromError = c.req.query("state");
+export const bridgeOnedriveCallbackEndpoint = defineEndpoint(
+  bridgeOnedriveCallback,
+  (_input, c: AppContext): Response => {
+    const oauthError = c.req.query("error");
+    const oauthErrorDescription = c.req.query("error_description");
+    const stateFromError = c.req.query("state");
 
-  if (oauthError && oauthError.length > 0) {
-    const { callbackUri } = stateFromError
-      ? decodeState(stateFromError)
-      : { callbackUri: undefined };
+    if (oauthError && oauthError.length > 0) {
+      const { callbackUri } = stateFromError
+        ? decodeState(stateFromError)
+        : { callbackUri: undefined };
+      const redirectUrl = new URL(callbackUri ?? "obsidian://petroglyph/oauth/callback");
+      redirectUrl.searchParams.set("error", oauthError);
+      if (stateFromError && stateFromError.length > 0) {
+        redirectUrl.searchParams.set("state", stateFromError);
+      }
+      if (oauthErrorDescription && oauthErrorDescription.length > 0) {
+        redirectUrl.searchParams.set("error_description", oauthErrorDescription);
+      }
+      return c.redirect(redirectUrl.toString(), 302);
+    }
+
+    const code = c.req.query("code");
+    const state = c.req.query("state");
+
+    if (!code || code.length === 0) {
+      return c.json({ error: "Missing required query param: code" }, 400);
+    }
+
+    if (!state || state.length === 0) {
+      return c.json({ error: "Missing required query param: state" }, 400);
+    }
+
+    const { callbackUri } = decodeState(state);
     const redirectUrl = new URL(callbackUri ?? "obsidian://petroglyph/oauth/callback");
-    redirectUrl.searchParams.set("error", oauthError);
-    if (stateFromError && stateFromError.length > 0) {
-      redirectUrl.searchParams.set("state", stateFromError);
-    }
-    if (oauthErrorDescription && oauthErrorDescription.length > 0) {
-      redirectUrl.searchParams.set("error_description", oauthErrorDescription);
-    }
+    redirectUrl.searchParams.set("code", code);
+    redirectUrl.searchParams.set("state", state);
+
     return c.redirect(redirectUrl.toString(), 302);
-  }
+  },
+);
 
-  const code = c.req.query("code");
-  const state = c.req.query("state");
+export const connectOnedriveEndpoint = defineEndpoint(
+  connectOnedrive,
+  async (input, c: AppContext) => {
+    const { code, state } = input.body;
+    const { stateHash } = decodeState(state);
+    const userId = c.get("userId");
+    console.info("[onedrive-connect] Starting connect flow", { userId });
 
-  if (!code || code.length === 0) {
-    return c.json({ error: "Missing required query param: code" }, 400);
-  }
+    const stateItem = await lookupStateItem(stateHash);
+    const now = Math.floor(Date.now() / 1000);
 
-  if (!state || state.length === 0) {
-    return c.json({ error: "Missing required query param: state" }, 400);
-  }
-
-  const { callbackUri } = decodeState(state);
-  const redirectUrl = new URL(callbackUri ?? "obsidian://petroglyph/oauth/callback");
-  redirectUrl.searchParams.set("code", code);
-  redirectUrl.searchParams.set("state", state);
-
-  return c.redirect(redirectUrl.toString(), 302);
-}
-
-export async function handleOnedriveConnect(
-  c: Context<{ Variables: AppVariables }>,
-): Promise<Response> {
-  const rawBody: unknown = await c.req.json();
-  const body = parseConnectBody(rawBody);
-
-  if (!body) {
-    console.warn("[onedrive-connect] Missing code/state in request body");
-    return c.json({ error: "Missing required fields: code and state" }, 400);
-  }
-
-  const { code, state } = body;
-  const { stateHash } = decodeState(state);
-  const userId = c.get("userId");
-  console.info("[onedrive-connect] Starting connect flow", { userId });
-
-  const stateItem = await lookupStateItem(stateHash);
-  const now = Math.floor(Date.now() / 1000);
-
-  if (!stateItem || stateItem.type !== "onedrive_state" || stateItem.ttl < now) {
-    console.warn("[onedrive-connect] Invalid or expired state", {
-      userId,
-      stateType: stateItem?.type ?? null,
-      stateExpiry: stateItem?.ttl ?? null,
-      now,
-    });
-    return c.json({ error: "Invalid or expired state" }, 401);
-  }
-
-  await deleteStateItem(stateHash);
-
-  let tokens: MicrosoftTokenResponse;
-  try {
-    tokens = await exchangeCodeForTokens(code, stateItem.verifier);
-  } catch (err) {
-    if (err instanceof UpstreamError) {
-      console.warn("[onedrive-connect] Microsoft token exchange failed", {
+    if (!stateItem || stateItem.type !== "onedrive_state" || stateItem.ttl < now) {
+      console.warn("[onedrive-connect] Invalid or expired state", {
         userId,
-        message: err.message,
+        stateType: stateItem?.type ?? null,
+        stateExpiry: stateItem?.ttl ?? null,
+        now,
       });
-      return c.json({ error: "Microsoft token exchange failed" }, 502);
+      return c.json({ error: "Invalid or expired state" }, 401);
     }
-    throw err;
-  }
 
-  console.info("[onedrive-connect] Microsoft token exchange succeeded", { userId });
-  await storeTokensInDynamoDB(userId, tokens.access_token, tokens.refresh_token, tokens.expires_in);
-  console.info("[onedrive-connect] Stored Microsoft tokens in DynamoDB", { userId });
-  await writeInitialConnectionTokens(docClient(), {
-    userId,
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token,
-    expiresInSeconds: tokens.expires_in,
-  });
-  console.info("[onedrive-connect] Seeded the connection token vault", { userId });
-  await registerGraphSubscription(tokens.access_token, userId);
-  await upsertSyncProfile(userId);
-  console.info("[onedrive-connect] OneDrive profile updated", { userId });
-  await markConnected(userId);
-  console.info("[onedrive-connect] User record updated", { userId });
+    await deleteStateItem(stateHash);
 
-  return c.json({ status: "connected" });
-}
+    let tokens: MicrosoftTokenResponse;
+    try {
+      tokens = await exchangeCodeForTokens(code, stateItem.verifier);
+    } catch (err) {
+      if (err instanceof UpstreamError) {
+        console.warn("[onedrive-connect] Microsoft token exchange failed", {
+          userId,
+          message: err.message,
+        });
+        return c.json({ error: "Microsoft token exchange failed" }, 502);
+      }
+      throw err;
+    }
+
+    console.info("[onedrive-connect] Microsoft token exchange succeeded", { userId });
+    await storeTokensInDynamoDB(
+      userId,
+      tokens.access_token,
+      tokens.refresh_token,
+      tokens.expires_in,
+    );
+    console.info("[onedrive-connect] Stored Microsoft tokens in DynamoDB", { userId });
+    await writeInitialConnectionTokens(docClient(), {
+      userId,
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      expiresInSeconds: tokens.expires_in,
+    });
+    console.info("[onedrive-connect] Seeded the connection token vault", { userId });
+    await registerGraphSubscription(tokens.access_token, userId);
+    await upsertSyncProfile(userId);
+    console.info("[onedrive-connect] OneDrive profile updated", { userId });
+    await markConnected(userId);
+    console.info("[onedrive-connect] User record updated", { userId });
+
+    return c.json({ status: "connected" });
+  },
+);

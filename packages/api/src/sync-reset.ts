@@ -1,15 +1,12 @@
 import { BatchWriteCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
-import type { Context } from "hono";
-import { z } from "zod";
+import { defineEndpoint } from "@petroglyph/contracts/hono";
+import { resetSync } from "@petroglyph/contracts/operations";
+import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
 
 const DEFAULT_PROFILE_ID = "default";
 const BATCH_DELETE_LIMIT = 25;
 const MAX_BATCH_DELETE_ATTEMPTS = 5;
-
-const syncResetRequestSchema = z.object({
-  scope: z.enum(["server", "full"]),
-});
 
 interface FileRecordKey {
   profileId: string;
@@ -166,18 +163,9 @@ async function deleteFileRecords(profileId: string): Promise<void> {
   } while (exclusiveStartKey !== undefined);
 }
 
-export async function handleSyncReset(c: Context): Promise<Response> {
-  const rawBody: unknown = await c.req.json().catch((): undefined => undefined);
-  const parsedBody = syncResetRequestSchema.safeParse(rawBody);
-
-  if (!parsedBody.success) {
-    return c.json({ error: "Invalid reset scope" }, 400);
-  }
-
+export const resetSyncEndpoint = defineEndpoint(resetSync, async (input, c: AppContext) => {
   await deleteDeltaToken(DEFAULT_PROFILE_ID);
   await deleteFileRecords(DEFAULT_PROFILE_ID);
 
-  return parsedBody.data.scope === "full"
-    ? c.json({ resetToken: true })
-    : c.json({ resetToken: false });
-}
+  return input.body.scope === "full" ? c.json({ resetToken: true }) : c.json({ resetToken: false });
+});

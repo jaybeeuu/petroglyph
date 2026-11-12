@@ -1,8 +1,10 @@
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
-import type { Context } from "hono";
+import { defineEndpoint } from "@petroglyph/contracts/hono";
+import { getFilesChanges } from "@petroglyph/contracts/operations";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { z } from "zod";
+import type { AppContext } from "./auth-middleware.js";
 import { listProfiles, fileRecordSchema } from "@petroglyph/core";
 import type { FileRecord, StagedFileRecord } from "@petroglyph/core";
 import { docClient } from "./db.js";
@@ -11,8 +13,6 @@ function fileRecordsTableName(): string {
   return process.env["FILE_RECORDS_TABLE"] ?? "petroglyph-file-records-default";
 }
 
-const MAX_PAGE_SIZE = 100;
-const DEFAULT_PAGE_SIZE = 25;
 const PRESIGNED_URL_EXPIRES_IN_SECONDS = 15 * 60;
 
 let cachedS3Client: S3Client | undefined;
@@ -25,11 +25,6 @@ function s3Client(): S3Client {
   cachedS3Client ??= new S3Client({});
   return cachedS3Client;
 }
-
-const fileChangesQuerySchema = z.object({
-  after: z.string().min(1).optional(),
-  limit: z.coerce.number().int().positive().max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
-});
 
 const cursorSchema = z.object({
   profileId: z.string().min(1),
@@ -156,52 +151,41 @@ async function presignFileRecord(fileRecord: StagedFileRecord): Promise<FileChan
   };
 }
 
-export async function handleFilesChanges(c: Context): Promise<Response> {
-  const userId = c.get("userId") as string;
-  const query = fileChangesQuerySchema.safeParse({
-    after: c.req.query("after"),
-    limit: c.req.query("limit"),
-  });
-
-  if (!query.success) {
-    return c.json({ error: "Invalid files changes query" }, 400);
-  }
-
-  if (query.data.after === undefined) {
-    const initialSyncEnabled = await readInitialSyncEnabled(userId);
-    if (!initialSyncEnabled) {
-      return c.json({ files: [], nextToken: null });
+export const getFilesChangesEndpoint = defineEndpoint(
+  getFilesChanges,
+  async (input, c: AppContext) => {
+    const userId = c.get("userId");
+    const query = input.query;
+    if (query.after === undefined) {
+      const initialSyncEnabled = await readInitialSyncEnabled(userId);
+      if (!initialSyncEnabled) {
+        return c.json({ files: [], nextToken: null });
+      }
     }
-  }
-
-  const profiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
-  const activeProfile = profiles.find((p) => p.active);
-  if (!activeProfile) {
-    return c.json({ error: "No active profile configured" }, 400);
-  }
-
-  let exclusiveStartKey: CursorToken | undefined;
-  if (query.data.after !== undefined) {
-    try {
-      exclusiveStartKey = parseCursorToken(query.data.after);
-    } catch {
-      return c.json({ error: "Invalid file changes cursor" }, 400);
+    const profiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
+    const activeProfile = profiles.find((p) => p.active);
+    if (!activeProfile) {
+      return c.json({ error: "No active profile configured" }, 400);
     }
-  }
-
-  const { fileRecords, nextToken } = await readFileRecordPage(
-    activeProfile.profileId,
-    query.data.limit,
-    exclusiveStartKey,
-  );
-
-  const stagedRecords = fileRecords.filter(
-    (r): r is StagedFileRecord => r.status === "staged" && r.s3Key.length > 0,
-  );
-
-  const files = await Promise.all(
-    stagedRecords.map(async (fileRecord) => presignFileRecord(fileRecord)),
-  );
-
-  return c.json({ files, nextToken });
-}
+    let exclusiveStartKey: CursorToken | undefined;
+    if (query.after !== undefined) {
+      try {
+        exclusiveStartKey = parseCursorToken(query.after);
+      } catch {
+        return c.json({ error: "Invalid file changes cursor" }, 400);
+      }
+    }
+    const { fileRecords, nextToken } = await readFileRecordPage(
+      activeProfile.profileId,
+      query.limit,
+      exclusiveStartKey,
+    );
+    const stagedRecords = fileRecords.filter(
+      (r): r is StagedFileRecord => r.status === "staged" && r.s3Key.length > 0,
+    );
+    const files = await Promise.all(
+      stagedRecords.map(async (fileRecord) => presignFileRecord(fileRecord)),
+    );
+    return c.json({ files, nextToken });
+  },
+);

@@ -1,61 +1,47 @@
-import type { Context } from "hono";
+import { defineEndpoint } from "@petroglyph/contracts/hono";
+import {
+  createProfile as createProfileOperation,
+  listProfiles as listProfilesOperation,
+} from "@petroglyph/contracts/operations";
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
 import { listProfiles, normalizeSourceFolderPath, putProfile } from "@petroglyph/core";
+import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
 
 function syncProfilesTableName(): string {
   return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
 }
 
-const createProfileBodySchema = z.object({
-  name: z.string().min(1),
-  sourceFolderPath: z.string().min(1).transform(normalizeSourceFolderPath),
-  destinationVaultPath: z.string().min(1),
-  pollingIntervalMinutes: z.number().int().positive().optional(),
-  enabled: z.boolean().optional(),
-});
+export const listProfilesEndpoint = defineEndpoint(
+  listProfilesOperation,
+  async (_input, c: AppContext) => {
+    const userId = c.get("userId");
+    const profiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
+    return c.json(profiles);
+  },
+);
 
-export async function handleListProfiles(c: Context): Promise<Response> {
-  const userId = c.get("userId") as string;
-  const profiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
-  return c.json(profiles);
-}
-
-export async function handleCreateProfile(c: Context): Promise<Response> {
-  const userId = c.get("userId") as string;
-
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid request body" }, 400);
-  }
-
-  const parsed = createProfileBodySchema.safeParse(body);
-  if (!parsed.success) {
-    return c.json({ error: "Invalid profile data", details: parsed.error.issues }, 400);
-  }
-
-  const existingProfiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
-  const isFirst = existingProfiles.length === 0;
-
-  const now = new Date().toISOString();
-  const profile = {
-    profileId: randomUUID(),
-    userId,
-    name: parsed.data.name,
-    sourceFolderPath: parsed.data.sourceFolderPath,
-    destinationVaultPath: parsed.data.destinationVaultPath,
-    pollingIntervalMinutes: parsed.data.pollingIntervalMinutes ?? 5,
-    enabled: parsed.data.enabled ?? true,
-    active: isFirst,
-    initialSyncEnabled: true,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  await putProfile(docClient(), syncProfilesTableName(), profile);
-
-  return c.json(profile, 201);
-}
+export const createProfileEndpoint = defineEndpoint(
+  createProfileOperation,
+  async (input, c: AppContext) => {
+    const userId = c.get("userId");
+    const existingProfiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
+    const isFirst = existingProfiles.length === 0;
+    const now = new Date().toISOString();
+    const profile = {
+      profileId: randomUUID(),
+      userId,
+      name: input.body.name,
+      sourceFolderPath: normalizeSourceFolderPath(input.body.sourceFolderPath),
+      destinationVaultPath: input.body.destinationVaultPath,
+      pollingIntervalMinutes: input.body.pollingIntervalMinutes ?? 5,
+      enabled: input.body.enabled ?? true,
+      active: isFirst,
+      initialSyncEnabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await putProfile(docClient(), syncProfilesTableName(), profile);
+    return c.json(profile, 201);
+  },
+);

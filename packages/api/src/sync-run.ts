@@ -1,7 +1,9 @@
 import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { syncProfileSchema } from "@petroglyph/core";
 import type { SyncProfile } from "@petroglyph/core";
-import type { Context } from "hono";
+import { defineEndpoint } from "@petroglyph/contracts/hono";
+import { runSync } from "@petroglyph/contracts/operations";
+import type { AppContext } from "./auth-middleware.js";
 import { randomUUID } from "node:crypto";
 import { docClient } from "./db.js";
 
@@ -71,7 +73,7 @@ async function createSyncJob(
   );
 }
 
-export async function handleSyncRun(c: Context): Promise<Response> {
+export const runSyncEndpoint = defineEndpoint(runSync, async (_input, c: AppContext) => {
   const userIdValue: unknown = c.get("userId");
   if (typeof userIdValue !== "string" || userIdValue.length === 0) {
     throw new Error("Missing userId in sync run context");
@@ -87,4 +89,4 @@ export async function handleSyncRun(c: Context): Promise<Response> {
   await createSyncJob(jobId, userId, activeProfile.profileId, activeProfile.sourceFolderPath);
 
   return c.json({ jobId }, 201);
-}
+});

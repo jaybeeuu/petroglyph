@@ -22,6 +22,34 @@ import { getFile } from "./get-file.operation.js";
 import { defineRegistry } from "../registry.js";
 
 /**
+ * Every operation, re-exported by name so a handler imports the one it binds
+ * without reaching into the registry object.
+ */
+export {
+  getHealth,
+  getAuthUrl,
+  getAuthCallback,
+  postAuthRefresh,
+  getStatus,
+  getFilesChanges,
+  listProfiles,
+  createProfile,
+  getProfile,
+  putProfile,
+  deleteProfile,
+  getOnedriveAuthUrl,
+  bridgeOnedriveCallback,
+  connectOnedrive,
+  postOnedriveLifecycle,
+  postOnedriveSyncTrigger,
+  runSync,
+  resetSync,
+  getSyncJob,
+  listFiles,
+  getFile,
+};
+
+/**
  * Every operation the API serves, keyed by operationId. The parity test holds
  * this registry to the routes the Hono apps actually register, in both
  * directions, so a route without an entry and an entry without a route both

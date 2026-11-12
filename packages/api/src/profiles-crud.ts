@@ -1,6 +1,11 @@
 import { DeleteCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import type { Context } from "hono";
-import { z } from "zod";
+import { defineEndpoint } from "@petroglyph/contracts/hono";
+import {
+  deleteProfile as deleteProfileOperation,
+  getProfile as getProfileOperation,
+  putProfile as putProfileOperation,
+} from "@petroglyph/contracts/operations";
+import type { EndpointInput } from "@petroglyph/contracts";
 import {
   getProfile,
   listProfiles,
@@ -9,7 +14,7 @@ import {
   deleteProfile,
 } from "@petroglyph/core";
 import type { SyncProfile } from "@petroglyph/core";
-import type { AppVariables } from "./auth-middleware.js";
+import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
 
 function syncProfilesTableName(): string {
@@ -20,21 +25,11 @@ function fileRecordsTableName(): string {
   return process.env["FILE_RECORDS_TABLE"] ?? "petroglyph-file-records-default";
 }
 
-const putProfileBodySchema = z
-  .object({
-    name: z.string().min(1).optional(),
-    sourceFolderPath: z.string().min(1).transform(normalizeSourceFolderPath).optional(),
-    destinationVaultPath: z.string().min(1).optional(),
-    pollingIntervalMinutes: z.number().int().positive().optional(),
-    enabled: z.boolean().optional(),
-    initialSyncEnabled: z.boolean().optional(),
-    active: z.boolean().optional(),
-  })
-  .strict();
+/** The validated body of a profile update. */
+type PutProfileBody = EndpointInput<(typeof putProfileOperation)["request"]>["body"];
 
 async function deleteFileRecordsForProfile(profileId: string): Promise<void> {
   let lastEvaluatedKey: { [key: string]: unknown } | undefined;
-
   do {
     const result = await docClient().send(
       new QueryCommand({
@@ -45,7 +40,6 @@ async function deleteFileRecordsForProfile(profileId: string): Promise<void> {
         ProjectionExpression: "profileId, fileId",
       }),
     );
-
     for (const item of result.Items ?? []) {
       const itemProfileId = item["profileId"] as string;
       const fileId = item["fileId"] as string;
@@ -56,19 +50,17 @@ async function deleteFileRecordsForProfile(profileId: string): Promise<void> {
         }),
       );
     }
-
     lastEvaluatedKey = result.LastEvaluatedKey as { [key: string]: unknown } | undefined;
   } while (lastEvaluatedKey !== undefined);
 }
 
-function mergeProfile(
-  existing: SyncProfile,
-  updates: z.infer<typeof putProfileBodySchema>,
-): SyncProfile {
+function mergeProfile(existing: SyncProfile, updates: PutProfileBody): SyncProfile {
   return {
     ...existing,
     ...(updates.name !== undefined && { name: updates.name }),
-    ...(updates.sourceFolderPath !== undefined && { sourceFolderPath: updates.sourceFolderPath }),
+    ...(updates.sourceFolderPath !== undefined && {
+      sourceFolderPath: normalizeSourceFolderPath(updates.sourceFolderPath),
+    }),
     ...(updates.destinationVaultPath !== undefined && {
       destinationVaultPath: updates.destinationVaultPath,
     }),
@@ -84,114 +76,88 @@ function mergeProfile(
   };
 }
 
-export async function handleGetProfile(c: Context<{ Variables: AppVariables }>): Promise<Response> {
-  const userId = c.get("userId");
-  const profileId = c.req.param("id") ?? "";
-
-  const profile = await getProfile(docClient(), syncProfilesTableName(), userId, profileId);
-
-  if (profile === null || profile.userId !== userId) {
-    return c.json({ error: "Profile not found" }, 404);
-  }
-
-  return c.json(profile);
-}
-
-export async function handlePutProfile(c: Context<{ Variables: AppVariables }>): Promise<Response> {
-  const userId = c.get("userId");
-  const profileId = c.req.param("id") ?? "";
-
-  const existing = await getProfile(docClient(), syncProfilesTableName(), userId, profileId);
-
-  if (existing === null || existing.userId !== userId) {
-    return c.json({ error: "Profile not found" }, 404);
-  }
-
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON body" }, 400);
-  }
-
-  const parsed = putProfileBodySchema.safeParse(body);
-  if (!parsed.success) {
-    return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
-  }
-
-  const updates = parsed.data;
-
-  if (updates.active === false && existing.active) {
-    return c.json(
-      { error: "Cannot deactivate the active profile; activate another profile instead" },
-      409,
-    );
-  }
-
-  const sourceFolderChanged =
-    updates.sourceFolderPath !== undefined &&
-    updates.sourceFolderPath !== normalizeSourceFolderPath(existing.sourceFolderPath);
-
-  const updated = mergeProfile(existing, updates);
-
-  await putProfile(docClient(), syncProfilesTableName(), updated);
-
-  const deactivatedProfileIds: string[] = [];
-
-  if (updates.active === true) {
-    const profiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
-
-    for (const other of profiles) {
-      if (other.profileId === profileId || !other.active) continue;
-
-      await putProfile(docClient(), syncProfilesTableName(), {
-        ...other,
-        active: false,
-        updatedAt: new Date().toISOString(),
-      });
-      deactivatedProfileIds.push(other.profileId);
+export const getProfileEndpoint = defineEndpoint(
+  getProfileOperation,
+  async (_input, c: AppContext) => {
+    const userId = c.get("userId");
+    const profileId = c.req.param("id") ?? "";
+    const profile = await getProfile(docClient(), syncProfilesTableName(), userId, profileId);
+    if (profile === null || profile.userId !== userId) {
+      return c.json({ error: "Profile not found" }, 404);
     }
-  }
+    return c.json(profile);
+  },
+);
 
-  if (sourceFolderChanged && existing.active) {
-    console.warn(
-      `[profiles-crud] Profile ${profileId} is active and sourceFolderPath changed; Graph subscription update not yet implemented`,
-    );
-  }
-
-  return c.json({ ...updated, deactivatedProfileIds });
-}
-
-export async function handleDeleteProfile(
-  c: Context<{ Variables: AppVariables }>,
-): Promise<Response> {
-  const userId = c.get("userId");
-  const profileId = c.req.param("id") ?? "";
-
-  const existing = await getProfile(docClient(), syncProfilesTableName(), userId, profileId);
-
-  if (existing === null || existing.userId !== userId) {
-    return c.json({ error: "Profile not found" }, 404);
-  }
-
-  await deleteProfile(docClient(), syncProfilesTableName(), userId, profileId);
-  await deleteFileRecordsForProfile(profileId);
-
-  if (existing.active) {
-    const remaining = await listProfiles(docClient(), syncProfilesTableName(), userId);
-    const others = remaining.filter((p) => p.profileId !== profileId);
-
-    if (others.length > 0) {
-      const newest = others.reduce((best: SyncProfile, p: SyncProfile) =>
-        p.createdAt > best.createdAt ? p : best,
+export const putProfileEndpoint = defineEndpoint(
+  putProfileOperation,
+  async (input, c: AppContext) => {
+    const userId = c.get("userId");
+    const profileId = input.params.id;
+    const existing = await getProfile(docClient(), syncProfilesTableName(), userId, profileId);
+    if (existing === null || existing.userId !== userId) {
+      return c.json({ error: "Profile not found" }, 404);
+    }
+    const updates = input.body;
+    if (updates.active === false && existing.active) {
+      return c.json(
+        { error: "Cannot deactivate the active profile; activate another profile instead" },
+        409,
       );
-      await putProfile(docClient(), syncProfilesTableName(), {
-        ...newest,
-        active: true,
-        updatedAt: new Date().toISOString(),
-      });
     }
-  }
+    const sourceFolderChanged =
+      updates.sourceFolderPath !== undefined &&
+      normalizeSourceFolderPath(updates.sourceFolderPath) !==
+        normalizeSourceFolderPath(existing.sourceFolderPath);
+    const updated = mergeProfile(existing, updates);
+    await putProfile(docClient(), syncProfilesTableName(), updated);
+    const deactivatedProfileIds: string[] = [];
+    if (updates.active === true) {
+      const profiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
+      for (const other of profiles) {
+        if (other.profileId === profileId || !other.active) continue;
+        await putProfile(docClient(), syncProfilesTableName(), {
+          ...other,
+          active: false,
+          updatedAt: new Date().toISOString(),
+        });
+        deactivatedProfileIds.push(other.profileId);
+      }
+    }
+    if (sourceFolderChanged && existing.active) {
+      console.warn(
+        `[profiles-crud] Profile ${profileId} is active and sourceFolderPath changed; Graph subscription update not yet implemented`,
+      );
+    }
+    return c.json({ ...updated, deactivatedProfileIds });
+  },
+);
 
-  return new Response(null, { status: 204 });
-}
+export const deleteProfileEndpoint = defineEndpoint(
+  deleteProfileOperation,
+  async (_input, c: AppContext) => {
+    const userId = c.get("userId");
+    const profileId = c.req.param("id") ?? "";
+    const existing = await getProfile(docClient(), syncProfilesTableName(), userId, profileId);
+    if (existing === null || existing.userId !== userId) {
+      return c.json({ error: "Profile not found" }, 404);
+    }
+    await deleteProfile(docClient(), syncProfilesTableName(), userId, profileId);
+    await deleteFileRecordsForProfile(profileId);
+    if (existing.active) {
+      const remaining = await listProfiles(docClient(), syncProfilesTableName(), userId);
+      const others = remaining.filter((p) => p.profileId !== profileId);
+      if (others.length > 0) {
+        const newest = others.reduce((best: SyncProfile, p: SyncProfile) =>
+          p.createdAt > best.createdAt ? p : best,
+        );
+        await putProfile(docClient(), syncProfilesTableName(), {
+          ...newest,
+          active: true,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    }
+    return new Response(null, { status: 204 });
+  },
+);

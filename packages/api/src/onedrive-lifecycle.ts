@@ -1,5 +1,7 @@
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import type { Context } from "hono";
+import { defineEndpoint } from "@petroglyph/contracts/hono";
+import { postOnedriveLifecycle } from "@petroglyph/contracts/operations";
+import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
 
 function usersTable(): string {
@@ -352,19 +354,22 @@ async function processLifecycleNotifications(
   );
 }
 
-export async function handleOnedriveLifecycle(c: Context): Promise<Response> {
-  const validationToken = c.req.query("validationToken");
-  if (validationToken) {
-    return new Response(validationToken, {
-      status: 200,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
+export const postOnedriveLifecycleEndpoint = defineEndpoint(
+  postOnedriveLifecycle,
+  async (_input, c: AppContext) => {
+    const validationToken = c.req.query("validationToken");
+    if (validationToken) {
+      return new Response(validationToken, {
+        status: 200,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    }
+
+    const notifications = parseLifecycleNotifications(await c.req.json().catch(() => null));
+    await processLifecycleNotifications(notifications).catch((error: unknown) => {
+      console.error("[onedrive-lifecycle] lifecycle processing failed:", error);
     });
-  }
 
-  const notifications = parseLifecycleNotifications(await c.req.json().catch(() => null));
-  await processLifecycleNotifications(notifications).catch((error: unknown) => {
-    console.error("[onedrive-lifecycle] lifecycle processing failed:", error);
-  });
-
-  return c.body(null, 202);
-}
+    return c.body(null, 202);
+  },
+);

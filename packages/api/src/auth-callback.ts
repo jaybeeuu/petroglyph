@@ -1,5 +1,7 @@
 import { DeleteCommand, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import type { Context } from "hono";
+import { defineEndpoint } from "@petroglyph/contracts/hono";
+import { getAuthCallback } from "@petroglyph/contracts/operations";
+import type { AppContext } from "./auth-middleware.js";
 import { SignJWT, importPKCS8 } from "jose";
 import { createHash, randomUUID } from "node:crypto";
 import { docClient } from "./db.js";
@@ -189,53 +191,56 @@ async function storeRefreshToken(refreshToken: string, userId: string): Promise<
   );
 }
 
-export async function handleAuthCallback(c: Context): Promise<Response> {
-  const code = c.req.query("code");
-  const state = c.req.query("state");
+export const getAuthCallbackEndpoint = defineEndpoint(
+  getAuthCallback,
+  async (_input, c: AppContext) => {
+    const code = c.req.query("code");
+    const state = c.req.query("state");
 
-  if (typeof code !== "string" || code.length === 0) {
-    return c.json({ error: "code is required" }, 400);
-  }
-
-  if (typeof state !== "string" || state.length === 0) {
-    return c.json({ error: "state is required" }, 400);
-  }
-
-  const stateItem = await lookUpState(state);
-  const now = Math.floor(Date.now() / 1000);
-
-  if (!stateItem || stateItem.type !== "oauth_state" || stateItem.ttl < now) {
-    return c.json({ error: "Invalid or expired state" }, 401);
-  }
-
-  await deleteState(state);
-
-  let accessToken: string;
-  let githubUser: GitHubUser;
-  try {
-    accessToken = await exchangeCodeForToken(code);
-    githubUser = await fetchGitHubUser(accessToken);
-  } catch (err) {
-    if (err instanceof UpstreamError) {
-      return c.json({ error: "GitHub API error" }, 502);
+    if (typeof code !== "string" || code.length === 0) {
+      return c.json({ error: "code is required" }, 400);
     }
-    throw err;
-  }
 
-  const userId = String(githubUser.id);
-  const { login: username } = githubUser;
+    if (typeof state !== "string" || state.length === 0) {
+      return c.json({ error: "state is required" }, 400);
+    }
 
-  await upsertUser(userId, username);
+    const stateItem = await lookUpState(state);
+    const now = Math.floor(Date.now() / 1000);
 
-  const jwt = await issueJwt(userId, username);
+    if (!stateItem || stateItem.type !== "oauth_state" || stateItem.ttl < now) {
+      return c.json({ error: "Invalid or expired state" }, 401);
+    }
 
-  const refreshToken = randomUUID();
-  await storeRefreshToken(refreshToken, userId);
+    await deleteState(state);
 
-  const redirectUrl = new URL(stateItem.returnUri);
-  redirectUrl.searchParams.set("jwt", jwt);
-  redirectUrl.searchParams.set("refreshToken", refreshToken);
-  redirectUrl.searchParams.set("username", username);
+    let accessToken: string;
+    let githubUser: GitHubUser;
+    try {
+      accessToken = await exchangeCodeForToken(code);
+      githubUser = await fetchGitHubUser(accessToken);
+    } catch (err) {
+      if (err instanceof UpstreamError) {
+        return c.json({ error: "GitHub API error" }, 502);
+      }
+      throw err;
+    }
 
-  return c.redirect(redirectUrl.toString(), 302);
-}
+    const userId = String(githubUser.id);
+    const { login: username } = githubUser;
+
+    await upsertUser(userId, username);
+
+    const jwt = await issueJwt(userId, username);
+
+    const refreshToken = randomUUID();
+    await storeRefreshToken(refreshToken, userId);
+
+    const redirectUrl = new URL(stateItem.returnUri);
+    redirectUrl.searchParams.set("jwt", jwt);
+    redirectUrl.searchParams.set("refreshToken", refreshToken);
+    redirectUrl.searchParams.set("username", username);
+
+    return c.redirect(redirectUrl.toString(), 302);
+  },
+);

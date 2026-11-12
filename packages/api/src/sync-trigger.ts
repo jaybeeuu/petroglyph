@@ -1,8 +1,10 @@
 import { SendMessageCommand, type SQSClient } from "@aws-sdk/client-sqs";
 import { createDeltaTriggerSend, type DeltaTrigger } from "@petroglyph/contracts";
+import { defineEndpoint } from "@petroglyph/contracts/hono";
+import { postOnedriveSyncTrigger } from "@petroglyph/contracts/operations";
 import type { TokenRecord } from "@petroglyph/core";
-import type { Context } from "hono";
-import type { AppVariables } from "./auth-middleware.js";
+import type { MiddlewareHandler } from "hono";
+import type { AppContext, AppVariables } from "./auth-middleware.js";
 import { sqsClient } from "./sqs.js";
 import { docClient } from "./db.js";
 import { ONEDRIVE_PROVIDER, readConnection } from "./token-vault.js";
@@ -31,13 +33,12 @@ function error(code: string, message: string): { error: { code: string; message:
  * hands the bell to the queue. The plugin polls `GET /files` afterwards, which
  * is why there is no job record here.
  */
-export function createSyncTriggerHandler(
+export function createSyncTriggerEndpoint(
   deps: SyncTriggerDeps,
-): (c: Context<{ Variables: AppVariables }>) => Promise<Response> {
-  return async (c) => {
+): MiddlewareHandler<{ Variables: AppVariables }>[] {
+  return defineEndpoint(postOnedriveSyncTrigger, async (_input, c: AppContext) => {
     const userId = c.get("userId");
     const connection = await deps.readConnection(userId, ONEDRIVE_PROVIDER);
-
     if (connection === null) {
       return c.json(
         error(
@@ -47,7 +48,6 @@ export function createSyncTriggerHandler(
         409,
       );
     }
-
     if (connection.reconnectRequired) {
       return c.json(
         error(
@@ -57,11 +57,9 @@ export function createSyncTriggerHandler(
         409,
       );
     }
-
     await deps.enqueueDeltaTrigger({ userId, provider: ONEDRIVE_PROVIDER });
-
     return c.json({ status: "queued" }, 202);
-  };
+  });
 }
 
 function deltaTriggerQueueUrl(): string {

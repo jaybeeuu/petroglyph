@@ -1,30 +1,10 @@
-import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { randomUUID } from "node:crypto";
-import { handleAuthCallback } from "./auth-callback.js";
-import { handleAuthRefresh } from "./auth-refresh.js";
 import { authMiddleware, type AppVariables } from "./auth-middleware.js";
 import { onedriveMiddleware } from "./onedrive-middleware.js";
-import { handleOnedriveAuthUrl } from "./onedrive-auth-url.js";
-import { handleOnedriveCallbackBridge, handleOnedriveConnect } from "./onedrive-connect.js";
-import { handleOnedriveLifecycle } from "./onedrive-lifecycle.js";
-import { handleFilesChanges } from "./files-changes.js";
-import { handleListProfiles, handleCreateProfile } from "./profiles.js";
-import { handleGetProfile, handlePutProfile, handleDeleteProfile } from "./profiles-crud.js";
-import { handleStatus } from "./status.js";
-import { handleSyncRun } from "./sync-run.js";
-import {
-  createSyncTriggerDeps,
-  createSyncTriggerHandler,
-  type SyncTriggerDeps,
-} from "./sync-trigger.js";
-import { handleSyncJobStatus } from "./sync-jobs.js";
-import { handleSyncReset } from "./sync-reset.js";
-import { docClient } from "./db.js";
-
-const TABLE_NAME = process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
+import { createHandlers, registerRoutes } from "./routes.js";
+import { createSyncTriggerDeps, type SyncTriggerDeps } from "./sync-trigger.js";
 
 const EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: "GET", path: "/health" },
@@ -40,12 +20,14 @@ const EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
  * can drive the real route with its own vault reads and its own queue; the
  * default wires the deployed ones, built on first construction rather than at
  * module scope.
+ *
+ * Routes come from the operation registry through `registerRoutes`, so the
+ * served surface and the contract cannot drift apart here.
  */
 export function createApp(
   syncTriggerDeps: SyncTriggerDeps = createSyncTriggerDeps(),
 ): Hono<{ Variables: AppVariables }> {
   const app = new Hono<{ Variables: AppVariables }>();
-  const handleSyncTrigger = createSyncTriggerHandler(syncTriggerDeps);
 
   app.use(
     "*",
@@ -61,74 +43,12 @@ export function createApp(
       (route) => route.method === c.req.method && route.path === c.req.path,
     );
     if (isExempt) return next();
+
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     return authMiddleware(c as unknown as Context<{ Variables: AppVariables }>, next);
   });
 
-  app.get("/health", (c) => {
-    return c.json({ status: "ok" });
-  });
-
-  app.get("/auth/url", async (c) => {
-    const clientId = process.env["GITHUB_CLIENT_ID"];
-    const redirectUri = process.env["GITHUB_REDIRECT_URI"];
-    const returnUri = c.req.query("returnUri");
-    if (!clientId || !redirectUri) {
-      return c.json({ error: "Missing OAuth configuration" }, 500);
-    }
-
-    if (typeof returnUri !== "string" || returnUri.length === 0) {
-      return c.json({ error: "returnUri is required" }, 400);
-    }
-
-    const state = randomUUID();
-    const ttl = Math.floor(Date.now() / 1000) + 600;
-
-    await docClient().send(
-      new PutCommand({
-        TableName: TABLE_NAME,
-        Item: { tokenHash: state, type: "oauth_state", ttl, returnUri },
-      }),
-    );
-
-    const url = new URL("https://github.com/login/oauth/authorize");
-    url.searchParams.set("client_id", clientId);
-    url.searchParams.set("redirect_uri", redirectUri);
-    url.searchParams.set("scope", "read:user");
-    url.searchParams.set("state", state);
-
-    return c.json({ url: url.toString() });
-  });
-
-  app.get("/auth/callback", (c) => handleAuthCallback(c));
-
-  app.post("/auth/refresh", (c) => handleAuthRefresh(c));
-
-  app.get("/status", (c) => handleStatus(c));
-
-  app.get("/files/changes", (c) => handleFilesChanges(c));
-
-  app.get("/profiles", (c) => handleListProfiles(c));
-  app.post("/profiles", (c) => handleCreateProfile(c));
-  app.get("/profiles/:id", (c) => handleGetProfile(c));
-  app.put("/profiles/:id", (c) => handlePutProfile(c));
-  app.delete("/profiles/:id", (c) => handleDeleteProfile(c));
-
-  app.get("/onedrive/auth-url", (c) => handleOnedriveAuthUrl(c));
-
-  app.get("/onedrive/connect", (c) => handleOnedriveCallbackBridge(c));
-
-  app.post("/onedrive/connect", (c) => handleOnedriveConnect(c));
-
-  app.post("/onedrive/lifecycle", (c) => handleOnedriveLifecycle(c));
-
-  app.post("/onedrive/sync-trigger", (c) => handleSyncTrigger(c));
-
-  app.post("/sync/reset", (c) => handleSyncReset(c));
-
-  app.post("/sync/run", (c) => handleSyncRun(c));
-
-  app.get("/sync/jobs/:jobId", (c) => handleSyncJobStatus(c));
+  registerRoutes(app, createHandlers(syncTriggerDeps));
 
   app.use("/onedrive/*", (c, next) =>
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument

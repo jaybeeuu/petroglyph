@@ -108,6 +108,8 @@ Mirror an existing package for scaffolding — `packages/staging-consumer` is th
 
 `packages/api` generates nothing. `packages/contracts/test/parity.test.ts` holds the registry to the routes the `api` and `staging-delivery` apps register, so a route with no registry entry and a registry entry with no route both fail `pnpm test`.
 
+To add or change a route, edit the operation module in `packages/contracts/src/operations/` — path, method, and any `params`/`query`/`body` zod schemas — then write the handler as `defineEndpoint(operation, handler)` beside its siblings in `packages/api/src/` and add it to `createHandlers()` in `packages/api/src/routes.ts`. That map is typed over every operation the app serves, so a missing entry fails typecheck (`TS2741`). Nothing else may call `app.<method>`: `registerRoutes()` owns registration. Keep `defineEndpoint` on the `@petroglyph/contracts/hono` subpath, so a consumer of the root entry point never pulls hono into its graph.
+
 ## Testing
 
 ### Fast local checks (run these first)

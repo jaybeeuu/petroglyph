@@ -32,6 +32,32 @@ It is never used to carry payload, and a payload key may not be named `meta`.
 { "files": [ … ], "nextToken": null, "meta": { "requestId": "01J…" } }
 ```
 
+## Requests are validated from the contract
+
+Each operation declares its own `params`, `query` and `body` zod schemas in
+`packages/contracts/src/operations/`. `defineEndpoint`
+(`@petroglyph/contracts/hono`) runs them before the handler and passes the
+parsed `{ params, query, body }`; no handler parses `c.req` to validate. A
+rejected request answers `400` with the operation's own body — the flat
+`{ "error": "…", "details": [ … ] }` the hand-written routes already used, not
+the nested `invalid_request` envelope below.
+
+Two consequences are worth knowing:
+
+- Validation runs before the handler, so a malformed request against a resource
+  that does not exist answers `400`, not `404`. A `400` is not proof the
+  resource exists.
+- A body is parsed whatever the `Content-Type` header says. Hono's `"json"`
+  target validates `{}` when the header is absent, which drops a body the caller
+  did send, and it lets malformed JSON escape as plain text instead of a JSON
+  rejection. Reading the body directly keeps the answer the route gave before it
+  had a schema.
+
+Coverage is partial. Six operations declare request schemas. The path parameters
+of `getProfile`, `deleteProfile`, `getFile` and `getSyncJob` are still
+unvalidated, and `/auth/url` and `/onedrive/auth-url` still hand-parse their
+query — the generated spec omits those parameters to match.
+
 ## Errors are structured
 
 ```json
