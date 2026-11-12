@@ -46,13 +46,26 @@ function createStagingDeliverySurface(): ReturnType<typeof createStagingDelivery
   return createStagingDeliveryApp();
 }
 
+/** Each app's own surface, so a redundant import cannot stand in for a missing one. */
+function collectAppSurfaces(): { readonly [app: string]: readonly string[] } {
+  return {
+    api: collectServedSurface([createApiApp()]),
+    filesRouter: collectServedSurface([createFilesRouterSurface()]),
+    stagingDelivery: collectServedSurface([createStagingDeliverySurface()]),
+  };
+}
+
 describe("API surface parity", () => {
+  it("collects a non-empty surface from every app it imports", () => {
+    const surfaces = collectAppSurfaces();
+
+    for (const [app, surface] of Object.entries(surfaces)) {
+      expect(surface, `${app} served no routes`).not.toHaveLength(0);
+    }
+  });
+
   it("serves exactly the routes the registry declares, in both directions", () => {
-    const served = collectServedSurface([
-      createApiApp(),
-      createFilesRouterSurface(),
-      createStagingDeliverySurface(),
-    ]);
+    const served = [...new Set(Object.values(collectAppSurfaces()).flat())].sort();
     const registered = collectRegistrySurface(operationList);
 
     expect(compareSurface(served, registered)).toStrictEqual({ undeclared: [], unserved: [] });

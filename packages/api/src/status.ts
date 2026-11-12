@@ -1,6 +1,7 @@
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
-import type { Context } from "hono";
-import type { AppVariables } from "./auth-middleware.js";
+import { defineEndpoint } from "@petroglyph/contracts/hono";
+import { getStatus } from "@petroglyph/contracts/operations";
+import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
 
 export type OneDriveStatus =
@@ -90,7 +91,7 @@ async function fetchStoredReconnectRequired(userId: string): Promise<boolean> {
   }
 }
 
-export async function handleStatus(c: Context<{ Variables: AppVariables }>): Promise<Response> {
+export const getStatusEndpoint = defineEndpoint(getStatus, async (_input, c: AppContext) => {
   const username = c.get("username");
   const userId = c.get("userId");
 
@@ -115,4 +116,4 @@ export async function handleStatus(c: Context<{ Variables: AppVariables }>): Pro
   };
 
   return c.json(body);
-}
+});

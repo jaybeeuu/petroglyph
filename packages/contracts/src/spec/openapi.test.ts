@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { z as zod } from "zod";
 import type { Operation } from "../operation.js";
 import { buildOpenApiDocument } from "./openapi.js";
 import { renderOpenApiYaml } from "./yaml.js";
@@ -30,6 +31,19 @@ const widgetOperations: { readonly [id: string]: Operation } = {
 };
 
 const widgetInfo = { title: "Widgets", version: "1.2.3", description: "Widget surface" };
+
+const updateWidget: Operation = {
+  id: "updateWidget",
+  method: "put",
+  path: "/widgets/{widgetId}",
+  summary: "Update one widget",
+  tags: ["widgets"],
+  request: {
+    params: zod.object({ widgetId: zod.string().min(1) }),
+    query: zod.object({ dryRun: zod.coerce.boolean().optional() }),
+    body: zod.object({ name: zod.string().min(1) }).strict(),
+  },
+};
 
 describe("buildOpenApiDocument", () => {
   it("gives each operation path a path item and merges methods served on the same path", () => {
@@ -78,5 +92,54 @@ describe("renderOpenApiYaml", () => {
     const document = buildOpenApiDocument(widgetOperations, widgetInfo);
 
     expect(parse(renderOpenApiYaml(document))).toStrictEqual(document);
+  });
+});
+
+describe("request schemas in the document", () => {
+  it("emits a required path parameter from the params schema", () => {
+    const document = buildOpenApiDocument({ updateWidget }, widgetInfo);
+
+    expect(document.paths["/widgets/{widgetId}"]?.put?.parameters).toContainEqual({
+      name: "widgetId",
+      in: "path",
+      required: true,
+      schema: { type: "string", minLength: 1 },
+    });
+  });
+
+  it("emits a query parameter that the schema leaves optional", () => {
+    const document = buildOpenApiDocument({ updateWidget }, widgetInfo);
+
+    expect(document.paths["/widgets/{widgetId}"]?.put?.parameters).toContainEqual({
+      name: "dryRun",
+      in: "query",
+      required: false,
+      schema: { type: "boolean" },
+    });
+  });
+
+  it("emits the body schema and its required fields as the request body", () => {
+    const document = buildOpenApiDocument({ updateWidget }, widgetInfo);
+
+    expect(document.paths["/widgets/{widgetId}"]?.put?.requestBody).toStrictEqual({
+      required: true,
+      content: {
+        "application/json": {
+          schema: {
+            type: "object",
+            properties: { name: { type: "string", minLength: 1 } },
+            required: ["name"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+  });
+
+  it("emits no parameters and no request body for an operation without request schemas", () => {
+    const document = buildOpenApiDocument(widgetOperations, widgetInfo);
+
+    expect(document.paths["/widgets"]?.get?.parameters).toBeUndefined();
+    expect(document.paths["/widgets"]?.get?.requestBody).toBeUndefined();
   });
 });

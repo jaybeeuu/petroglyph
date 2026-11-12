@@ -6,7 +6,9 @@ import {
   ScanCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
-import type { Context } from "hono";
+import { defineEndpoint } from "@petroglyph/contracts/hono";
+import { postAuthRefresh } from "@petroglyph/contracts/operations";
+import type { AppContext } from "./auth-middleware.js";
 import { SignJWT, importPKCS8 } from "jose";
 import { createHash, randomUUID } from "node:crypto";
 import { docClient } from "./db.js";
@@ -151,48 +153,51 @@ async function storeNewRefreshToken(refreshToken: string, userId: string): Promi
   );
 }
 
-export async function handleAuthRefresh(c: Context): Promise<Response> {
-  const body: unknown = await c.req.json();
-  const refreshToken = isRecord(body) ? body["refreshToken"] : undefined;
+export const postAuthRefreshEndpoint = defineEndpoint(
+  postAuthRefresh,
+  async (_input, c: AppContext) => {
+    const body: unknown = await c.req.json();
+    const refreshToken = isRecord(body) ? body["refreshToken"] : undefined;
 
-  if (typeof refreshToken !== "string") {
-    return c.json({ error: "Missing refreshToken" }, 400);
-  }
-
-  const hash = createHash("sha256").update(refreshToken).digest("hex");
-  const tokenItem = await lookupRefreshToken(hash);
-  const now = Math.floor(Date.now() / 1000);
-
-  if (!tokenItem) {
-    return c.json({ error: "Invalid refresh token" }, 401);
-  }
-
-  if (tokenItem.type !== "refresh_token") {
-    return c.json({ error: "Invalid refresh token" }, 401);
-  }
-
-  if (tokenItem.ttl < now) {
-    return c.json({ error: "Refresh token expired" }, 401);
-  }
-
-  try {
-    await atomicMarkTokenSuperseded(hash);
-  } catch (err) {
-    if (err instanceof ConditionalCheckFailedException) {
-      console.warn("[security] Token reuse detected for userId:", tokenItem.userId);
-      await deleteAllUserTokens(tokenItem.userId);
-      return c.json({ error: "Token reuse detected" }, 401);
+    if (typeof refreshToken !== "string") {
+      return c.json({ error: "Missing refreshToken" }, 400);
     }
-    throw err;
-  }
 
-  const user = await fetchUser(tokenItem.userId);
-  const username = user?.username ?? tokenItem.userId;
+    const hash = createHash("sha256").update(refreshToken).digest("hex");
+    const tokenItem = await lookupRefreshToken(hash);
+    const now = Math.floor(Date.now() / 1000);
 
-  const jwt = await issueJwt(tokenItem.userId, username);
+    if (!tokenItem) {
+      return c.json({ error: "Invalid refresh token" }, 401);
+    }
 
-  const newRefreshToken = randomUUID();
-  await storeNewRefreshToken(newRefreshToken, tokenItem.userId);
+    if (tokenItem.type !== "refresh_token") {
+      return c.json({ error: "Invalid refresh token" }, 401);
+    }
 
-  return c.json({ jwt, refreshToken: newRefreshToken });
-}
+    if (tokenItem.ttl < now) {
+      return c.json({ error: "Refresh token expired" }, 401);
+    }
+
+    try {
+      await atomicMarkTokenSuperseded(hash);
+    } catch (err) {
+      if (err instanceof ConditionalCheckFailedException) {
+        console.warn("[security] Token reuse detected for userId:", tokenItem.userId);
+        await deleteAllUserTokens(tokenItem.userId);
+        return c.json({ error: "Token reuse detected" }, 401);
+      }
+      throw err;
+    }
+
+    const user = await fetchUser(tokenItem.userId);
+    const username = user?.username ?? tokenItem.userId;
+
+    const jwt = await issueJwt(tokenItem.userId, username);
+
+    const newRefreshToken = randomUUID();
+    await storeNewRefreshToken(newRefreshToken, tokenItem.userId);
+
+    return c.json({ jwt, refreshToken: newRefreshToken });
+  },
+);

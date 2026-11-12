@@ -1,5 +1,7 @@
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
-import type { Context } from "hono";
+import { defineEndpoint } from "@petroglyph/contracts/hono";
+import { getSyncJob } from "@petroglyph/contracts/operations";
+import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
 
 function syncJobsTableName(): string {
@@ -40,7 +42,7 @@ function parseSyncJob(item: unknown): SyncJob | null {
   };
 }
 
-export async function handleSyncJobStatus(c: Context): Promise<Response> {
+export const getSyncJobEndpoint = defineEndpoint(getSyncJob, async (_input, c: AppContext) => {
   const jobId = c.req.param("jobId");
   const userIdValue: unknown = c.get("userId");
   if (typeof userIdValue !== "string" || userIdValue.length === 0) {
@@ -68,4 +70,4 @@ export async function handleSyncJobStatus(c: Context): Promise<Response> {
   }
 
   return c.json(body);
-}
+});

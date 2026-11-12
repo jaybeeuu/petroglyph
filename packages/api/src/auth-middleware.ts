@@ -1,4 +1,4 @@
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { verifyJwt } from "./jwt.js";
 
 export interface AppVariables {
@@ -6,6 +6,9 @@ export interface AppVariables {
   username: string;
   onedriveAccessToken: string | undefined;
 }
+
+/** The context every route handler receives: identity comes from the middleware. */
+export type AppContext = Context<{ Variables: AppVariables }>;
 
 export const authMiddleware: MiddlewareHandler<{
   Variables: AppVariables;

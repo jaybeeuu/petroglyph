@@ -1,0 +1,142 @@
+import { describe, expect, it } from "vitest";
+import { Hono } from "hono";
+import { z } from "zod";
+import { defineEndpoint, toHonoPath, type EndpointHandler } from "./endpoint.js";
+import { defineOperation, type Operation } from "./operation.js";
+
+const updateWidget = defineOperation({
+  id: "updateWidget",
+  method: "put",
+  path: "/widgets/{widgetId}",
+  summary: "Update a widget",
+  tags: ["widgets"],
+  request: {
+    params: z.object({ widgetId: z.coerce.number().int() }),
+    query: z.object({ limit: z.coerce.number().int().positive().max(100).default(25) }),
+    body: z.object({ name: z.string().min(1) }),
+    rejection: { error: "Invalid widget request", includeIssues: true },
+  },
+});
+
+const listWidgets = defineOperation({
+  id: "listWidgets",
+  method: "get",
+  path: "/widgets",
+  summary: "List widgets",
+  tags: ["widgets"],
+});
+
+type WidgetEnv = { Variables: { userId: string } };
+
+function createWidgetApp<OperationDefinition extends Operation>(
+  operation: OperationDefinition,
+  handler: EndpointHandler<OperationDefinition, WidgetEnv>,
+): Hono<WidgetEnv> {
+  const app = new Hono<WidgetEnv>();
+  const [first, ...rest] = defineEndpoint(operation, handler);
+  if (first === undefined) {
+    throw new Error("defineEndpoint returned no handlers");
+  }
+
+  app.on(operation.method.toUpperCase(), toHonoPath(operation.path), first, ...rest);
+
+  return app;
+}
+
+async function updateRequest(app: Hono<WidgetEnv>, path: string, body: string): Promise<Response> {
+  const response = await app.request(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+  return response;
+}
+
+describe("defineEndpoint", () => {
+  it("hands the handler the parsed params, query and body", async () => {
+    const app = createWidgetApp(updateWidget, (input, c) =>
+      c.json({ params: input.params, query: input.query, body: input.body }),
+    );
+
+    const response = await updateRequest(app, "/widgets/7?limit=5", JSON.stringify({ name: "n" }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toStrictEqual({
+      params: { widgetId: 7 },
+      query: { limit: 5 },
+      body: { name: "n" },
+    });
+  });
+
+  it("answers the operation's rejection body when the body violates its schema", async () => {
+    let handlerRan = false;
+    const app = createWidgetApp(updateWidget, (_input, c) => {
+      handlerRan = true;
+      return c.json({ updated: true });
+    });
+
+    const response = await updateRequest(app, "/widgets/7", JSON.stringify({ name: "" }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "Invalid widget request" });
+    expect(handlerRan).toBe(false);
+  });
+
+  it("answers the operation's rejection body when a query value violates its schema", async () => {
+    const app = createWidgetApp(updateWidget, (_input, c) => c.json({ updated: true }));
+
+    const response = await updateRequest(app, "/widgets/7?limit=0", JSON.stringify({ name: "n" }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "Invalid widget request" });
+  });
+
+  it("answers the operation's rejection body when a path parameter violates its schema", async () => {
+    const app = createWidgetApp(updateWidget, (_input, c) => c.json({ updated: true }));
+
+    const response = await updateRequest(app, "/widgets/seven", JSON.stringify({ name: "n" }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "Invalid widget request" });
+  });
+
+  it("hands every target undefined to an operation that declares no request", async () => {
+    const app = createWidgetApp(listWidgets, (input, c) => c.json(input));
+
+    const response = await app.request("/widgets");
+
+    // Every target is undefined, so none reaches the JSON body.
+    expect(await response.json()).toStrictEqual({});
+  });
+
+  it("answers a default rejection body when the operation names none", async () => {
+    const createWidget = defineOperation({
+      id: "createWidget",
+      method: "post",
+      path: "/widgets",
+      summary: "Create a widget",
+      tags: ["widgets"],
+      request: { body: z.object({ name: z.string().min(1) }) },
+    });
+    const app = createWidgetApp(createWidget, (_input, c) => c.json({ created: true }, 201));
+
+    const response = await app.request("/widgets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "" }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toStrictEqual({ error: "Invalid request" });
+  });
+});
+
+describe("toHonoPath", () => {
+  it("spells an OpenAPI path parameter the way Hono registers it", () => {
+    expect(toHonoPath("/profiles/{id}")).toBe("/profiles/:id");
+  });
+
+  it("leaves a path without parameters unchanged", () => {
+    expect(toHonoPath("/files/changes")).toBe("/files/changes");
+  });
+});
