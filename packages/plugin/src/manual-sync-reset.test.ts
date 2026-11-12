@@ -40,25 +40,43 @@ describe("PetroglyphPlugin manual sync/reset commands", () => {
     vi.clearAllMocks();
   });
 
-  it("syncNow drains GET /files and reports completion", async () => {
-    const plugin = await makePluginWithMocks({
-      jwt: "jwt-token",
-      oneDriveConnected: true,
+  it("syncNow asks the server to walk OneDrive, then drains GET /files", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", {
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
     });
-    let filesFeedCalls = 0;
-    global.fetch = vi.fn((...args) => {
-      if (typeof args[0] === "string" && args[0].includes("/files")) {
-        filesFeedCalls++;
+    try {
+      const plugin = await makePluginWithMocks({
+        jwt: "jwt-token",
+        oneDriveConnected: true,
+      });
+      const requested: string[] = [];
+      global.fetch = vi.fn((url: string) => {
+        requested.push(url);
+        if (url.endsWith("/onedrive/sync-trigger")) {
+          return Promise.resolve({ ok: true, status: 202 });
+        }
         return Promise.resolve({
           ok: true,
+          status: 200,
           json: () => Promise.resolve({ files: [], nextToken: null }),
         });
-      }
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
-    }) as unknown as typeof fetch;
-    await plugin.syncNow();
-    expect(filesFeedCalls).toBe(1);
-    expect(Notice).toHaveBeenCalledWith("Sync complete");
+      }) as unknown as typeof fetch;
+
+      const sync = plugin.syncNow();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await sync;
+
+      expect(requested[0]).toBe("https://api.petroglyph.page/onedrive/sync-trigger");
+      expect(requested.filter((url) => url.includes("/files"))).toHaveLength(3);
+      expect(Notice).toHaveBeenCalledWith(
+        "Sync requested - new files will arrive on the next poll",
+      );
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("resetPluginState clears local token and shows notice", async () => {

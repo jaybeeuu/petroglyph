@@ -180,6 +180,53 @@ function failureResponse(status: number): Response {
   return { ok: false, status } as unknown as Response;
 }
 
+/** A URL that answers with a status and a JSON body. */
+function statusResponse(status: number, body: unknown): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve(body),
+  } as unknown as Response;
+}
+
+/** A `/files` page with nothing left to read. */
+function emptyFeed(): { files: FeedEntry[]; nextToken: null } {
+  return { files: [], nextToken: null };
+}
+
+/** The trigger answer a healthy server sends. */
+function queuedTrigger(): Response {
+  return statusResponse(202, { status: "queued" });
+}
+
+/**
+ * Stubs `fetch` so the sync trigger answers `trigger` and every other request
+ * goes to `answer`. The recorder holds the `/files` URLs the plugin requested,
+ * so a test can count the drains.
+ */
+function stubSyncFetch(
+  trigger: Response,
+  answer: (url: string) => Promise<Response>,
+): { files: string[] } {
+  const files: string[] = [];
+  global.fetch = vi.fn((url: string) => {
+    if (url.endsWith("/onedrive/sync-trigger")) return Promise.resolve(trigger);
+    if (url.includes("/files")) files.push(url);
+    return answer(url);
+  }) as unknown as typeof fetch;
+  return { files };
+}
+
+/** The hard cap on a manual sync's wait for the OneDrive walk, in milliseconds. */
+const SYNC_WAIT_CAP_MS = 10_000;
+
+/** Runs a manual sync to completion, waiting out any recheck under fake timers. */
+async function runSync(plugin: PetroglyphPlugin): Promise<void> {
+  const sync = plugin.syncNow();
+  await vi.advanceTimersByTimeAsync(SYNC_WAIT_CAP_MS);
+  await sync;
+}
+
 describe("openAuthUrl", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1068,32 +1115,155 @@ describe("oauth/callback URI handler registration", () => {
 describe("syncNow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
     vi.stubGlobal("window", makeWindowStub());
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
-  it("pages GET /files and reports completion", async () => {
-    const { plugin } = await makePlugin({
-      jwt: "jwt-token",
-      oneDriveConnected: true,
+  it("asks the server to walk OneDrive before it reads the files feed", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    stubSyncFetch(queuedTrigger(), () => Promise.resolve(jsonResponse(emptyFeed())));
+
+    await runSync(plugin);
+
+    expect(global.fetch).toHaveBeenCalledWith("https://api.petroglyph.page/onedrive/sync-trigger", {
+      method: "POST",
+      headers: { Authorization: "Bearer jwt-token" },
     });
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ files: [], nextToken: null }),
-    });
+    const urls = (global.fetch as Mock).mock.calls.map(([url]) => url as string);
+    expect(urls.slice(0, 2)).toEqual([
+      "https://api.petroglyph.page/onedrive/sync-trigger",
+      "https://api.petroglyph.page/files",
+    ]);
+  });
+
+  it("shows the server message and does not drain when the connection needs reconnecting", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const message = "This OneDrive connection can no longer be used. Reconnect OneDrive.";
+    const recorder = stubSyncFetch(
+      statusResponse(409, { error: { code: "reconnect_required", message } }),
+      () => Promise.resolve(jsonResponse(emptyFeed())),
+    );
 
     await plugin.syncNow();
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      "https://api.petroglyph.page/files",
-      expect.objectContaining({
-        headers: { Authorization: "Bearer jwt-token" },
-      }),
+    expect(Notice).toHaveBeenCalledWith(message);
+    expect(recorder.files).toEqual([]);
+  });
+
+  it("shows the server message and does not drain when no connection is stored", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const message = "No OneDrive connection is stored for this user.";
+    const recorder = stubSyncFetch(
+      statusResponse(409, { error: { code: "no_connection", message } }),
+      () => Promise.resolve(jsonResponse(emptyFeed())),
     );
-    expect(Notice).toHaveBeenCalledWith("Sync complete");
+
+    await plugin.syncNow();
+
+    expect(Notice).toHaveBeenCalledWith(message);
+    expect(recorder.files).toEqual([]);
+  });
+
+  it("shows the not-connected notice and does not drain when the trigger answers 401", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    // The shared JWT middleware still answers this flat body, with no `code`.
+    const recorder = stubSyncFetch(statusResponse(401, { error: "UNAUTHORIZED" }), () =>
+      Promise.resolve(jsonResponse(emptyFeed())),
+    );
+
+    await plugin.syncNow();
+
+    expect(Notice).toHaveBeenCalledWith("Not connected. Cannot sync.");
+    expect(recorder.files).toEqual([]);
+  });
+
+  it("writes a file that lands during the recheck and reports how many arrived", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    let drains = 0;
+    stubSyncFetch(queuedTrigger(), (url) => {
+      if (!url.includes("/files")) return Promise.resolve(bytesResponse());
+      drains += 1;
+      return Promise.resolve(
+        jsonResponse(
+          drains === 1
+            ? emptyFeed()
+            : {
+                files: [
+                  makeFeedEntry({ itemId: "item-1", name: "one.pdf" }),
+                  makeFeedEntry({ itemId: "item-2", name: "two.pdf" }),
+                ],
+                nextToken: null,
+              },
+        ),
+      );
+    });
+
+    await runSync(plugin);
+
+    expect(vault.adapter.writeBinary).toHaveBeenCalledWith(
+      "handwritten/one.pdf",
+      expect.any(Uint8Array),
+    );
+    expect(Notice).toHaveBeenCalledWith("Sync complete: 2 files");
+  });
+
+  it("reports that files will arrive on the next poll when the rechecks stay empty", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const recorder = stubSyncFetch(queuedTrigger(), () =>
+      Promise.resolve(jsonResponse(emptyFeed())),
+    );
+
+    await runSync(plugin);
+
+    expect(Notice).toHaveBeenCalledWith("Sync requested - new files will arrive on the next poll");
+    expect(Notice).not.toHaveBeenCalledWith(expect.stringContaining("Sync complete"));
+    // One first drain plus the two rechecks, which is the whole cap.
+    expect(recorder.files).toHaveLength(3);
+  });
+
+  it("stops the rechecks and writes nothing when the plugin unloads mid-wait", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    const recorder = stubSyncFetch(queuedTrigger(), (url) => {
+      if (!url.includes("/files")) return Promise.resolve(bytesResponse());
+      return Promise.resolve(jsonResponse(emptyFeed()));
+    });
+
+    const sync = plugin.syncNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(recorder.files).toHaveLength(1);
+
+    plugin.onunload();
+    await vi.advanceTimersByTimeAsync(SYNC_WAIT_CAP_MS);
+    await sync;
+
+    expect(recorder.files).toHaveLength(1);
+    expect(vault.adapter.writeBinary).not.toHaveBeenCalled();
+  });
+
+  it("shows one notice and still drains when the trigger fails", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const files: string[] = [];
+    global.fetch = vi.fn((url: string) => {
+      if (url.endsWith("/onedrive/sync-trigger")) return Promise.reject(new Error("offline"));
+      files.push(url);
+      return Promise.resolve(jsonResponse(emptyFeed()));
+    }) as unknown as typeof fetch;
+
+    await runSync(plugin);
+
+    expect(Notice).toHaveBeenCalledWith("Sync request failed - checking for files");
+    expect(files).toHaveLength(3);
   });
 
   it("does not reach the API when OneDrive is not connected", async () => {
@@ -1114,12 +1284,12 @@ describe("syncNow", () => {
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
-    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+    stubSyncFetch(queuedTrigger(), () => Promise.resolve(failureResponse(500)));
 
     await plugin.syncNow();
 
     expect(Notice).toHaveBeenCalledWith("Sync failed: error fetching files");
-    expect(Notice).not.toHaveBeenCalledWith("Sync complete");
+    expect(Notice).not.toHaveBeenCalledWith(expect.stringContaining("Sync complete"));
   });
 
   it("shows an error notice when the feed payload does not match the contract", async () => {
@@ -1127,10 +1297,9 @@ describe("syncNow", () => {
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ files: [{ itemId: "item-1" }], nextToken: null }),
-    });
+    stubSyncFetch(queuedTrigger(), () =>
+      Promise.resolve(jsonResponse({ files: [{ itemId: "item-1" }], nextToken: null })),
+    );
 
     await plugin.syncNow();
 
@@ -1142,7 +1311,7 @@ describe("syncNow", () => {
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
-    global.fetch = vi.fn().mockRejectedValue(new Error("offline"));
+    stubSyncFetch(queuedTrigger(), () => Promise.reject(new Error("offline")));
 
     await plugin.syncNow();
 
@@ -1721,7 +1890,7 @@ describe("failed downloads", () => {
 
   it("reports how many files failed to download", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
-    global.fetch = vi.fn((url: string) => {
+    stubSyncFetch(queuedTrigger(), (url) => {
       if (url.includes("/files")) {
         return Promise.resolve(
           jsonResponse({
@@ -1740,7 +1909,7 @@ describe("failed downloads", () => {
         return Promise.resolve(failureResponse(403));
       }
       return Promise.resolve(bytesResponse());
-    }) as unknown as typeof fetch;
+    });
     // @ts-expect-error — minimal stub
     plugin.app = { vault: makeVaultStub() };
 
@@ -1751,7 +1920,7 @@ describe("failed downloads", () => {
 
   it("reports a failed sync when every download fails", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
-    global.fetch = vi.fn((url: string) => {
+    stubSyncFetch(queuedTrigger(), (url) => {
       if (url.includes("/files")) {
         return Promise.resolve(
           jsonResponse({
@@ -1764,7 +1933,7 @@ describe("failed downloads", () => {
         );
       }
       return Promise.resolve(failureResponse(403));
-    }) as unknown as typeof fetch;
+    });
     // @ts-expect-error — minimal stub
     plugin.app = { vault: makeVaultStub() };
 
@@ -1775,13 +1944,13 @@ describe("failed downloads", () => {
 
   it("counts a vault write error as a failed file", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
-    global.fetch = vi.fn((url: string) =>
+    stubSyncFetch(queuedTrigger(), (url) =>
       Promise.resolve(
         url.includes("/files")
           ? jsonResponse({ files: [makeFeedEntry({})], nextToken: null })
           : bytesResponse(),
       ),
-    ) as unknown as typeof fetch;
+    );
     const vault = makeVaultStub();
     vault.adapter.writeBinary = vi.fn(() => Promise.reject(new Error("disk full")));
     // @ts-expect-error — minimal stub
@@ -1792,21 +1961,21 @@ describe("failed downloads", () => {
     expect(Notice).toHaveBeenCalledWith("Sync failed: 1 of 1 files failed");
   });
 
-  it("reports plain completion when every file syncs", async () => {
+  it("reports completion with the count when every file syncs", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
-    global.fetch = vi.fn((url: string) =>
+    stubSyncFetch(queuedTrigger(), (url) =>
       Promise.resolve(
         url.includes("/files")
           ? jsonResponse({ files: [makeFeedEntry({})], nextToken: null })
           : bytesResponse(),
       ),
-    ) as unknown as typeof fetch;
+    );
     // @ts-expect-error — minimal stub
     plugin.app = { vault: makeVaultStub() };
 
     await plugin.syncNow();
 
-    expect(Notice).toHaveBeenCalledWith("Sync complete");
+    expect(Notice).toHaveBeenCalledWith("Sync complete: 1 file");
   });
 
   it("does not advance the cursor past a page whose files failed", async () => {
