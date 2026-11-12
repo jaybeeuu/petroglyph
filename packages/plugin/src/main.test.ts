@@ -1331,7 +1331,7 @@ describe("feed sync", () => {
     await plugin.performSync();
 
     expect(global.fetch).toHaveBeenCalledWith(
-      "https://api.petroglyph.page/files?after=page-2-cursor",
+      "https://api.petroglyph.page/files?nextToken=page-2-cursor",
       expect.anything(),
     );
     expect(mockVault.adapter.writeBinary).toHaveBeenCalledTimes(2);
@@ -1352,7 +1352,7 @@ describe("feed sync", () => {
     await plugin.performSync();
 
     expect(global.fetch).toHaveBeenCalledWith(
-      "https://api.petroglyph.page/files?after=after-p2",
+      "https://api.petroglyph.page/files?nextToken=after-p2",
       expect.anything(),
     );
   });
@@ -1373,7 +1373,7 @@ describe("feed sync", () => {
         });
       }
       requestedUrls.push(url);
-      if (url.includes("after=stale-cursor")) {
+      if (url.includes("nextToken=stale-cursor")) {
         return Promise.resolve({ ok: false, status: 400 });
       }
       return Promise.resolve({
@@ -1411,7 +1411,7 @@ describe("feed sync", () => {
     await plugin.performSync();
 
     expect(requestedUrls).toEqual([
-      "https://api.petroglyph.page/files?after=stale-cursor",
+      "https://api.petroglyph.page/files?nextToken=stale-cursor",
       "https://api.petroglyph.page/files",
     ]);
     expect(mockVault.adapter.writeBinary).toHaveBeenCalledWith(
