@@ -18,11 +18,13 @@ import {
 // Each test executes every `run:` step of a whole job, and each step spawns a
 // stub `terraform`, `aws` or `pnpm` process per invocation. That is dozens of
 // process starts per test, so they take seconds even on an idle machine and
-// far longer when other suites spawn processes beside them. Each test carries
-// an explicit budget rather than relying on Vitest's 5 s default (see
-// docs/testing.md), sized to the measured worst case: about 3 s per test on a
-// heavily loaded machine with the package's files run one at a time.
-const TIMEOUT_MS = 30_000;
+// far longer when other work is running beside them. Each test carries an
+// explicit budget rather than relying on Vitest's 5 s default (see
+// docs/testing.md). The budget is sized to the measured worst case: 1-5 s per
+// test normally, and 27 s for one test while the whole monorepo suite ran on a
+// heavily contended machine, so 120 s keeps roughly 4x headroom on a slower
+// shared CI runner without hiding a genuine hang.
+const TIMEOUT_MS = 120_000;
 
 const ARTIFACT_BUCKET = "petroglyph-lambda-artifacts-123456789012";
 const API_FUNCTION_URL = "https://abc123defg.lambda-url.eu-west-2.on.aws/";
