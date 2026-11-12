@@ -102,6 +102,43 @@ function makeVaultStub(): VaultStub {
   };
 }
 
+/**
+ * A fetch stub for the three URLs one sync touches: GET /profiles, GET /files
+ * and the presigned download, so one test can drive the whole write path.
+ */
+function stubSyncFetch(profile: {
+  destinationVaultPath?: string;
+  files: FeedEntry[];
+}): typeof fetch {
+  return vi.fn((url: string) => {
+    if (url.includes("/profiles")) {
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve([
+            {
+              id: "p1",
+              name: "Proofs",
+              sourceFolderPath: "onyx/proofs",
+              destinationVaultPath: profile.destinationVaultPath ?? "",
+              active: true,
+            },
+          ]),
+      });
+    }
+    if (url.includes("/files")) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ files: profile.files, nextToken: null }),
+      });
+    }
+    return Promise.resolve({
+      ok: true,
+      arrayBuffer: () => Promise.resolve(new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer),
+    });
+  }) as unknown as typeof fetch;
+}
+
 /** A URL that answers with a JSON body. */
 function jsonResponse(body: unknown): Response {
   return { ok: true, json: () => Promise.resolve(body) } as unknown as Response;
@@ -1496,6 +1533,102 @@ describe("feed sync", () => {
     await plugin.performSync();
 
     expect(global.fetch).toHaveBeenCalledTimes(MAX_FEED_PAGES);
+  });
+});
+
+describe("destination vault path", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("writes the file and its companion note under the profile's destination", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    global.fetch = stubSyncFetch({
+      destinationVaultPath: "twiy-proof",
+      files: [makeFeedEntry({ name: "note.pdf", relativePath: "notes/2026" })],
+    });
+
+    await plugin.loadProfiles();
+    await plugin.performSync();
+
+    expect(vault.adapter.writeBinary).toHaveBeenCalledWith(
+      "twiy-proof/notes/2026/note.pdf",
+      expect.any(Uint8Array),
+    );
+    expect(vault.adapter.write).toHaveBeenCalledWith(
+      "twiy-proof/notes/2026/note.md",
+      expect.any(String),
+    );
+  });
+
+  it("writes under the default root when the profile names no destination", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    global.fetch = stubSyncFetch({
+      destinationVaultPath: "",
+      files: [makeFeedEntry({ name: "note.pdf", relativePath: "notes/2026" })],
+    });
+
+    await plugin.loadProfiles();
+    await plugin.performSync();
+
+    expect(vault.adapter.writeBinary).toHaveBeenCalledWith(
+      "handwritten/notes/2026/note.pdf",
+      expect.any(Uint8Array),
+    );
+    expect(vault.adapter.write).toHaveBeenCalledWith(
+      "handwritten/notes/2026/note.md",
+      expect.any(String),
+    );
+  });
+
+  it("normalises slashes around the destination", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    global.fetch = stubSyncFetch({
+      destinationVaultPath: "//twiy-proof//",
+      files: [makeFeedEntry({ name: "note.pdf", relativePath: "notes" })],
+    });
+
+    await plugin.loadProfiles();
+    await plugin.performSync();
+
+    expect(vault.adapter.writeBinary).toHaveBeenCalledWith(
+      "twiy-proof/notes/note.pdf",
+      expect.any(Uint8Array),
+    );
+  });
+
+  it("writes nothing when the destination escapes the vault", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    global.fetch = stubSyncFetch({
+      destinationVaultPath: "../outside",
+      files: [makeFeedEntry({ name: "note.pdf", relativePath: "notes" })],
+    });
+
+    await plugin.loadProfiles();
+    await plugin.syncNow();
+
+    expect(vault.adapter.writeBinary).not.toHaveBeenCalled();
+    expect(vault.adapter.write).not.toHaveBeenCalled();
+    expect(Notice).toHaveBeenCalledWith("Sync failed: destination path is not inside the vault");
   });
 });
 

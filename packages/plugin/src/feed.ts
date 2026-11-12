@@ -36,6 +36,38 @@ export interface VaultPaths {
 }
 
 /**
+ * The vault root a profile writes to when its destination is empty. The default
+ * lives here, not at each call site, so an install that never set a destination
+ * keeps landing files in `handwritten/` and no synced file moves.
+ */
+export const DEFAULT_VAULT_ROOT = "handwritten";
+
+/**
+ * A profile's destination as a vault root, or a rejection when the destination
+ * would resolve outside the vault.
+ */
+export type VaultRoot = { ok: true; root: string } | { ok: false };
+
+/**
+ * Canonical form of a profile's `destinationVaultPath`: leading, trailing and
+ * repeated slashes are stripped, and inner whitespace is dropped, so `//a//b/`
+ * and `a/b` name the same folder. A blank value keeps `DEFAULT_VAULT_ROOT`.
+ *
+ * A `..` segment is rejected rather than resolved: `..` climbs out of the
+ * vault, and a write must never follow it. Every other value is relative to
+ * the vault root by construction, so a leading slash is normalised, not an
+ * escape.
+ */
+export function resolveVaultRoot(destinationVaultPath: string | undefined): VaultRoot {
+  const segments = (destinationVaultPath ?? "").split("/").flatMap((segment) => {
+    const trimmed = segment.trim();
+    return trimmed === "" || trimmed === "." ? [] : [trimmed];
+  });
+  if (segments.includes("..")) return { ok: false };
+  return { ok: true, root: segments.length === 0 ? DEFAULT_VAULT_ROOT : segments.join("/") };
+}
+
+/**
  * Maps a feed entry onto the vault: the source's `relativePath` is preserved
  * under `root`, so a folder structure in OneDrive survives the trip.
  */

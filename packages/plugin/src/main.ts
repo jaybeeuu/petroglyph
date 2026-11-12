@@ -1,6 +1,6 @@
 import { Notice, Plugin } from "obsidian";
 import { z } from "zod";
-import { parseFilesFeed, vaultPathsFor } from "./feed.js";
+import { parseFilesFeed, resolveVaultRoot, vaultPathsFor } from "./feed.js";
 import type { FeedEntry } from "./feed.js";
 import {
   LOG_PATH,
@@ -23,7 +23,6 @@ const DEFAULT_DATA: PluginData = {
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const DEFAULT_PROFILE_ID = "default";
-const VAULT_ROOT = "handwritten";
 const LOG_FLUSH_INTERVAL_MS = 2000;
 
 const jwtPayloadSchema = z.object({
@@ -31,7 +30,13 @@ const jwtPayloadSchema = z.object({
 });
 
 /** Why a feed drain stopped early. */
-export type FeedDrainFailure = "rejected" | "invalid" | "network" | "stalled" | "files";
+export type FeedDrainFailure =
+  | "rejected"
+  | "invalid"
+  | "network"
+  | "stalled"
+  | "destination"
+  | "files";
 
 /** Failures whose notice does not depend on how many files failed. */
 type FeedFailure = Exclude<FeedDrainFailure, "files">;
@@ -54,6 +59,7 @@ const FEED_FAILURE_NOTICES: { [reason in FeedFailure]: string } = {
   invalid: "Sync failed: invalid files list",
   network: "Sync failed: network or server error",
   stalled: "Sync failed: files feed did not finish",
+  destination: "Sync failed: destination path is not inside the vault",
 };
 
 /** The notice shown when some files failed to download or write. */
@@ -141,6 +147,11 @@ export class PetroglyphPlugin extends Plugin {
     return this._data.activeProfileId ?? DEFAULT_PROFILE_ID;
   }
 
+  /** The loaded profile a feed is scoped to, if its data has been fetched yet. */
+  private profileFor(profileId: string): SyncProfile | undefined {
+    return this._data.profiles?.find((profile) => profile.id === profileId);
+  }
+
   /**
    * Pages GET /files from the profile's stored cursor until the feed is
    * exhausted, writing each entry into the vault. A page whose files failed
@@ -151,6 +162,16 @@ export class PetroglyphPlugin extends Plugin {
   private async drainFilesFeed(profileId: string): Promise<FeedDrain> {
     const jwt = this._data.jwt;
     if (jwt === undefined) return { ok: false, reason: "rejected", synced: 0, failed: 0 };
+
+    // The destination comes from the profile this feed is scoped to, so the
+    // files land where the settings UI promised. A destination that escapes the
+    // vault stops the drain before the first write.
+    const destinationVaultPath = this.profileFor(profileId)?.destinationVaultPath;
+    const destination = resolveVaultRoot(destinationVaultPath);
+    if (!destination.ok) {
+      this._log.error("feed", "destination rejected", { path: destinationVaultPath ?? "" });
+      return { ok: false, reason: "destination", synced: 0, failed: 0 };
+    }
 
     const headers = { Authorization: `Bearer ${jwt}` };
     let cursor = this._data.feedCursors?.[profileId];
@@ -198,7 +219,7 @@ export class PetroglyphPlugin extends Plugin {
       this.logFeedPage(feed.files.length, feed.nextToken);
 
       for (const entry of feed.files) {
-        if ((await this.writeFeedEntry(entry)) === "failed") failed += 1;
+        if ((await this.writeFeedEntry(entry, destination.root)) === "failed") failed += 1;
         else synced += 1;
       }
 
@@ -227,7 +248,7 @@ export class PetroglyphPlugin extends Plugin {
    * does not churn the note's timestamps. A failed entry is reported, never
    * thrown: one bad file must not abort the rest of the page.
    */
-  private async writeFeedEntry(entry: FeedEntry): Promise<"synced" | "failed"> {
+  private async writeFeedEntry(entry: FeedEntry, root: string): Promise<"synced" | "failed"> {
     try {
       const startedAt = Date.now();
       const response = await fetch(entry.s3PresignedUrl);
@@ -236,7 +257,7 @@ export class PetroglyphPlugin extends Plugin {
       const bytes = new Uint8Array(await response.arrayBuffer());
       this.logDownloadComplete(entry, startedAt, response.status, bytes.byteLength);
 
-      const paths = vaultPathsFor(VAULT_ROOT, entry);
+      const paths = vaultPathsFor(root, entry);
       const folder = paths.pdf.substring(0, paths.pdf.lastIndexOf("/"));
       if (folder !== "" && !(await this.app.vault.adapter.exists(folder))) {
         await this.app.vault.adapter.mkdir(folder);

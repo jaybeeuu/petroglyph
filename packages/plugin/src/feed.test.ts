@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseFilesFeed, vaultPathsFor } from "./feed.js";
+import { parseFilesFeed, resolveVaultRoot, vaultPathsFor } from "./feed.js";
 
 function createFeedEntry(overrides: { [key: string]: unknown } = {}): {
   [key: string]: unknown;
@@ -78,6 +78,39 @@ describe("vaultPathsFor", () => {
     const paths = vaultPathsFor("handwritten", parseFilesFeedOrThrow({ name: "Note.PDF" }));
 
     expect(paths.markdown).toBe("handwritten/notes/Note.md");
+  });
+});
+
+describe("resolveVaultRoot", () => {
+  it("keeps a destination that is already canonical", () => {
+    expect(resolveVaultRoot("twiy-proof")).toEqual({ ok: true, root: "twiy-proof" });
+  });
+
+  it("strips leading, trailing and repeated slashes", () => {
+    expect(resolveVaultRoot("//twiy-proof//proofs/")).toEqual({
+      ok: true,
+      root: "twiy-proof/proofs",
+    });
+  });
+
+  it("falls back to the default root when the destination is empty", () => {
+    expect(resolveVaultRoot("")).toEqual({ ok: true, root: "handwritten" });
+  });
+
+  it("treats a whitespace-only destination as empty", () => {
+    expect(resolveVaultRoot("   ")).toEqual({ ok: true, root: "handwritten" });
+  });
+
+  it("falls back to the default root when the destination is missing", () => {
+    expect(resolveVaultRoot(undefined)).toEqual({ ok: true, root: "handwritten" });
+  });
+
+  it("rejects a destination that escapes the vault", () => {
+    expect(resolveVaultRoot("../outside")).toEqual({ ok: false });
+  });
+
+  it("rejects a destination that only escapes after a nested climb", () => {
+    expect(resolveVaultRoot("notes/../../outside")).toEqual({ ok: false });
   });
 });
 
