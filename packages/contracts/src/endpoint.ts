@@ -52,7 +52,7 @@ export function defineEndpoint<OperationDefinition extends Operation, HonoEnv ex
     endpoint.push(validate("query", request.query, rejection));
   }
   if (request?.body !== undefined) {
-    endpoint.push(validate("json", request.body, rejection));
+    endpoint.push(validateBody(request.body, rejection));
   }
 
   endpoint.push(async (c) => {
@@ -81,6 +81,40 @@ function validate<HonoEnv extends Env>(
   return validator as unknown as MiddlewareHandler<HonoEnv>;
 }
 
+/**
+ * One operation body schema as middleware. Hono's `json` target only parses a
+ * request whose Content-Type is JSON and validates `{}` otherwise, which drops a
+ * body the caller sent without the header; and a body that fails to parse leaves
+ * as Hono's plain-text HTTPException instead of the operation's rejection body.
+ * Both would change what these routes answered before they had schemas, so the
+ * body is read whatever the header says, and an unparseable body is a rejection
+ * like any other. An absent body is `undefined`, which the schema then judges.
+ */
+function validateBody<HonoEnv extends Env>(
+  schema: z.ZodType,
+  rejection: RequestRejection,
+): MiddlewareHandler<HonoEnv> {
+  return async (c, next) => {
+    const raw = await c.req.text();
+    let body: unknown;
+    if (raw.trim() !== "") {
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        return reject(c, rejection);
+      }
+    }
+
+    const parsed = await schema.safeParseAsync(body);
+    if (!parsed.success) {
+      return reject(c, rejection, parsed.error.issues);
+    }
+
+    storeValidated(c, "json", parsed.data);
+    return next();
+  };
+}
+
 /** Reads a target the validator above stored on the request. */
 function readInput<HonoEnv extends Env>(
   c: Context<HonoEnv>,
@@ -103,14 +137,22 @@ function readValidated(c: Context, target: RequestTargetName): unknown {
   return request.valid(target);
 }
 
+/** The write side of `readValidated`, for the target this module validates itself. */
+function storeValidated(c: Context, target: RequestTargetName, value: unknown): void {
+  const request = c.req as unknown as {
+    addValidatedData: (name: RequestTargetName, data: unknown) => void;
+  };
+  request.addValidatedData(target, value);
+}
+
 /** The operation's own 400 body, so a rejected request reads as it always did. */
 function reject<HonoEnv extends Env>(
   c: Context<HonoEnv>,
   rejection: RequestRejection,
-  issues: readonly unknown[],
+  issues?: readonly unknown[],
 ): Response {
   const body =
-    rejection.includeIssues === true
+    rejection.includeIssues === true && issues !== undefined
       ? { error: rejection.error, details: issues }
       : { error: rejection.error };
   return c.json(body, REJECTION_STATUS);

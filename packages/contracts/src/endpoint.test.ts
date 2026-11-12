@@ -91,6 +91,46 @@ describe("defineEndpoint", () => {
     expect(await response.json()).toMatchObject({ error: "Invalid widget request" });
   });
 
+  it("hands the handler a body the request sends without a JSON content type", async () => {
+    const app = createWidgetApp(updateWidget, (input, c) => c.json({ body: input.body }));
+
+    const response = await app.request("/widgets/7", {
+      method: "PUT",
+      body: JSON.stringify({ name: "n" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toStrictEqual({ body: { name: "n" } });
+  });
+
+  it("answers the operation's rejection body when the body is not JSON", async () => {
+    let handlerRan = false;
+    const app = createWidgetApp(updateWidget, (_input, c) => {
+      handlerRan = true;
+      return c.json({ updated: true });
+    });
+
+    const response = await app.request("/widgets/7", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: '{"name": ',
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(await response.json()).toMatchObject({ error: "Invalid widget request" });
+    expect(handlerRan).toBe(false);
+  });
+
+  it("answers the operation's rejection body when the body is absent", async () => {
+    const app = createWidgetApp(updateWidget, (_input, c) => c.json({ updated: true }));
+
+    const response = await app.request("/widgets/7", { method: "PUT" });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "Invalid widget request" });
+  });
+
   it("answers the operation's rejection body when a path parameter violates its schema", async () => {
     const app = createWidgetApp(updateWidget, (_input, c) => c.json({ updated: true }));
 
