@@ -1182,13 +1182,13 @@ describe("syncNow", () => {
     expect(recorder.files).toEqual([]);
   });
 
-  it("writes a file that lands during the recheck and reports how many arrived", async () => {
+  it("writes the files that land on the first recheck, reports them and stops rechecking", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
     const vault = makeVaultStub();
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
     let drains = 0;
-    stubSyncFetch(queuedTrigger(), (url) => {
+    const recorder = stubSyncFetch(queuedTrigger(), (url) => {
       if (!url.includes("/files")) return Promise.resolve(bytesResponse());
       drains += 1;
       return Promise.resolve(
@@ -1213,6 +1213,8 @@ describe("syncNow", () => {
       expect.any(Uint8Array),
     );
     expect(Notice).toHaveBeenCalledWith("Sync complete: 2 files");
+    // The file arrived on the first recheck, so the second one is never made.
+    expect(recorder.files).toHaveLength(2);
   });
 
   it("reports that files will arrive on the next poll when the rechecks stay empty", async () => {
