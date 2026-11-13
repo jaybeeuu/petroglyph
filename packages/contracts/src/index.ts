@@ -6,8 +6,15 @@ export {
   type RequestRejection,
   type RequestSchemas,
   type RequestTarget,
+  type ResponseSchemas,
   type SchemaOutput,
 } from "./operation.js";
+export {
+  responseValidationMode,
+  validateResponse,
+  type ResponseValidationEnvironment,
+  type ResponseValidationMode,
+} from "./response-validation.js";
 export {
   createDeltaTriggerSend,
   deltaTriggerDedupeId,
@@ -34,6 +41,8 @@ export {
   type OpenApiParameter,
   type OpenApiPathItem,
   type OpenApiRequestBody,
+  type OpenApiResponse,
+  type OpenApiResponses,
 } from "./spec/openapi.js";
 export { openApiInfo } from "./spec/info.js";
 export { renderOpenApiYaml } from "./spec/yaml.js";

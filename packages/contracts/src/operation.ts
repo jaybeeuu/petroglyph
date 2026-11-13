@@ -25,10 +25,24 @@ export interface RequestSchemas {
 }
 
 /**
- * One operation on the API surface: its identity, where it is served, and how
- * its request is validated. Paths use the OpenAPI parameter form
- * (`/profiles/{id}`), never Hono's `:id` form, so the registry is the one
- * spelling every consumer shares.
+ * The bodies one operation answers with, keyed by HTTP status. A schema judges
+ * the body the handler wrote, which is how a handler that drifts from its
+ * contract is caught: at runtime by `defineEndpoint`, and in the generated spec
+ * by the emitter.
+ *
+ * Only a status that writes a body is declared. A 302 redirect and a delete that
+ * answers 204 carry no body, so a schema for them would describe something the
+ * handler never writes.
+ */
+export interface ResponseSchemas {
+  readonly [status: number]: z.ZodType;
+}
+
+/**
+ * One operation on the API surface: its identity, where it is served, how its
+ * request is validated, and what it answers with. Paths use the OpenAPI
+ * parameter form (`/profiles/{id}`), never Hono's `:id` form, so the registry is
+ * the one spelling every consumer shares.
  */
 export interface Operation<Request extends RequestSchemas = RequestSchemas> {
   readonly id: string;
@@ -38,6 +52,7 @@ export interface Operation<Request extends RequestSchemas = RequestSchemas> {
   readonly tags: readonly string[];
   readonly deprecated?: boolean;
   readonly request?: Request;
+  readonly responses?: ResponseSchemas;
 }
 
 /**

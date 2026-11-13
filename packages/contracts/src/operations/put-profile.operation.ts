@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { defineOperation } from "../operation.js";
+import { flatErrorSchema } from "../responses/error.js";
+import { syncProfileResponseSchema } from "../responses/sync-profile.js";
 
 /** Path parameter of every `/profiles/{id}` operation. */
 export const profileIdParamsSchema = z.object({ id: z.string().min(1) });
@@ -21,6 +23,11 @@ export const putProfileBodySchema = z
   })
   .strict();
 
+/** The profile as stored, plus the profiles the update deactivated to activate it. */
+const putProfileResponseSchema = syncProfileResponseSchema.extend({
+  deactivatedProfileIds: z.array(z.string()),
+});
+
 export const putProfile = defineOperation({
   id: "putProfile",
   method: "put",
@@ -31,5 +38,10 @@ export const putProfile = defineOperation({
     params: profileIdParamsSchema,
     body: putProfileBodySchema,
     rejection: { error: "Invalid request body", includeIssues: true },
+  },
+  responses: {
+    200: putProfileResponseSchema,
+    404: flatErrorSchema,
+    409: flatErrorSchema,
   },
 });

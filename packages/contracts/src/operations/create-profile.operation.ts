@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { defineOperation } from "../operation.js";
+import { syncProfileResponseSchema } from "../responses/sync-profile.js";
 
 /**
  * The body of a new profile. `sourceFolderPath` is only checked for presence
@@ -24,4 +25,5 @@ export const createProfile = defineOperation({
     body: createProfileBodySchema,
     rejection: { error: "Invalid profile data", includeIssues: true },
   },
+  responses: { 201: syncProfileResponseSchema },
 });
