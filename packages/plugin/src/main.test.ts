@@ -103,6 +103,29 @@ function makeVaultStub(): VaultStub {
 }
 
 /**
+ * The path Obsidian's vault adapter actually resolves before it touches the
+ * disk. `normalizePath` turns every `\` into `/` and collapses repeats, so a
+ * backslash separator climbs the same way a forward slash does. The stub does
+ * not normalise, so a test must, to see where a write really lands.
+ */
+function adapterPath(path: string): string {
+  return path
+    .replace(/\\/g, "/")
+    .replace(/\/{2,}/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+}
+
+/** Every path the adapter was asked to create or write, as Obsidian resolves it. */
+function writtenPaths(vault: VaultStub): string[] {
+  const calls: unknown[][] = [
+    ...vault.adapter.writeBinary.mock.calls,
+    ...vault.adapter.write.mock.calls,
+    ...vault.adapter.mkdir.mock.calls,
+  ];
+  return calls.map((call) => adapterPath(String(call[0])));
+}
+
+/**
  * A fetch stub for the three URLs one sync touches: GET /profiles, GET /files
  * and the presigned download, so one test can drive the whole write path.
  */
@@ -1626,9 +1649,61 @@ describe("destination vault path", () => {
     await plugin.loadProfiles();
     await plugin.syncNow();
 
-    expect(vault.adapter.writeBinary).not.toHaveBeenCalled();
-    expect(vault.adapter.write).not.toHaveBeenCalled();
+    expect(writtenPaths(vault)).toEqual([]);
     expect(Notice).toHaveBeenCalledWith("Sync failed: destination path is not inside the vault");
+  });
+
+  it.each(["..\\x", "..\\..", "a\\..\\..\\b", "../..", "a/../../b", "..\\../x"])(
+    "writes nothing when the destination %j escapes through any separator",
+    async (destinationVaultPath) => {
+      const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+      const vault = makeVaultStub();
+      // @ts-expect-error — minimal stub
+      plugin.app = { vault };
+      global.fetch = stubSyncFetch({
+        destinationVaultPath,
+        files: [makeFeedEntry({ name: "note.pdf", relativePath: "notes" })],
+      });
+
+      await plugin.loadProfiles();
+      await plugin.syncNow();
+
+      expect(writtenPaths(vault)).toEqual([]);
+      expect(Notice).toHaveBeenCalledWith("Sync failed: destination path is not inside the vault");
+    },
+  );
+
+  it("writes a nested destination as a folder inside the vault", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    global.fetch = stubSyncFetch({
+      destinationVaultPath: "notes/sub",
+      files: [makeFeedEntry({ name: "note.pdf", relativePath: "2026" })],
+    });
+
+    await plugin.loadProfiles();
+    await plugin.performSync();
+
+    expect(writtenPaths(vault)).toEqual(["notes/sub/2026/note.pdf", "notes/sub/2026/note.md"]);
+  });
+
+  it("writes nothing for a feed entry whose relative path escapes the vault", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    global.fetch = stubSyncFetch({
+      destinationVaultPath: "twiy-proof",
+      files: [makeFeedEntry({ name: "note.pdf", relativePath: "../../etc" })],
+    });
+
+    await plugin.loadProfiles();
+    await plugin.syncNow();
+
+    expect(writtenPaths(vault)).toEqual([]);
+    expect(Notice).toHaveBeenCalledWith("Sync failed: 1 of 1 files failed");
   });
 });
 

@@ -245,10 +245,18 @@ export class PetroglyphPlugin extends Plugin {
   /**
    * Writes one staged file into the vault, plus its companion note. An entry
    * whose bytes already match the vault file is skipped, so a repeated poll
-   * does not churn the note's timestamps. A failed entry is reported, never
-   * thrown: one bad file must not abort the rest of the page.
+   * does not churn the note's timestamps. An entry whose path would leave the
+   * vault is rejected before anything is downloaded or written, and a failed
+   * entry is reported, never thrown: one bad file must not abort the rest of
+   * the page.
    */
   private async writeFeedEntry(entry: FeedEntry, root: string): Promise<"synced" | "failed"> {
+    const mapping = vaultPathsFor(root, entry);
+    if (!mapping.ok) {
+      this.logVault("rejected: outside the vault", entry.relativePath);
+      return "failed";
+    }
+    const paths = mapping.paths;
     try {
       const startedAt = Date.now();
       const response = await fetch(entry.s3PresignedUrl);
@@ -257,7 +265,6 @@ export class PetroglyphPlugin extends Plugin {
       const bytes = new Uint8Array(await response.arrayBuffer());
       this.logDownloadComplete(entry, startedAt, response.status, bytes.byteLength);
 
-      const paths = vaultPathsFor(root, entry);
       const folder = paths.pdf.substring(0, paths.pdf.lastIndexOf("/"));
       if (folder !== "" && !(await this.app.vault.adapter.exists(folder))) {
         await this.app.vault.adapter.mkdir(folder);

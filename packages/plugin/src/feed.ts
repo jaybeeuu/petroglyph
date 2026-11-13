@@ -36,6 +36,35 @@ export interface VaultPaths {
 }
 
 /**
+ * A feed entry's vault paths, or a rejection when the entry would resolve
+ * outside the vault.
+ */
+export type VaultPathsResult = { ok: true; paths: VaultPaths } | { ok: false };
+
+/**
+ * Separators a vault path may use. Obsidian's `normalizePath` turns every `\`
+ * into `/` before the adapter touches the disk, so `..\x` becomes `../x` and
+ * climbs. Both separators therefore split a path here.
+ */
+const VAULT_SEPARATOR = /[\\/]+/;
+
+/**
+ * Splits a vault path into its canonical segments, or returns undefined when a
+ * `..` segment would climb out of the vault.
+ *
+ * One rule decides every path that reaches the vault: the destination root, a
+ * feed entry's relative path and its file name all pass through here, so no
+ * separator can hide a climb.
+ */
+function vaultSegments(path: string): string[] | undefined {
+  const segments = path
+    .split(VAULT_SEPARATOR)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment !== "" && segment !== ".");
+  return segments.includes("..") ? undefined : segments;
+}
+
+/**
  * The vault root a profile writes to when its destination is empty. The default
  * lives here, not at each call site, so an install that never set a destination
  * keeps landing files in `handwritten/` and no synced file moves.
@@ -50,8 +79,9 @@ export type VaultRoot = { ok: true; root: string } | { ok: false };
 
 /**
  * Canonical form of a profile's `destinationVaultPath`: leading, trailing and
- * repeated slashes are stripped, and inner whitespace is dropped, so `//a//b/`
- * and `a/b` name the same folder. A blank value keeps `DEFAULT_VAULT_ROOT`.
+ * repeated separators are stripped, and inner whitespace is dropped, so
+ * `//a//b/` and `a/b` name the same folder. A blank value keeps
+ * `DEFAULT_VAULT_ROOT`.
  *
  * A `..` segment is rejected rather than resolved: `..` climbs out of the
  * vault, and a write must never follow it. Every other value is relative to
@@ -59,21 +89,22 @@ export type VaultRoot = { ok: true; root: string } | { ok: false };
  * escape.
  */
 export function resolveVaultRoot(destinationVaultPath: string | undefined): VaultRoot {
-  const segments = (destinationVaultPath ?? "").split("/").flatMap((segment) => {
-    const trimmed = segment.trim();
-    return trimmed === "" || trimmed === "." ? [] : [trimmed];
-  });
-  if (segments.includes("..")) return { ok: false };
+  const segments = vaultSegments(destinationVaultPath ?? "");
+  if (segments === undefined) return { ok: false };
   return { ok: true, root: segments.length === 0 ? DEFAULT_VAULT_ROOT : segments.join("/") };
 }
 
 /**
  * Maps a feed entry onto the vault: the source's `relativePath` is preserved
  * under `root`, so a folder structure in OneDrive survives the trip.
+ *
+ * The whole path is checked by the same rule as the destination root, so an
+ * entry whose relative path or file name climbs out of the vault is rejected
+ * instead of written.
  */
-export function vaultPathsFor(root: string, entry: FeedEntry): VaultPaths {
-  const directory = entry.relativePath.replace(/^\/+|\/+$/g, "");
-  const parent = directory === "" ? root : `${root}/${directory}`;
-  const pdf = `${parent}/${entry.name}`.replace(/\/{2,}/g, "/");
-  return { pdf, markdown: pdf.replace(/\.pdf$/i, ".md") };
+export function vaultPathsFor(root: string, entry: FeedEntry): VaultPathsResult {
+  const segments = vaultSegments(`${root}/${entry.relativePath}/${entry.name}`);
+  if (segments === undefined) return { ok: false };
+  const pdf = segments.join("/");
+  return { ok: true, paths: { pdf, markdown: pdf.replace(/\.pdf$/i, ".md") } };
 }
