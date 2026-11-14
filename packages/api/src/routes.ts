@@ -10,8 +10,13 @@ import { getHealthEndpoint } from "./health.js";
 import { bridgeOnedriveCallbackEndpoint, connectOnedriveEndpoint } from "./onedrive-connect.js";
 import { getOnedriveAuthUrlEndpoint } from "./onedrive-auth-url.js";
 import { postOnedriveLifecycleEndpoint } from "./onedrive-lifecycle.js";
+import type { ProfilePathReset } from "./profile-path-reset.js";
 import { createProfileEndpoint, listProfilesEndpoint } from "./profiles.js";
-import { deleteProfileEndpoint, getProfileEndpoint, putProfileEndpoint } from "./profiles-crud.js";
+import {
+  createPutProfileEndpoint,
+  deleteProfileEndpoint,
+  getProfileEndpoint,
+} from "./profiles-crud.js";
 import { getStatusEndpoint } from "./status.js";
 import { getSyncJobEndpoint } from "./sync-jobs.js";
 import { resetSyncEndpoint } from "./sync-reset.js";
@@ -26,6 +31,16 @@ type DeliveryOperationId = "listFiles" | "getFile";
 
 /** Every operation this app serves, derived from the registry, never widened. */
 export type ApiOperationId = Exclude<OperationId, DeliveryOperationId>;
+
+/**
+ * Everything the route graph needs from the outside world. Each entry is built
+ * lazily from the environment, so importing or constructing the app does no
+ * work and reads no configuration.
+ */
+export interface AppDeps {
+  readonly syncTrigger: SyncTriggerDeps;
+  readonly profilePathReset: ProfilePathReset;
+}
 
 /**
  * One handler chain per operation. Mapping over the union makes a missing
@@ -43,7 +58,7 @@ function isApiOperationId(id: OperationId): id is ApiOperationId {
  * without a handler is a compile error rather than a route served by accident
  * through some other registration.
  */
-export function createHandlers(syncTriggerDeps: SyncTriggerDeps): ApiHandlers {
+export function createHandlers(deps: AppDeps): ApiHandlers {
   return {
     getHealth: getHealthEndpoint,
     getAuthUrl: getAuthUrlEndpoint,
@@ -54,13 +69,13 @@ export function createHandlers(syncTriggerDeps: SyncTriggerDeps): ApiHandlers {
     listProfiles: listProfilesEndpoint,
     createProfile: createProfileEndpoint,
     getProfile: getProfileEndpoint,
-    putProfile: putProfileEndpoint,
+    putProfile: createPutProfileEndpoint(deps.profilePathReset),
     deleteProfile: deleteProfileEndpoint,
     getOnedriveAuthUrl: getOnedriveAuthUrlEndpoint,
     bridgeOnedriveCallback: bridgeOnedriveCallbackEndpoint,
     connectOnedrive: connectOnedriveEndpoint,
     postOnedriveLifecycle: postOnedriveLifecycleEndpoint,
-    postOnedriveSyncTrigger: createSyncTriggerEndpoint(syncTriggerDeps),
+    postOnedriveSyncTrigger: createSyncTriggerEndpoint(deps.syncTrigger),
     runSync: runSyncEndpoint,
     resetSync: resetSyncEndpoint,
     getSyncJob: getSyncJobEndpoint,

@@ -29,6 +29,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1024.0",
     "@petroglyph/contracts": "workspace:*",
     "@petroglyph/core": "workspace:*",
+    "@petroglyph/staging-contracts": "workspace:*",
     "hono": "^4.12.10",
     "jose": "^6.2.2",
     "p-retry": "^8.0.1",

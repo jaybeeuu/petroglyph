@@ -60,6 +60,7 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
           aws_dynamodb_table.token_vaults.arn,
           aws_dynamodb_table.sync_profiles.arn,
           aws_dynamodb_table.file_records.arn,
+          aws_dynamodb_table.staged_records.arn,
           aws_dynamodb_table.delta_tokens.arn,
           aws_dynamodb_table.sync_jobs.arn,
         ]
@@ -75,6 +76,15 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
           local.staged_bucket_arn,
           "${local.staged_bucket_arn}/*",
         ]
+      },
+      {
+        # A profile's source folder change discards the objects its staged
+        # records name; the records are already gone by then, so a failure here
+        # leaves no reader behind and the lifecycle rule expires the rest.
+        Sid      = "S3DeleteStagedObjects"
+        Effect   = "Allow"
+        Action   = "s3:DeleteObject"
+        Resource = "${local.staged_bucket_arn}/*"
       },
       {
         Sid    = "SQSSendMessages"
@@ -530,9 +540,14 @@ resource "aws_iam_role_policy" "petroglyph_adapter_onedrive_policy" {
         Resource = aws_dynamodb_table.event_log.arn
       },
       {
-        Sid      = "DynamoDBSyncProfilesRead"
-        Effect   = "Allow"
-        Action   = "dynamodb:Query"
+        # Query lists the profiles a walk covers; UpdateItem clears the reset
+        # marker a source folder change leaves for this walk to take on.
+        Sid    = "DynamoDBSyncProfilesReadWrite"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:Query",
+          "dynamodb:UpdateItem",
+        ]
         Resource = aws_dynamodb_table.sync_profiles.arn
       },
       {

@@ -48,12 +48,24 @@ export interface RunDeltaSyncOptions {
   /** Pages this invocation may walk; see DeltaWalkOptions.pageBudget. */
   pageBudget?: number;
   /**
+   * A profile's source folder changed, so this connection owes a full
+   * re-enumerate. `consume` clears the marker the write path set; the walk then
+   * drops the stored token and starts from the drive root.
+   */
+  pendingReset?: PendingReset;
+  /**
    * Enqueues the next bell after a walk spends its page budget. Required: a
    * deferred walk with nothing to continue it stops the catch-up dead, and the
    * stored resume link silently goes stale.
    */
   requestContinuation: (continuation: DeltaContinuation) => Promise<void>;
   log?: (message: string) => void;
+}
+
+/** The reset one write path asked for, cleared once this walk takes it on. */
+export interface PendingReset {
+  /** Clears the profile's pending marker. Called before the first page. */
+  consume: () => Promise<void>;
 }
 
 /**
@@ -93,6 +105,20 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
   let deleted = 0;
   let skipped = 0;
 
+  // A profile's source folder changed: the staged state is already gone, and
+  // the stored token covers only what changed since it was written. Both
+  // obligations are discharged BEFORE the first page, so a walk that fails
+  // below leaves an empty token and the retry still enumerates the whole drive
+  // instead of resuming from a point that never saw the new folder.
+  if (options.pendingReset !== undefined) {
+    await options.pendingReset.consume();
+    await options.deltaStateStore.clear(connection.userId, connection.provider);
+    log(
+      `[adapter] pending profile reset for ${connection.userId}/${connection.provider}: ` +
+        `full enumerate from the drive root`,
+    );
+  }
+
   const walk = await walkDelta({
     client: options.client,
     store: options.deltaStateStore,
@@ -100,6 +126,7 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
     profiles: options.profiles,
     initialUrl: options.initialUrl,
     ...(options.pageBudget === undefined ? {} : { pageBudget: options.pageBudget }),
+    ...(options.pendingReset === undefined ? {} : { forceFullEnumeration: true }),
     // Land each page as the walk hands it over: the walk holds nothing between
     // pages, so peak memory is one page's changes and one item's content, not
     // the whole drive (petroglyph-63vq). A throw here (S3, DynamoDB) rejects the

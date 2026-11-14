@@ -123,12 +123,18 @@ function deltaResponse(items: { [key: string]: unknown }[]): Response {
   );
 }
 
-function wireDynamo(profiles: SyncProfile[] = []): void {
+function wireDynamo(
+  profiles: SyncProfile[] = [],
+  deltaState: { deltaLink: string; updatedAt: string } | null = null,
+): void {
   mockDocSend.mockImplementation((command: unknown) => {
     if (command instanceof QueryCommand) {
       return Promise.resolve({ Items: profiles });
     }
     if (command instanceof GetCommand) {
+      if (command.input.TableName === TABLES.deltaTokens && deltaState !== null) {
+        return Promise.resolve({ Item: deltaState });
+      }
       return Promise.resolve(
         command.input.TableName === TABLES.refreshTokens ? { Item: makeTokenRecord() } : {},
       );
@@ -280,5 +286,50 @@ describe("adapter lambda composition (buildDeltaRunner)", () => {
     // cannot race the walk it continues.
     expect(sent.input.MessageGroupId).toBe("user-1:onedrive");
     expect(sent.input.MessageDeduplicationId).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("re-enumerates from the drive root and clears the marker when a profile's source folder changed", async () => {
+    const staleDeltaLink = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=stale";
+    wireDynamo([makeProfile({ deltaResetPending: true })], {
+      deltaLink: staleDeltaLink,
+      updatedAt: "2026-09-29T00:00:00.000Z",
+    });
+    wireGraph([fileItem("file-1", "notes")]);
+
+    const result = await buildDeltaRunner()(CONNECTION);
+
+    expect(result).toMatchObject({ outcome: "completed", landed: 1 });
+    // The stored token covers only what changed since it was written, so
+    // resuming from it would never enumerate the files already under the folder.
+    expect(fetchedUrls()).toContain(
+      "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,eTag,parentReference,file,folder,deleted",
+    );
+    expect(fetchedUrls()).not.toContain(staleDeltaLink);
+    // The marker is the walk's to consume: left set, every later walk would
+    // re-enumerate the whole drive.
+    const markerCleared = mockDocSend.mock.calls.some(
+      (call) =>
+        call[0] instanceof UpdateCommand &&
+        call[0].input.TableName === TABLES.syncProfiles &&
+        call[0].input.ExpressionAttributeValues?.[":pending"] === false,
+    );
+    expect(markerCleared).toBe(true);
+  });
+
+  it("resumes from the stored token when no profile owes a reset", async () => {
+    const staleDeltaLink = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=stale";
+    wireDynamo([makeProfile()], {
+      deltaLink: staleDeltaLink,
+      updatedAt: "2026-09-29T00:00:00.000Z",
+    });
+    wireGraph([fileItem("file-1", "notes")]);
+
+    await buildDeltaRunner()(CONNECTION);
+
+    expect(fetchedUrls()).toContain(staleDeltaLink);
+    const markerTouched = mockDocSend.mock.calls.some(
+      (call) => call[0] instanceof UpdateCommand && call[0].input.TableName === TABLES.syncProfiles,
+    );
+    expect(markerTouched).toBe(false);
   });
 });

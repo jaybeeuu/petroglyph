@@ -234,6 +234,14 @@ export interface DeltaWalkOptions {
    */
   pageBudget?: number;
   /**
+   * Start from `initialUrl` instead of the stored token. Set when a profile's
+   * source folder changed: the stored token only covers what changed since it
+   * was written, so it can never enumerate the files already sitting under the
+   * new folder. The caller clears the token first, so a walk that fails still
+   * resumes from the beginning.
+   */
+  forceFullEnumeration?: boolean;
+  /**
    * Land and emit one page's changes. Awaited before the next page is
    * requested, and the walk keeps nothing once it returns, so peak memory is
    * the page being handled — not the drive (petroglyph-63vq). This ordering is
@@ -376,7 +384,11 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
     };
   };
 
-  let page = await requestPage(stored?.deltaLink ?? options.initialUrl);
+  let page = await requestPage(
+    options.forceFullEnumeration === true
+      ? options.initialUrl
+      : (stored?.deltaLink ?? options.initialUrl),
+  );
 
   while (true) {
     if (page.kind === "unavailable") {

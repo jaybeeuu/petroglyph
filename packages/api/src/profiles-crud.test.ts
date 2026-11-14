@@ -25,6 +25,11 @@ vi.mock("./db.js", () => ({
   docClient: () => ({ send: mockDbSend }),
 }));
 
+const mockResetProfile = vi.hoisted(() => vi.fn());
+vi.mock("./profile-path-reset.js", () => ({
+  createDeployedProfilePathReset: () => mockResetProfile,
+}));
+
 import { createApp } from "./app.js";
 import { resetKeyCache } from "./jwt.js";
 
@@ -66,6 +71,8 @@ describe("profiles CRUD handlers", () => {
     mockPutProfile.mockReset();
     mockDeleteProfile.mockReset();
     mockDbSend.mockReset();
+    mockResetProfile.mockReset();
+    mockResetProfile.mockResolvedValue(undefined);
     resetKeyCache();
   });
 
@@ -177,6 +184,67 @@ describe("profiles CRUD handlers", () => {
       const response = await request("PUT", "/profiles/profile-1", { name: "New Name" });
 
       expect(response.status).toBe(404);
+    });
+
+    it("resets the profile's staged state when the source folder narrows to a subfolder", async () => {
+      const existing = makeProfile({ sourceFolderPath: "onyx/NoteAir5C" });
+      mockGetProfile.mockResolvedValue(existing);
+      mockPutProfile.mockResolvedValue(undefined);
+
+      const response = await request("PUT", "/profiles/profile-1", {
+        sourceFolderPath: "onyx/NoteAir5C/Notebooks",
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockResetProfile).toHaveBeenCalledOnce();
+      expect(mockResetProfile).toHaveBeenCalledWith({ userId: "user-42", profileId: "profile-1" });
+      // Stored with the profile, so the next walk knows it owes a full
+      // re-enumerate even if the reset above only half happened.
+      expect(mockPutProfile.mock.calls[0]?.[2]).toMatchObject({
+        sourceFolderPath: "onyx/NoteAir5C/Notebooks",
+        deltaResetPending: true,
+      });
+    });
+
+    it("does not reset when the incoming path normalises to the stored one", async () => {
+      const existing = makeProfile({ sourceFolderPath: "onyx/NoteAir5C/Notebooks" });
+      mockGetProfile.mockResolvedValue(existing);
+      mockPutProfile.mockResolvedValue(undefined);
+
+      const response = await request("PUT", "/profiles/profile-1", {
+        sourceFolderPath: "/onyx//NoteAir5C/Notebooks/",
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockResetProfile).not.toHaveBeenCalled();
+      expect(mockPutProfile.mock.calls[0]?.[2]).not.toHaveProperty("deltaResetPending");
+    });
+
+    it("does not reset when the request omits the source folder path", async () => {
+      const existing = makeProfile({ sourceFolderPath: "onyx/NoteAir5C" });
+      mockGetProfile.mockResolvedValue(existing);
+      mockPutProfile.mockResolvedValue(undefined);
+
+      const response = await request("PUT", "/profiles/profile-1", {
+        name: "Renamed",
+        enabled: false,
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockResetProfile).not.toHaveBeenCalled();
+    });
+
+    it("does not reset when only the destination vault path changes", async () => {
+      const existing = makeProfile({ sourceFolderPath: "onyx/NoteAir5C" });
+      mockGetProfile.mockResolvedValue(existing);
+      mockPutProfile.mockResolvedValue(undefined);
+
+      const response = await request("PUT", "/profiles/profile-1", {
+        destinationVaultPath: "Elsewhere",
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockResetProfile).not.toHaveBeenCalled();
     });
 
     it("returns 404 when profile belongs to a different user", async () => {

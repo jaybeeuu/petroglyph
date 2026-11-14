@@ -1,4 +1,10 @@
-import { DeleteCommand, GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DeleteCommand,
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { syncProfileSchema } from "./sync-profile.js";
 import type { SyncProfile } from "./sync-profile.js";
@@ -76,4 +82,27 @@ export async function deleteProfile(
       Key: { userId, profileId },
     }),
   );
+}
+
+/**
+ * Clears the reset marker on every profile the walk is about to re-enumerate.
+ * One update per profile, so a profile edited between the read and this write
+ * keeps its other fields — the walk owns only this flag.
+ */
+export async function clearDeltaResetPending(
+  client: DynamoDBDocumentClient,
+  tableName: string,
+  userId: string,
+  profileIds: readonly string[],
+): Promise<void> {
+  for (const profileId of profileIds) {
+    await client.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: { userId, profileId },
+        UpdateExpression: "SET deltaResetPending = :pending",
+        ExpressionAttributeValues: { ":pending": false },
+      }),
+    );
+  }
 }

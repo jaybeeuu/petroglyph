@@ -219,6 +219,34 @@ describe("walkDelta", () => {
     expect(result.outcome).toBe("continued");
   });
 
+  it("forceFullEnumeration starts from initialUrl even when a token is stored", async () => {
+    // A profile's source folder changed: the stored token covers only changes
+    // since it was written, so resuming from it would never see the files that
+    // already sit under the new folder.
+    const state = makeState({
+      deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=stale",
+    });
+    const store = memStateStore(state);
+    const { client, paths } = scriptedClient([
+      () =>
+        page([fileItem({ id: "i1", name: "already-there.pdf" })], {
+          deltaLink: "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=fresh",
+        }),
+    ]);
+
+    const result = await walk({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [makeProfile()],
+      initialUrl: INITIAL_URL,
+      forceFullEnumeration: true,
+    });
+
+    expect(paths).toEqual([INITIAL_URL]);
+    expect(result.events.map((event) => event.itemId)).toEqual(["i1"]);
+  });
+
   it("drains to the terminal deltaLink and persists it only on successful completion", async () => {
     const store = memStateStore(null);
     const { client } = scriptedClient([

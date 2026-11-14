@@ -14,8 +14,10 @@ import {
   deleteProfile,
 } from "@petroglyph/core";
 import type { SyncProfile } from "@petroglyph/core";
-import type { AppContext } from "./auth-middleware.js";
+import type { MiddlewareHandler } from "hono";
+import type { AppContext, AppVariables } from "./auth-middleware.js";
 import { docClient } from "./db.js";
+import type { ProfilePathReset } from "./profile-path-reset.js";
 
 function syncProfilesTableName(): string {
   return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
@@ -54,6 +56,24 @@ async function deleteFileRecordsForProfile(profileId: string): Promise<void> {
   } while (lastEvaluatedKey !== undefined);
 }
 
+/**
+ * Has the profile's source folder really changed? The comparison is between
+ * canonical forms, so a request that omits the field, repeats the stored path,
+ * or differs only in trimming, a leading slash or a doubled slash is not a
+ * change; anything that normalises to a different prefix is. The stored value
+ * goes through the same normaliser, because a profile written before it
+ * existed holds a form the walker never matches.
+ */
+function hasSourceFolderChanged(existing: SyncProfile, updates: PutProfileBody): boolean {
+  if (updates.sourceFolderPath === undefined) {
+    return false;
+  }
+  return (
+    normalizeSourceFolderPath(updates.sourceFolderPath) !==
+    normalizeSourceFolderPath(existing.sourceFolderPath)
+  );
+}
+
 function mergeProfile(existing: SyncProfile, updates: PutProfileBody): SyncProfile {
   return {
     ...existing,
@@ -89,9 +109,18 @@ export const getProfileEndpoint = defineEndpoint(
   },
 );
 
-export const putProfileEndpoint = defineEndpoint(
-  putProfileOperation,
-  async (input, c: AppContext) => {
+/**
+ * PUT /profiles/:id. `resetProfile` runs only when the source folder really
+ * changed, and only after the profile carrying the marker is stored: the
+ * marker is what keeps the reset owed, so a delete that fails below still
+ * leaves a walk that re-enumerates. The request never walks the drive — the
+ * reset discards staged state and bells the adapter, which keeps the response
+ * short whatever the folder holds.
+ */
+export function createPutProfileEndpoint(
+  resetProfile: ProfilePathReset,
+): MiddlewareHandler<{ Variables: AppVariables }>[] {
+  return defineEndpoint(putProfileOperation, async (input, c: AppContext) => {
     const userId = c.get("userId");
     const profileId = input.params.id;
     const existing = await getProfile(docClient(), syncProfilesTableName(), userId, profileId);
@@ -105,12 +134,15 @@ export const putProfileEndpoint = defineEndpoint(
         409,
       );
     }
-    const sourceFolderChanged =
-      updates.sourceFolderPath !== undefined &&
-      normalizeSourceFolderPath(updates.sourceFolderPath) !==
-        normalizeSourceFolderPath(existing.sourceFolderPath);
+    const sourceFolderChanged = hasSourceFolderChanged(existing, updates);
     const updated = mergeProfile(existing, updates);
-    await putProfile(docClient(), syncProfilesTableName(), updated);
+    const stored: SyncProfile = sourceFolderChanged
+      ? { ...updated, deltaResetPending: true }
+      : updated;
+    await putProfile(docClient(), syncProfilesTableName(), stored);
+    if (sourceFolderChanged) {
+      await resetProfile({ userId, profileId });
+    }
     const deactivatedProfileIds: string[] = [];
     if (updates.active === true) {
       const profiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
@@ -129,9 +161,9 @@ export const putProfileEndpoint = defineEndpoint(
         `[profiles-crud] Profile ${profileId} is active and sourceFolderPath changed; Graph subscription update not yet implemented`,
       );
     }
-    return c.json({ ...updated, deactivatedProfileIds });
-  },
-);
+    return c.json({ ...stored, deactivatedProfileIds });
+  });
+}
 
 export const deleteProfileEndpoint = defineEndpoint(
   deleteProfileOperation,

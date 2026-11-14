@@ -3,7 +3,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { SQSBatchResponse, SQSEvent } from "aws-lambda";
-import { OAuthTokenResolver, listProfiles } from "@petroglyph/core";
+import { OAuthTokenResolver, clearDeltaResetPending, listProfiles } from "@petroglyph/core";
 import { DynamoDBEventLogWriter } from "@petroglyph/events";
 import { S3StagedObjectStore } from "@petroglyph/staging-contracts";
 import {
@@ -157,9 +157,14 @@ export function buildDeltaRunner(): (connection: {
 
     const profiles = (
       await listProfiles(docClient(), requiredEnv("SYNC_PROFILES_TABLE"), connection.userId)
-    )
-      .filter((profile) => profile.enabled && profile.active)
-      .map((profile) => ({ profileId: profile.profileId, rootPath: profile.sourceFolderPath }));
+    ).filter((profile) => profile.enabled && profile.active);
+    // A write path that changed a profile's source folder staged no work for
+    // the walk: it discarded the staged state, cleared the token and left this
+    // marker. Take it on here, before the walk, so the drive is enumerated
+    // again from the beginning.
+    const resetProfileIds = profiles
+      .filter((profile) => profile.deltaResetPending === true)
+      .map((profile) => profile.profileId);
 
     return runDeltaSync({
       client: new MicrosoftGraphClient({
@@ -180,7 +185,23 @@ export function buildDeltaRunner(): (connection: {
         tableName: requiredEnv("DELTA_TOKENS_TABLE"),
       }),
       connection,
-      profiles,
+      profiles: profiles.map((profile) => ({
+        profileId: profile.profileId,
+        rootPath: profile.sourceFolderPath,
+      })),
+      ...(resetProfileIds.length === 0
+        ? {}
+        : {
+            pendingReset: {
+              consume: () =>
+                clearDeltaResetPending(
+                  docClient(),
+                  requiredEnv("SYNC_PROFILES_TABLE"),
+                  connection.userId,
+                  resetProfileIds,
+                ),
+            },
+          }),
       initialUrl: env("GRAPH_DRIVE_ROOT_DELTA_URL", DEFAULT_DRIVE_ROOT_DELTA_URL),
       requestContinuation: async (continuation) => {
         await sqsClient().send(

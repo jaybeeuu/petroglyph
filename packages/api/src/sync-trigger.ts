@@ -62,7 +62,8 @@ export function createSyncTriggerEndpoint(
   });
 }
 
-function deltaTriggerQueueUrl(): string {
+/** The delta-trigger queue's address, resolved per send so no import needs env. */
+export function deltaTriggerQueueUrl(): string {
   const value = process.env["DELTA_TRIGGER_QUEUE_URL"];
   if (value === undefined || value === "") {
     throw new Error("Missing required environment variable: DELTA_TRIGGER_QUEUE_URL");

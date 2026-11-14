@@ -11,6 +11,7 @@ import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "./app.js";
+import { createDeployedProfilePathReset } from "./profile-path-reset.js";
 import { resetKeyCache } from "./jwt.js";
 import { createSyncTriggerEnqueuer } from "./sync-trigger.js";
 import { readConnection, tokenVaultsTableName } from "./token-vault.js";
@@ -103,9 +104,14 @@ describe("POST /onedrive/sync-trigger against LocalStack DynamoDB + FIFO SQS", (
   /** The app under test: real vault reads and real FIFO sends, no Graph anywhere. */
   function createSyncTriggerApp(): ReturnType<typeof createApp> {
     return createApp({
-      readConnection: (userId, provider) =>
-        readConnection(DynamoDBDocumentClient.from(dynamo), userId, provider),
-      enqueueDeltaTrigger: createSyncTriggerEnqueuer(sqs, () => queueUrl),
+      syncTrigger: {
+        readConnection: (userId, provider) =>
+          readConnection(DynamoDBDocumentClient.from(dynamo), userId, provider),
+        enqueueDeltaTrigger: createSyncTriggerEnqueuer(sqs, () => queueUrl),
+      },
+      // This suite never updates a profile, so the deployed reset is only
+      // carried along; it reads no configuration until it is called.
+      profilePathReset: createDeployedProfilePathReset(),
     });
   }
 

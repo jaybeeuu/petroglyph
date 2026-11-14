@@ -214,6 +214,9 @@ importers:
       '@petroglyph/core':
         specifier: workspace:*
         version: link:../core
+      '@petroglyph/staging-contracts':
+        specifier: workspace:*
+        version: link:../staging-contracts
       hono:
         specifier: ^4.12.10
         version: 4.12.10

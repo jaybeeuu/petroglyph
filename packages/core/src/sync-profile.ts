@@ -10,6 +10,13 @@ export const syncProfileSchema = z.object({
   enabled: z.boolean().default(true),
   active: z.boolean(),
   initialSyncEnabled: z.boolean().default(true),
+  /**
+   * Set by the write path when `sourceFolderPath` changes, cleared by the walk
+   * that honours it. While true the connection owes a full re-enumerate: the
+   * staged state was deleted and the stored change token no longer covers the
+   * drive. Server-owned — the update body is strict, so a client cannot set it.
+   */
+  deltaResetPending: z.boolean().optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 });

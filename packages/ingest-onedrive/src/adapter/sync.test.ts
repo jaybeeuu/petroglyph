@@ -494,4 +494,51 @@ describe("runDeltaSync — adapter driver", () => {
     expect(deltaState.write).not.toHaveBeenCalled();
     expect(continuations).toEqual([]);
   });
+
+  it("takes on a pending reset before the first page: marker consumed, token dropped, walk starts over", async () => {
+    // The order matters. The marker and the token are both obligations to
+    // start over, so both are discharged before any page is requested: a walk
+    // that fails after this point still leaves an empty token, and the retry
+    // re-enumerates the drive instead of resuming a point that never saw the
+    // new folder.
+    const stored = { deltaLink: SECOND_PAGE, updatedAt: "2026-09-01T00:00:00.000Z" };
+    const sequence: string[] = [];
+    const deltaStateStore: DeltaStateStore = {
+      read: () => {
+        sequence.push("read");
+        return Promise.resolve(stored);
+      },
+      write: () => Promise.resolve(),
+      clear: () => {
+        sequence.push("clear");
+        return Promise.resolve();
+      },
+    };
+    const client: GraphClient = {
+      request(path) {
+        sequence.push("request " + path);
+        return Promise.resolve(jsonResponse({ value: [], "@odata.deltaLink": DELTA_LINK }));
+      },
+    };
+
+    await runDeltaSync({
+      client,
+      store: { put: vi.fn() } as unknown as StagedObjectStore,
+      eventLog: { putIfAbsent: vi.fn() } as unknown as EventLogWriter,
+      deltaStateStore,
+      connection: { userId: "u1", provider: "onedrive" },
+      profiles: [profile],
+      initialUrl: INITIAL_URL,
+      pendingReset: {
+        consume: () => {
+          sequence.push("consume");
+          return Promise.resolve();
+        },
+      },
+      requestContinuation: () => Promise.resolve(),
+    });
+
+    // The walk reads the token AFTER the clear, so it finds nothing to resume from.
+    expect(sequence).toEqual(["consume", "clear", "read", "request " + INITIAL_URL]);
+  });
 });

@@ -1,7 +1,13 @@
 export { syncProfileSchema } from "./sync-profile.js";
 export type { SyncProfile } from "./sync-profile.js";
 export { normalizeSourceFolderPath } from "./source-folder-path.js";
-export { getProfile, listProfiles, putProfile, deleteProfile } from "./sync-profile-db.js";
+export {
+  getProfile,
+  listProfiles,
+  putProfile,
+  deleteProfile,
+  clearDeltaResetPending,
+} from "./sync-profile-db.js";
 export { fileRecordSchema, fileRecordStatusEnum } from "./file-record.js";
 export type {
   FileRecord,
