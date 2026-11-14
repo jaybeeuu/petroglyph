@@ -788,6 +788,46 @@ describe("handleOneDriveCallback", () => {
     );
   });
 
+  it("prompts for a profile and starts no sync poll when the list is empty", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", refreshToken: "r", username: "alice" });
+    const startSyncPolling = vi.spyOn(plugin, "startSyncPolling").mockImplementation(() => {});
+    global.fetch = vi.fn((url: string) => {
+      if (url.endsWith("/profiles")) return Promise.resolve(jsonResponse([]));
+      return Promise.resolve(jsonResponse({ status: "connected" }));
+    }) as unknown as typeof fetch;
+
+    await plugin.handleOneDriveCallback({ code: "abc", state: "xyz" });
+
+    expect(Notice).toHaveBeenCalledWith("No profiles yet - create one to start syncing");
+    expect(startSyncPolling).not.toHaveBeenCalled();
+  });
+
+  it("starts the sync poll and claims only the connection when a profile exists", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", refreshToken: "r", username: "alice" });
+    const startSyncPolling = vi.spyOn(plugin, "startSyncPolling").mockImplementation(() => {});
+    global.fetch = vi.fn((url: string) => {
+      if (url.endsWith("/profiles")) {
+        return Promise.resolve(
+          jsonResponse([
+            {
+              id: "p1",
+              name: "Proofs",
+              sourceFolderPath: "onyx/proofs",
+              destinationVaultPath: "proofs",
+              active: true,
+            },
+          ]),
+        );
+      }
+      return Promise.resolve(jsonResponse({ status: "connected" }));
+    }) as unknown as typeof fetch;
+
+    await plugin.handleOneDriveCallback({ code: "abc", state: "xyz" });
+
+    expect(startSyncPolling).toHaveBeenCalledOnce();
+    expect(Notice).toHaveBeenCalledWith("OneDrive connected");
+  });
+
   it("shows notice when response is not ok", async () => {
     const { plugin } = await makePlugin();
 
@@ -1156,6 +1196,18 @@ describe("syncNow", () => {
       "https://api.petroglyph.page/onedrive/sync-trigger",
       "https://api.petroglyph.page/files",
     ]);
+  });
+
+  it("does not claim a sync when the loaded profile list is empty", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse([]));
+    await plugin.loadProfiles();
+    global.fetch = vi.fn();
+
+    await plugin.syncNow();
+
+    expect(Notice).toHaveBeenCalledWith("No profiles yet - create one to start syncing");
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it("shows the server message and does not drain when the connection needs reconnecting", async () => {
@@ -1590,6 +1642,20 @@ describe("feed sync", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("does not drain the feed when the loaded profile list is empty", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+    });
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse([]));
+    await plugin.loadProfiles();
+    global.fetch = vi.fn();
+
+    await plugin.performSync();
+
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it("writes each feed file into the vault under its relative path", async () => {

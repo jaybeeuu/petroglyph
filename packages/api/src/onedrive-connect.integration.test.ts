@@ -155,6 +155,16 @@ describe("POST /onedrive/connect against LocalStack DynamoDB", () => {
     });
     expect(Number(legacyRow.Item?.["expirySeconds"])).toBeGreaterThanOrEqual(startedAt + 3600);
     expect(Number(legacyRow.Item?.["expirySeconds"])).toBeLessThanOrEqual(finishedAt + 3600);
+
+    // Connect establishes the connection only. Choosing which folder maps to
+    // which vault path is the user's own profile action, so nothing exists yet.
+    const profileRow = await vault.send(
+      new GetCommand({
+        TableName: SYNC_PROFILES_TABLE,
+        Key: { userId: "user-42", profileId: "default" },
+      }),
+    );
+    expect(profileRow.Item).toBeUndefined();
   }, 60_000);
 
   async function makeToken(userId: string): Promise<string> {

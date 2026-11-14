@@ -1,3 +1,9 @@
+/**
+ * The one empty-profile message. A connected user with no profile has nothing
+ * to sync, so both the settings section and a manual sync say the same thing.
+ */
+export const NO_PROFILES_NOTICE = "No profiles yet - create one to start syncing";
+
 export interface SyncProfile {
   profileId: string;
   name: string;

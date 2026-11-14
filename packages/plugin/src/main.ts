@@ -13,6 +13,7 @@ import {
 } from "./log.js";
 import { PetroglyphSettingTab } from "./settings.js";
 import type { PluginData, SyncProfile } from "./types.js";
+import { NO_PROFILES_NOTICE } from "./types.js";
 import { hasStringProp, isRecord } from "./validate.js";
 
 const DEFAULT_DATA: PluginData = {
@@ -230,6 +231,14 @@ export class PetroglyphPlugin extends Plugin {
     }
   }
   /**
+   * True once the profile list has been fetched and is empty. `undefined` means
+   * it has not been loaded yet, so an unknown list never blocks a sync.
+   */
+  private loadedNoProfiles(): boolean {
+    return this._data.profiles !== undefined && this._data.profiles.length === 0;
+  }
+
+  /**
    * Manually sync the vault: POST /onedrive/sync-trigger, then drain GET /files
    * from the stored cursor and report the outcome. The trigger only enqueues one
    * OneDrive walk, so a document saved a moment ago is usually not in the feed
@@ -242,6 +251,10 @@ export class PetroglyphPlugin extends Plugin {
   async syncNow(): Promise<void> {
     if (this._data.jwt === undefined || !this._data.oneDriveConnected) {
       new Notice("Not connected. Cannot sync.");
+      return;
+    }
+    if (this.loadedNoProfiles()) {
+      new Notice(NO_PROFILES_NOTICE);
       return;
     }
     // One manual sync at a time. The settings button has no debounce, so a
@@ -731,6 +744,7 @@ export class PetroglyphPlugin extends Plugin {
 
   async performSync(): Promise<void> {
     if (this._data.jwt === undefined || !this._data.oneDriveConnected) return;
+    if (this.loadedNoProfiles()) return;
 
     await this.drainFilesFeed(this.resolveProfileId());
     await this._log.flush();
@@ -1208,10 +1222,15 @@ export class PetroglyphPlugin extends Plugin {
       }
       this.setOneDriveConnected(true);
       this._data = { ...this._data, oneDriveStatus: "connected" };
+      await this.loadProfiles();
       await this.savePluginData();
       this.refreshSettingsUi();
-      this.startSyncPolling();
-      new Notice("OneDrive connected");
+      if (this.loadedNoProfiles()) {
+        new Notice(NO_PROFILES_NOTICE);
+      } else {
+        this.startSyncPolling();
+        new Notice("OneDrive connected");
+      }
     } catch (error) {
       this._log.error("auth", "onedrive connect failed", { error: describeError(error) });
       new Notice("OneDrive connection failed");

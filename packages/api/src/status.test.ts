@@ -47,7 +47,9 @@ describe("GET /status", () => {
         if (options?.rejectSyncProfile) {
           return Promise.reject(new Error("SyncProfile unavailable"));
         }
-        return Promise.resolve({ Item: options?.syncProfileItem });
+        return Promise.resolve({
+          Items: options?.syncProfileItem === undefined ? [] : [options.syncProfileItem],
+        });
       }
 
       if (tableName === "petroglyph-users-default") {
@@ -113,6 +115,29 @@ describe("GET /status", () => {
       expect(body.oneDriveStatus).toBe("connected");
     });
 
+    it("treats a non-default profile as a profile for a connected user", async () => {
+      mockStatusReads({
+        syncProfileItem: {
+          userId: "user-42",
+          profileId: "b6f1c0de-0000-4000-8000-000000000001",
+        },
+        userItem: { userId: "user-42", oneDriveStatus: "connected" },
+      });
+      const token = await makeValidToken();
+
+      const res = await app.request("/status", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        oneDrive: { connected: boolean };
+        oneDriveStatus: string;
+      };
+      expect(body.oneDrive.connected).toBe(true);
+      expect(body.oneDriveStatus).toBe("connected");
+    });
+
     it("returns never_connected when no SyncProfile exists", async () => {
       mockStatusReads();
       const token = await makeValidToken();
@@ -128,6 +153,40 @@ describe("GET /status", () => {
       };
       expect(body.oneDrive.connected).toBe(false);
       expect(body.oneDriveStatus).toBe("never_connected");
+    });
+
+    it("returns connected_no_profile when the user is connected and no SyncProfile exists", async () => {
+      mockStatusReads({ userItem: { userId: "user-42", oneDriveStatus: "connected" } });
+      const token = await makeValidToken();
+
+      const res = await app.request("/status", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        oneDrive: { connected: boolean };
+        oneDriveStatus: string;
+      };
+      expect(body.oneDrive.connected).toBe(true);
+      expect(body.oneDriveStatus).toBe("connected_no_profile");
+    });
+
+    it("returns reconnect_required when the user record requires it even with no SyncProfile", async () => {
+      mockStatusReads({ userItem: { userId: "user-42", oneDriveStatus: "reconnect_required" } });
+      const token = await makeValidToken();
+
+      const res = await app.request("/status", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        oneDrive: { connected: boolean };
+        oneDriveStatus: string;
+      };
+      expect(body.oneDrive.connected).toBe(false);
+      expect(body.oneDriveStatus).toBe("reconnect_required");
     });
 
     it("returns reconnect_required when a SyncProfile exists but is disconnected", async () => {
@@ -249,7 +308,7 @@ describe("GET /status", () => {
       expect(body.oneDriveStatus).toBe("reconnect_required");
     });
 
-    it("ignores stale connected from the user record when a SyncProfile is disconnected", async () => {
+    it("trusts the connected user record over a false profile flag", async () => {
       mockStatusReads({
         syncProfileItem: {
           userId: "user-42",
@@ -269,8 +328,8 @@ describe("GET /status", () => {
         oneDrive: { connected: boolean };
         oneDriveStatus: string;
       };
-      expect(body.oneDrive.connected).toBe(false);
-      expect(body.oneDriveStatus).toBe("reconnect_required");
+      expect(body.oneDrive.connected).toBe(true);
+      expect(body.oneDriveStatus).toBe("connected");
     });
 
     it("falls back to SyncProfile state when the user lookup fails", async () => {

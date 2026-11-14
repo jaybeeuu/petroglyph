@@ -134,15 +134,17 @@ The plugin periodically calls `GET /status` to determine the current connection 
 ```json
 {
   "github": { "connected": true, "username": "<githubLogin>" },
-  "oneDrive": { "connected": false }
+  "oneDrive": { "connected": false },
+  "oneDriveStatus": "connected_no_profile"
 }
 ```
 
-| Field                | Type    | Description                                                                                                                                                                                       |
-| -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                                      |
-| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                                         |
-| `oneDrive.connected` | boolean | `true` if the user has an active OneDrive connection (`active === true` on the `sync_profiles` DynamoDB record); `false` if the record is absent, the field is false, or a DynamoDB error occurs. |
+| Field                | Type    | Description                                                                                                                                                                                                                                                          |
+| -------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                                                                                                         |
+| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                                                                                                            |
+| `oneDrive.connected` | boolean | `true` when the connection is live, whether or not a profile exists yet. `false` for a dead grant, a never-connected user, or a DynamoDB error.                                                                                                                      |
+| `oneDriveStatus`     | string  | `connected` (live connection with a profile), `connected_no_profile` (live connection, no profile yet), `never_connected`, `reconnect_required` (dead grant or dead profile), or `disconnected` (reserved; a lost connection is normalised to `reconnect_required`). |
 
 Unauthenticated requests (missing or invalid JWT) return `401 { "error": "UNAUTHORIZED" }` from the auth middleware before the handler is reached.
 
@@ -215,7 +217,7 @@ sequenceDiagram
     Note over CloudAPI: validate & delete state token<br/>(retrieve PKCE verifier from DynamoDB)
     CloudAPI->>Microsoft: token exchange (code + verifier)
     Microsoft-->>CloudAPI: access token + refresh token
-    Note over CloudAPI: store OneDrive tokens in DynamoDB<br/>register Graph subscription (non-blocking)<br/>upsert SyncProfile in DynamoDB
+    Note over CloudAPI: store OneDrive tokens in DynamoDB<br/>register Graph subscription (non-blocking)<br/>mark the connection connected<br/>stamp an existing profile only
     CloudAPI-->>Plugin: { status: 'connected' }
 ```
 
@@ -230,7 +232,7 @@ sequenceDiagram
 9. Cloud API completes the PKCE token exchange with Microsoft using the code, retrieved verifier, and client secret (loaded from SSM), receiving an **access token** (TTL ~1 hour) and a **refresh token** (TTL up to 90 days with `offline_access`). Returns 502 if the exchange fails.
 10. `access_token`, `refresh_token`, and `expirySeconds` are written to **both** token stores: the connection-keyed `token_vaults` record (`userId` + `provider=onedrive`), which the Delivery 1 adapter resolves the grant from, and the legacy `refresh_tokens` record (`tokenHash=userId`) that the still-live pre-Delivery-3 readers (`onedriveMiddleware`, sync-worker, processor) use. Writing only the legacy record would leave a new consent invisible to the data path; the legacy write disappears with the old copies at Delivery 3.
 11. Cloud API attempts to register a **Microsoft Graph change notification subscription** for the user's OneDrive. The requested `expirationDateTime` is capped to Graph's maximum allowed window so registration does not fail due to an out-of-range expiry. Failure is still non-blocking — a warning is logged and the request continues.
-12. Cloud API upserts a **SyncProfile** in DynamoDB (`PK=userId`, `SK='default'`, `oneDriveConnected=true`).
+12. Cloud API marks the connection **connected** on the user record. If a profile already exists, it stamps that profile's `oneDriveConnected` flag with a conditional update that cannot create an item. Connect **never** creates a profile: choosing which OneDrive folder maps to which vault path is the user's own profile action, so a fresh connect leaves the profile list empty and `/status` reports `connected_no_profile`.
 13. Returns `{ status: 'connected' }` to the plugin.
 
 ### Token Lifecycle
