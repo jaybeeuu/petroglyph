@@ -91,6 +91,43 @@ const errorEnvelopeSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 });
 
+/**
+ * The flat error the hand-written routes answer with — `{ "error": "Profile not
+ * found" }` — and the shape the shared JWT middleware sends on 401, where the
+ * only member is the bare code `"UNAUTHORIZED"`.
+ */
+const flatErrorSchema = z.object({ error: z.string() });
+
+/** A `SCREAMING_SNAKE` token is an error code, not prose a user can act on. */
+const screamingSnakeCode = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/;
+
+/** The readable form of each code the API sends in place of a message. */
+const ERROR_CODE_MESSAGES: { [code: string]: string } = {
+  UNAUTHORIZED: "session expired; sign in again",
+};
+
+/**
+ * The message a non-ok response body carries, or null when it carries none a
+ * user can read. Both documented shapes are accepted: the structured
+ * `{ error: { code, message } }` envelope, and the flat `{ error: "..." }` the
+ * profile routes and the JWT middleware answer with. A flat message that is a
+ * code is translated when it is known and dropped when it is not, so a code is
+ * never shown raw and a real sentence is never swallowed.
+ */
+export function readErrorMessage(body: unknown): string | null {
+  const structured = errorEnvelopeSchema.safeParse(body);
+  if (structured.success) {
+    const message = structured.data.error.message.trim();
+    return message === "" ? null : message;
+  }
+  const flat = flatErrorSchema.safeParse(body);
+  if (!flat.success) return null;
+  const text = flat.data.error.trim();
+  if (text === "") return null;
+  if (!screamingSnakeCode.test(text)) return text;
+  return ERROR_CODE_MESSAGES[text] ?? null;
+}
+
 /** The notice a failed drain shows when the user asked for it explicitly. */
 const FEED_FAILURE_NOTICES: { [reason in FeedFailure]: string } = {
   rejected: "Sync failed: error fetching files",
@@ -990,6 +1027,23 @@ export class PetroglyphPlugin extends Plugin {
     }
   }
 
+  /**
+   * The notice for a failed profile mutation: the server's own text after the
+   * action, so a 404 and a 409 read differently, or `generic` when the body
+   * carries nothing to show. A 401 whose body is only the middleware's code
+   * reads as an expired session rather than `UNAUTHORIZED`.
+   */
+  private async failureNotice(generic: string, response: Response): Promise<string> {
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return generic;
+    }
+    const message = readErrorMessage(body);
+    return message === null ? generic : `${generic}: ${message}`;
+  }
+
   async setActiveProfile(id: string): Promise<void> {
     if (this._data.jwt === undefined) return;
     try {
@@ -1002,7 +1056,7 @@ export class PetroglyphPlugin extends Plugin {
         body: JSON.stringify({ active: true }),
       });
       if (!response.ok) {
-        new Notice("Failed to set active profile");
+        new Notice(await this.failureNotice("Failed to set active profile", response));
         return;
       }
       const profiles = (this._data.profiles ?? []).map((p) => ({
@@ -1032,7 +1086,7 @@ export class PetroglyphPlugin extends Plugin {
         body: JSON.stringify(data),
       });
       if (!response.ok) {
-        new Notice("Failed to create profile");
+        new Notice(await this.failureNotice("Failed to create profile", response));
         return;
       }
       await this.loadProfiles();
@@ -1056,7 +1110,7 @@ export class PetroglyphPlugin extends Plugin {
         body: JSON.stringify(updates),
       });
       if (!response.ok) {
-        new Notice("Failed to edit profile");
+        new Notice(await this.failureNotice("Failed to edit profile", response));
         return;
       }
       await this.loadProfiles();
@@ -1075,7 +1129,7 @@ export class PetroglyphPlugin extends Plugin {
         },
       });
       if (!response.ok) {
-        new Notice("Failed to delete profile");
+        new Notice(await this.failureNotice("Failed to delete profile", response));
         return;
       }
       if (this._data.activeProfileId === profileId) {

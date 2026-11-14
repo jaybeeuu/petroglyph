@@ -20,7 +20,10 @@ vi.mock("obsidian", () => ({
   App: class {},
   Modal: class {
     contentEl = { empty: vi.fn(), createEl: vi.fn(() => ({})) };
-    open() {}
+    onOpen() {}
+    open() {
+      this.onOpen();
+    }
     close() {}
   },
   Setting: class {
@@ -38,6 +41,12 @@ vi.mock("obsidian", () => ({
       const btn: ButtonStub = {
         setButtonText(text: string) {
           buttonText = text;
+          return btn;
+        },
+        setCta() {
+          return btn;
+        },
+        setWarning() {
           return btn;
         },
         onClick(cb: () => void) {
@@ -69,6 +78,8 @@ vi.mock("obsidian", () => ({
 
 interface ButtonStub {
   setButtonText(text: string): ButtonStub;
+  setCta(): ButtonStub;
+  setWarning(): ButtonStub;
   onClick(cb: () => void): ButtonStub;
 }
 
@@ -256,5 +267,67 @@ describe("PetroglyphSettingTab Profiles section", () => {
     await buttonHandlers.get("Set active")?.();
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.setActiveProfile).toHaveBeenCalledWith("p1");
+  });
+
+  it("'Edit' modal save calls editProfile with the profile id it rendered", async () => {
+    const plugin = await makePlugin({ username: "alice" });
+    // @ts-expect-error — testing internal data
+    plugin._data = {
+      ...plugin.data,
+      profiles: [
+        {
+          profileId: "p1",
+          name: "Profile 1",
+          sourceFolderPath: "/src",
+          destinationVaultPath: "/dst",
+        },
+      ],
+    };
+    plugin.editProfile = vi.fn().mockResolvedValue(undefined);
+    const { PetroglyphSettingTab } = await import("./settings.js");
+    const tab = new PetroglyphSettingTab({} as App, plugin);
+    tab.display();
+
+    await buttonHandlers.get("Edit")?.();
+    await buttonHandlers.get("Save")?.();
+    // The modal hands its save to an async callback the click does not return,
+    // so the continuation that re-renders the tab needs one turn to settle.
+    await Promise.resolve();
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(plugin.editProfile).toHaveBeenCalledWith("p1", {
+      name: "Profile 1",
+      sourceFolderPath: "/src",
+      destinationVaultPath: "/dst",
+    });
+  });
+
+  it("'Delete' confirm calls deleteProfile with the profile id it rendered", async () => {
+    const plugin = await makePlugin({ username: "alice" });
+    // @ts-expect-error — testing internal data
+    plugin._data = {
+      ...plugin.data,
+      profiles: [
+        {
+          profileId: "p1",
+          name: "Profile 1",
+          sourceFolderPath: "/src",
+          destinationVaultPath: "/dst",
+        },
+      ],
+    };
+    plugin.deleteProfile = vi.fn().mockResolvedValue(undefined);
+    const { PetroglyphSettingTab } = await import("./settings.js");
+    const tab = new PetroglyphSettingTab({} as App, plugin);
+    tab.display();
+
+    // The first click opens the confirm modal, whose own "Delete" button
+    // replaces the row's handler under the same label.
+    await buttonHandlers.get("Delete")?.();
+    await buttonHandlers.get("Delete")?.();
+    await Promise.resolve();
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(plugin.deleteProfile).toHaveBeenCalledWith("p1");
   });
 });

@@ -2,11 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import type { App, PluginManifest } from "obsidian";
 import type { FeedEntry } from "./feed.js";
+import { readErrorMessage } from "./main.js";
 import type { PetroglyphPlugin } from "./main.js";
 
 // Hoisted so the `obsidian` mock factory can use it: importing `main.js` for its
 // recheck delay evaluates that factory before any ordinary module-scope binding.
-const Notice = vi.hoisted(() => vi.fn());
+const Notice = vi.hoisted(() => vi.fn<(message: string) => void>());
 
 /* eslint-disable @typescript-eslint/no-extraneous-class, @typescript-eslint/no-useless-constructor, @typescript-eslint/no-unused-vars, @typescript-eslint/explicit-function-return-type */
 vi.mock("obsidian", () => ({
@@ -193,6 +194,15 @@ function statusResponse(status: number, body: unknown): Response {
     ok: status >= 200 && status < 300,
     status,
     json: () => Promise.resolve(body),
+  } as unknown as Response;
+}
+
+/** A URL that answers with an error status and a body that is not JSON. */
+function unparseableResponse(status: number): Response {
+  return {
+    ok: false,
+    status,
+    json: () => Promise.reject(new SyntaxError("Unexpected token < in JSON")),
   } as unknown as Response;
 }
 
@@ -2667,6 +2677,46 @@ describe("setActiveProfile", () => {
     expect(Notice).toHaveBeenCalledWith("Failed to set active profile");
     expect(plugin.data.activeProfileId).toBeUndefined();
   });
+
+  it("shows the server's message, so a 409 reads differently from a 404", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(statusResponse(404, { error: "Profile not found" }))
+      .mockResolvedValueOnce(
+        statusResponse(409, {
+          error: "Cannot deactivate the active profile; activate another profile instead",
+        }),
+      ) as unknown as typeof fetch;
+
+    await plugin.setActiveProfile("missing");
+    await plugin.setActiveProfile("p1");
+
+    const [notFoundNotice, conflictNotice] = Notice.mock.calls.map((call) => call[0]);
+    expect(notFoundNotice).toContain("Profile not found");
+    expect(conflictNotice).toContain("Cannot deactivate the active profile");
+    expect(conflictNotice).not.toBe(notFoundNotice);
+  });
+
+  it("shows a readable message for a 401 instead of the middleware's code", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue(statusResponse(401, { error: "UNAUTHORIZED" }));
+
+    await plugin.setActiveProfile("p1");
+
+    expect(Notice).toHaveBeenCalledWith(
+      "Failed to set active profile: session expired; sign in again",
+    );
+  });
+
+  it("keeps the generic notice when the body is not JSON", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue(unparseableResponse(404));
+
+    await plugin.setActiveProfile("p1");
+
+    expect(Notice).toHaveBeenCalledWith("Failed to set active profile");
+  });
 });
 
 describe("activeProfileId persistence", () => {
@@ -2775,6 +2825,19 @@ describe("createProfile", () => {
     expect(Notice).toHaveBeenCalledWith("Failed to create profile");
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
+
+  it("shows the server's message when the server rejects the profile", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue(statusResponse(400, { error: "name is required" }));
+
+    await plugin.createProfile({
+      name: "",
+      sourceFolderPath: "/s",
+      destinationVaultPath: "/d",
+    });
+
+    expect(Notice).toHaveBeenCalledWith("Failed to create profile: name is required");
+  });
 });
 
 describe("editProfile", () => {
@@ -2840,6 +2903,35 @@ describe("editProfile", () => {
 
     expect(Notice).toHaveBeenCalledWith("Failed to edit profile");
     expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the server's message, so a 409 reads differently from a 404", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(statusResponse(404, { error: "Profile not found" }))
+      .mockResolvedValueOnce(
+        statusResponse(409, {
+          error: "Cannot deactivate the active profile; activate another profile instead",
+        }),
+      ) as unknown as typeof fetch;
+
+    await plugin.editProfile("missing", { name: "Renamed" });
+    await plugin.editProfile("p1", { name: "Renamed" });
+
+    const [notFoundNotice, conflictNotice] = Notice.mock.calls.map((call) => call[0]);
+    expect(notFoundNotice).toContain("Profile not found");
+    expect(conflictNotice).toContain("Cannot deactivate the active profile");
+    expect(conflictNotice).not.toBe(notFoundNotice);
+  });
+
+  it("keeps the generic notice when the body is not JSON", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue(unparseableResponse(409));
+
+    await plugin.editProfile("p1", { name: "Fail" });
+
+    expect(Notice).toHaveBeenCalledWith("Failed to edit profile");
   });
 });
 
@@ -2932,6 +3024,69 @@ describe("deleteProfile", () => {
 
     expect(Notice).toHaveBeenCalledWith("Failed to delete profile");
     expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the server's message, so a 409 reads differently from a 404", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(statusResponse(404, { error: "Profile not found" }))
+      .mockResolvedValueOnce(
+        statusResponse(409, { error: "Cannot delete a profile that is still syncing" }),
+      ) as unknown as typeof fetch;
+
+    await plugin.deleteProfile("missing");
+    await plugin.deleteProfile("p1");
+
+    const [notFoundNotice, conflictNotice] = Notice.mock.calls.map((call) => call[0]);
+    expect(notFoundNotice).toContain("Profile not found");
+    expect(conflictNotice).toContain("Cannot delete a profile that is still syncing");
+    expect(conflictNotice).not.toBe(notFoundNotice);
+  });
+
+  it("keeps the generic notice when the body is not JSON", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue(unparseableResponse(404));
+
+    await plugin.deleteProfile("p1");
+
+    expect(Notice).toHaveBeenCalledWith("Failed to delete profile");
+  });
+});
+
+describe("readErrorMessage", () => {
+  it("reads the flat shape the profile routes answer with", () => {
+    expect(readErrorMessage({ error: "Profile not found" })).toBe("Profile not found");
+  });
+
+  it("reads the structured envelope", () => {
+    expect(readErrorMessage({ error: { code: "conflict", message: "Already active" } })).toBe(
+      "Already active",
+    );
+  });
+
+  it("turns the middleware's UNAUTHORIZED code into something a user can act on", () => {
+    expect(readErrorMessage({ error: "UNAUTHORIZED" })).toBe("session expired; sign in again");
+  });
+
+  it("keeps a 401 message that is prose rather than a code", () => {
+    expect(readErrorMessage({ error: "Invalid refresh token" })).toBe("Invalid refresh token");
+  });
+
+  it("returns null for a body of neither shape", () => {
+    const bodies: unknown[] = [
+      undefined,
+      null,
+      "text",
+      [],
+      {},
+      { error: "" },
+      { error: {} },
+      { error: { code: "conflict" } },
+      { error: 42 },
+    ];
+
+    for (const body of bodies) expect(readErrorMessage(body)).toBeNull();
   });
 });
 
