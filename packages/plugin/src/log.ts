@@ -95,7 +95,7 @@ const ANY_SCHEME = /[a-z][a-z0-9+.-]*:\/\//i;
 const HOST_LIKE = /^(?:[a-z0-9-]+\.)+[a-z]{2,}$|^(?:\d{1,3}\.){3}\d{1,3}$|^localhost$/i;
 
 /** The concern a log line belongs to. */
-export type LogArea = "startup" | "auth" | "feed" | "download" | "vault" | "profile";
+export type LogArea = "startup" | "auth" | "feed" | "trigger" | "download" | "vault" | "profile";
 
 /** How much attention a line deserves. */
 export type LogLevel = "info" | "warn" | "error";

@@ -40,27 +40,6 @@ describe("PetroglyphPlugin manual sync/reset commands", () => {
     vi.clearAllMocks();
   });
 
-  it("syncNow drains GET /files and reports completion", async () => {
-    const plugin = await makePluginWithMocks({
-      jwt: "jwt-token",
-      oneDriveConnected: true,
-    });
-    let filesFeedCalls = 0;
-    global.fetch = vi.fn((...args) => {
-      if (typeof args[0] === "string" && args[0].includes("/files")) {
-        filesFeedCalls++;
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ files: [], nextToken: null }),
-        });
-      }
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
-    }) as unknown as typeof fetch;
-    await plugin.syncNow();
-    expect(filesFeedCalls).toBe(1);
-    expect(Notice).toHaveBeenCalledWith("Sync complete");
-  });
-
   it("resetPluginState clears local token and shows notice", async () => {
     const plugin = await makePluginWithMocks({
       feedCursors: { default: "tok" },

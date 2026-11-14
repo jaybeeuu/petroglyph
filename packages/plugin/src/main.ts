@@ -48,10 +48,48 @@ export type FeedDrain = { synced: number; failed: number } & (
 );
 
 /**
+ * What POST /onedrive/sync-trigger means for the sync. "failed" is a request the
+ * plugin could not complete or could not read; the drain still runs because the
+ * server may have walked OneDrive anyway. "refused" carries the server's own
+ * message and stops the sync. "stop" means the request was never made.
+ */
+type TriggerOutcome =
+  | { kind: "continue" }
+  | { kind: "failed" }
+  | { kind: "stop" }
+  | { kind: "refused"; message: string };
+
+/**
  * Pages one drain may request before giving up. A feed whose cursor stops
  * advancing would otherwise hang the plugin forever, every poll interval.
  */
 export const MAX_FEED_PAGES = 200;
+
+/**
+ * How long one manual-sync recheck waits before it reads the feed again. The
+ * server answers the trigger at once and walks OneDrive in the background, so
+ * the waiting is the plugin's job.
+ */
+export const SYNC_RECHECK_DELAY_MS = 2500;
+
+/**
+ * How many rechecks a manual sync makes after a first drain that staged nothing.
+ * Together with `SYNC_RECHECK_DELAY_MS` this is about 5s of waiting; the target
+ * wait is 10s, so raising one number must lower the other. Nothing enforces that
+ * target: a slow drain pushes the whole wait past it.
+ */
+export const SYNC_RECHECK_ATTEMPTS = 2;
+
+/** Shown when the trigger was accepted but no file arrived before the cap. */
+const SYNC_REQUESTED_NOTICE = "Sync requested - new files will arrive on the next poll";
+
+/** Shown instead when the trigger failed, so the claim of a request stays true. */
+const SYNC_REQUEST_FAILED_NOTICE = "Sync request failed - new files will arrive on the next poll";
+
+/** The structured error envelope from `docs/api-conventions.md`. */
+const errorEnvelopeSchema = z.object({
+  error: z.object({ code: z.string(), message: z.string() }),
+});
 
 /** The notice a failed drain shows when the user asked for it explicitly. */
 const FEED_FAILURE_NOTICES: { [reason in FeedFailure]: string } = {
@@ -67,6 +105,41 @@ function fileFailureNotice(synced: number, failed: number): string {
   const attempted = synced + failed;
   if (synced === 0) return `Sync failed: ${failed} of ${attempted} files failed`;
   return `Sync complete: ${synced} ${synced === 1 ? "file" : "files"}, ${failed} failed`;
+}
+
+/** The notice shown when a drain staged files and none of them failed. */
+function syncCompleteNotice(synced: number): string {
+  return `Sync complete: ${synced} ${synced === 1 ? "file" : "files"}`;
+}
+
+/**
+ * Resolves `true` once `ms` has passed, or `false` as soon as `signal` aborts.
+ * An aborted wait clears its timer, so nothing keeps running after the plugin
+ * unloads.
+ */
+function waitForDelay(ms: number, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let timeoutId = 0;
+    const onAbort = (): void => {
+      window.clearTimeout(timeoutId);
+      resolve(false);
+    };
+    timeoutId = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * True when `onunload()` aborted the manual sync that owns `controller`. A call
+ * keeps the check fresh: reading the flag inline would let the compiler hold the
+ * earlier answer across an await.
+ */
+function syncAborted(controller: AbortController): boolean {
+  return controller.signal.aborted;
 }
 
 /** The companion note body written beside a synced PDF. */
@@ -120,26 +193,162 @@ export class PetroglyphPlugin extends Plugin {
     }
   }
   /**
-   * Manually sync the vault: drain GET /files from the stored cursor and report
-   * the outcome. The server-side trigger is not this call's business — a
-   * catch-up bell makes new files appear in the feed.
+   * Manually sync the vault: POST /onedrive/sync-trigger, then drain GET /files
+   * from the stored cursor and report the outcome. The trigger only enqueues one
+   * OneDrive walk, so a document saved a moment ago is usually not in the feed
+   * yet: when the first drain staged nothing, the feed is drained again a couple
+   * of times before the user is told to wait for the next poll. A drain that
+   * failed is reported as a failure and not retried here — its cursor did not
+   * advance, so the next poll retries those files. A caller that arrives while
+   * one of these syncs is still running is ignored.
    */
   async syncNow(): Promise<void> {
     if (this._data.jwt === undefined || !this._data.oneDriveConnected) {
       new Notice("Not connected. Cannot sync.");
       return;
     }
-    const drain = await this.drainFilesFeed(this.resolveProfileId());
-    await this._log.flush();
-    if (drain.ok) {
-      new Notice("Sync complete");
-      return;
+    // One manual sync at a time. The settings button has no debounce, so a
+    // double click is the normal case, and the second click is ignored rather
+    // than cancelling the sync the first click started. The slot is taken before
+    // the first await, so two clicks in one tick cannot both pass the guard.
+    if (this._syncAbort !== null) return;
+    const controller = new AbortController();
+    this._syncAbort = controller;
+
+    let notice: string | null;
+    try {
+      notice = await this.runManualSync(controller);
+      if (notice === null) return;
+      await this._log.flush();
+      // The single report gate. A drain already in flight still finishes its
+      // writes when the plugin unloads, and the flush above takes a moment, but
+      // no notice is shown once `onunload()` has aborted this sync.
+      if (syncAborted(controller)) return;
+      new Notice(notice);
+    } finally {
+      // The slot is held until the report is done, so `onunload()` can abort the
+      // controller at any point — and an unexpected rejection must not keep the
+      // slot either, or the button stays dead for the rest of the session.
+      this.endSync(controller);
     }
-    if (drain.reason === "files") {
-      new Notice(fileFailureNotice(drain.synced, drain.failed));
-      return;
+  }
+
+  /**
+   * Runs one manual sync and returns the single notice it earned, or null when
+   * it has nothing to report. Reporting is the caller's job, so an aborted sync
+   * can drop the notice for every path — the first drain, the rechecks, and a
+   * recheck that finished its writes.
+   */
+  private async runManualSync(controller: AbortController): Promise<string | null> {
+    const trigger = await this.triggerSyncWalk();
+    if (syncAborted(controller)) {
+      // `onunload()` ran while the trigger was in flight: drain nothing.
+      return null;
     }
-    new Notice(FEED_FAILURE_NOTICES[drain.reason]);
+    if (trigger.kind === "refused") return trigger.message;
+    if (trigger.kind === "stop") return null;
+
+    const profileId = this.resolveProfileId();
+    let drain: FeedDrain = await this.drainFilesFeed(profileId);
+    if (syncAborted(controller)) return null;
+    if (drain.ok && drain.synced === 0) {
+      const rechecked = await this.recheckFilesFeed(profileId, drain, controller.signal);
+      if (rechecked === null) return null;
+      drain = rechecked;
+    }
+    return this.describeDrain(drain, trigger.kind === "failed");
+  }
+
+  /** Releases the manual-sync slot, unless `onunload()` already cleared it. */
+  private endSync(controller: AbortController): void {
+    if (this._syncAbort === controller) this._syncAbort = null;
+  }
+
+  /**
+   * The one notice a drain earns. `triggerFailed` only rewords the empty case:
+   * claiming the sync was requested would be false when the request failed.
+   */
+  private describeDrain(drain: FeedDrain, triggerFailed: boolean): string {
+    if (!drain.ok) {
+      return drain.reason === "files"
+        ? fileFailureNotice(drain.synced, drain.failed)
+        : FEED_FAILURE_NOTICES[drain.reason];
+    }
+    if (drain.synced > 0) return syncCompleteNotice(drain.synced);
+    return triggerFailed ? SYNC_REQUEST_FAILED_NOTICE : SYNC_REQUESTED_NOTICE;
+  }
+
+  /**
+   * POST /onedrive/sync-trigger asks the server to enqueue one OneDrive walk.
+   * The trigger is only a bell: "failed" means the request was not completed or
+   * not understood, and the feed is still worth draining. "refused" carries the
+   * server's own message and stops the sync; "stop" means it was not attempted.
+   */
+  private async triggerSyncWalk(): Promise<TriggerOutcome> {
+    const jwt = this._data.jwt;
+    if (jwt === undefined) return { kind: "stop" };
+
+    const url = `${this._data.apiBaseUrl}/onedrive/sync-trigger`;
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+    } catch (error) {
+      this._log.warn("trigger", "request failed", { url, error: describeError(error) });
+      return { kind: "failed" };
+    }
+
+    this._log.info("trigger", "requested", { url, status: response.status });
+    if (response.status === 202) return { kind: "continue" };
+    if (response.status === 401) {
+      // Keyed on the status: the shared JWT middleware still answers a flat
+      // `{ "error": "UNAUTHORIZED" }` with no `code` to branch on.
+      return { kind: "refused", message: "Not connected. Cannot sync." };
+    }
+    if (response.status === 409) {
+      const refusal = await this.readTriggerRefusal(response);
+      if (refusal !== null) return { kind: "refused", message: refusal };
+    }
+    return { kind: "failed" };
+  }
+
+  /**
+   * The server's own message for a 409 the user must act on, or null for any
+   * other answer. Only `no_connection` and `reconnect_required` stop the sync;
+   * a bare `conflict` still leaves the feed worth draining.
+   */
+  private async readTriggerRefusal(response: Response): Promise<string | null> {
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return null;
+    }
+    const parsed = errorEnvelopeSchema.safeParse(body);
+    if (!parsed.success) return null;
+    const { code, message } = parsed.data.error;
+    return code === "no_connection" || code === "reconnect_required" ? message : null;
+  }
+
+  /**
+   * Re-drains the feed while a manual sync waits for the OneDrive walk to land.
+   * Stops as soon as a re-drain stages a file or fails; null means the wait was
+   * aborted by `onunload()`, so nothing more may be written or reported.
+   */
+  private async recheckFilesFeed(
+    profileId: string,
+    firstDrain: FeedDrain,
+    signal: AbortSignal,
+  ): Promise<FeedDrain | null> {
+    let drain = firstDrain;
+    for (let attempt = 0; attempt < SYNC_RECHECK_ATTEMPTS; attempt += 1) {
+      if (!(await waitForDelay(SYNC_RECHECK_DELAY_MS, signal))) return null;
+      drain = await this.drainFilesFeed(profileId);
+      if (!drain.ok || drain.synced > 0) return drain;
+    }
+    return drain;
   }
 
   /** The profile whose feed cursor and files feed paging are used; falls back to "default". */
@@ -374,6 +583,7 @@ export class PetroglyphPlugin extends Plugin {
   private readonly _log = new PluginLog({ sink: () => appLogSink(this.app) });
   private _data: PluginData = { ...DEFAULT_DATA };
   private _refreshTimeoutId: number | null = null;
+  private _syncAbort: AbortController | null = null;
   private _statusPollIntervalId: number | null = null;
   private _syncPollIntervalId: number | null = null;
   private _logFlushIntervalId: number | null = null;
@@ -574,6 +784,8 @@ export class PetroglyphPlugin extends Plugin {
   }
 
   override onunload(): void {
+    this._syncAbort?.abort();
+    this._syncAbort = null;
     if (this._refreshTimeoutId !== null) {
       window.clearTimeout(this._refreshTimeoutId);
       this._refreshTimeoutId = null;
