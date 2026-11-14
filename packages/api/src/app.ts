@@ -1,3 +1,4 @@
+import { UNAUTHENTICATED_ROUTES } from "@petroglyph/contracts";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -5,15 +6,6 @@ import { authMiddleware, type AppVariables } from "./auth-middleware.js";
 import { onedriveMiddleware } from "./onedrive-middleware.js";
 import { createHandlers, registerRoutes } from "./routes.js";
 import { createSyncTriggerDeps, type SyncTriggerDeps } from "./sync-trigger.js";
-
-const EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
-  { method: "GET", path: "/health" },
-  { method: "GET", path: "/auth/url" },
-  { method: "GET", path: "/auth/callback" },
-  { method: "POST", path: "/auth/refresh" },
-  { method: "POST", path: "/onedrive/lifecycle" },
-  { method: "GET", path: "/onedrive/connect" },
-];
 
 /**
  * Builds the route graph. Sync Now's collaborators are a parameter so a test
@@ -39,7 +31,9 @@ export function createApp(
   );
 
   app.use("*", (c, next) => {
-    const isExempt = EXEMPT_ROUTES.some(
+    // The routes listed in `UNAUTHENTICATED_ROUTES` are the ones the registry
+    // leaves without a declared 401, so the skip and the spec are one fact.
+    const isExempt = UNAUTHENTICATED_ROUTES.some(
       (route) => route.method === c.req.method && route.path === c.req.path,
     );
     if (isExempt) return next();

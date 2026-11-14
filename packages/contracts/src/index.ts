@@ -23,6 +23,12 @@ export {
   type DeltaTriggerSend,
 } from "./delta-trigger.js";
 export { defineRegistry, operationKey } from "./registry.js";
+export {
+  isUnauthenticated,
+  UNAUTHENTICATED_ROUTES,
+  withUnauthorized,
+  type UnauthenticatedRoute,
+} from "./authentication.js";
 export { operationList, operations, type OperationId } from "./operations/index.js";
 export {
   collectRegistrySurface,
