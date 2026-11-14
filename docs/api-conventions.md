@@ -58,6 +58,41 @@ of `getProfile`, `deleteProfile`, `getFile` and `getSyncJob` are still
 unvalidated, and `/auth/url` and `/onedrive/auth-url` still hand-parse their
 query — the generated spec omits those parameters to match.
 
+## Responses are validated from the contract
+
+Each operation declares the bodies it answers with in `responses`, keyed by HTTP
+status. `defineEndpoint` holds the handler's response to the schema declared for
+that status, after the handler ran. All 21 operations declare `responses` today.
+Only a status that writes a body is declared: a 302 redirect and a delete's 204
+carry none, so a schema for them would describe something the handler never
+writes.
+
+One switch decides what a body that violates its schema is allowed to do:
+`responseValidationMode()`, in
+`packages/contracts/src/response-validation.ts`.
+
+- `log` — a deployed runtime. The mismatch is logged and the handler's response
+  reaches the caller untouched.
+- `report` — tests, and every environment that is not a deployed runtime. The
+  route answers `500` with `code: "response_contract_mismatch"` and the zod
+  issues as `details`, so the bug fails the run that caused it.
+
+A deployed runtime is `NODE_ENV === "production"`, or a Lambda runtime.
+`packages/infra/lambda_api.tf` passes only resource names, so the deployed API
+function sets no `NODE_ENV`; `AWS_LAMBDA_FUNCTION_NAME` is the signal that
+actually holds in production. A preview or staging function therefore logs as
+well, and `pnpm test` is the only place a mismatch is reported.
+
+**A contract breach must never turn a working request into a 500 for a user.**
+That is the whole reason for the switch. The body is already what the caller
+asked for and only its schema is wrong, so the report belongs in the run that
+introduced it. `response_contract_mismatch` is absent from the table below
+because it never reaches a client.
+
+A new operation must declare `responses`. The registry does not require it, so an
+operation that omits it skips response validation and appears in the generated
+spec with no response schema.
+
 ## Errors are structured
 
 ```json
