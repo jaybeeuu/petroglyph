@@ -224,7 +224,7 @@ pnpm --filter @petroglyph/plugin package
 
 This writes `packages/plugin/release/`, holding `main.js`, `manifest.json` and `styles.css`, with `obsidian` left external. The folder is gitignored. `packages/plugin/release/` is the staged folder, not `dist/`: `pnpm build` and `pnpm dev` write `dist/`, so a development build cannot be mistaken for a release.
 
-The plugin version lives only in `packages/plugin/manifest.json`. The package copies that file verbatim into the staged folder, and `packages/plugin/package.json` has no `version` field, so the two cannot disagree. Bump `manifest.json` to release a new version.
+`packages/plugin/manifest.json` is the authority for the plugin version. The package copies that file verbatim into the staged folder, and `packages/plugin/package.json` deliberately has no `version` field — adding one back would reintroduce the drift the copy avoids. Bump `manifest.json` to release a new version.
 
 **2. Copy the staged folder into a vault.**
 
@@ -237,6 +237,8 @@ Pass the vault path as the only argument. The script refuses to run without one,
 **3. Reload Obsidian.**
 
 Run **Reload app without saving** from the command palette, or restart Obsidian. Obsidian does not load the new build until it reloads.
+
+On a vault that has never loaded the plugin, turn off **Restricted mode** and enable **Petroglyph** under **Settings → Community plugins**. A reload alone does not enable it.
 
 ## Troubleshooting
 
