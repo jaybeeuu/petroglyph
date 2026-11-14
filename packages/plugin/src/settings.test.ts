@@ -215,8 +215,18 @@ describe("PetroglyphSettingTab Profiles section", () => {
     plugin._data = {
       ...plugin.data,
       profiles: [
-        { id: "p1", name: "Profile 1", sourceFolderPath: "/src", destinationVaultPath: "/dst" },
-        { id: "p2", name: "Profile 2", sourceFolderPath: "/src2", destinationVaultPath: "/dst2" },
+        {
+          profileId: "p1",
+          name: "Profile 1",
+          sourceFolderPath: "/src",
+          destinationVaultPath: "/dst",
+        },
+        {
+          profileId: "p2",
+          name: "Profile 2",
+          sourceFolderPath: "/src2",
+          destinationVaultPath: "/dst2",
+        },
       ],
     };
     const { PetroglyphSettingTab } = await import("./settings.js");
@@ -231,7 +241,12 @@ describe("PetroglyphSettingTab Profiles section", () => {
     plugin._data = {
       ...plugin.data,
       profiles: [
-        { id: "p1", name: "Profile 1", sourceFolderPath: "/src", destinationVaultPath: "/dst" },
+        {
+          profileId: "p1",
+          name: "Profile 1",
+          sourceFolderPath: "/src",
+          destinationVaultPath: "/dst",
+        },
       ],
     };
     plugin.setActiveProfile = vi.fn().mockResolvedValue(undefined);

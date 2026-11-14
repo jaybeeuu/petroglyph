@@ -351,14 +351,18 @@ export class PetroglyphPlugin extends Plugin {
     return drain;
   }
 
-  /** The profile whose feed cursor and files feed paging are used; falls back to "default". */
+  /**
+   * The profile whose feed cursor and files feed paging are used; falls back to
+   * "default" when no profile is active. An empty id is as absent as a missing
+   * one, so a stored "" can never pin the drain to a profile that does not exist.
+   */
   private resolveProfileId(): string {
-    return this._data.activeProfileId ?? DEFAULT_PROFILE_ID;
+    return this._data.activeProfileId || DEFAULT_PROFILE_ID;
   }
 
   /** The loaded profile a feed is scoped to, if its data has been fetched yet. */
   private profileFor(profileId: string): SyncProfile | undefined {
-    return this._data.profiles?.find((profile) => profile.id === profileId);
+    return this._data.profiles?.find((profile) => profile.profileId === profileId);
   }
 
   /**
@@ -951,7 +955,7 @@ export class PetroglyphPlugin extends Plugin {
       if (!Array.isArray(body)) return;
       const profiles = body.filter(isRecord).map(
         (p): SyncProfile => ({
-          id: typeof p["id"] === "string" ? p["id"] : "",
+          profileId: typeof p["profileId"] === "string" ? p["profileId"] : "",
           name: typeof p["name"] === "string" ? p["name"] : "",
           sourceFolderPath: typeof p["sourceFolderPath"] === "string" ? p["sourceFolderPath"] : "",
           destinationVaultPath:
@@ -961,7 +965,7 @@ export class PetroglyphPlugin extends Plugin {
       );
       const activeFromApi = profiles.find((p) => p.active);
       const activeProfileId =
-        activeFromApi !== undefined ? activeFromApi.id : this._data.activeProfileId;
+        activeFromApi !== undefined ? activeFromApi.profileId : this._data.activeProfileId;
       this._data = {
         ...this._data,
         profiles,
@@ -970,7 +974,7 @@ export class PetroglyphPlugin extends Plugin {
 
       // Clean up cursors whose profile IDs no longer exist
       if (this._data.feedCursors !== undefined) {
-        const profileIds = new Set(profiles.map((p) => p.id));
+        const profileIds = new Set(profiles.map((p) => p.profileId));
         const cleanedCursors: { [key: string]: string } = {};
         for (const [key, val] of Object.entries(this._data.feedCursors)) {
           if (profileIds.has(key)) {
@@ -1003,7 +1007,7 @@ export class PetroglyphPlugin extends Plugin {
       }
       const profiles = (this._data.profiles ?? []).map((p) => ({
         ...p,
-        active: p.id === id,
+        active: p.profileId === id,
       }));
       this._data = { ...this._data, activeProfileId: id, profiles };
       await this.savePluginData();

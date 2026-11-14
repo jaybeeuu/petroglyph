@@ -1,5 +1,5 @@
 export interface SyncProfile {
-  id: string;
+  profileId: string;
   name: string;
   sourceFolderPath: string;
   destinationVaultPath: string;
