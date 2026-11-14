@@ -2875,4 +2875,50 @@ describe("version reconciliation", () => {
     expect(downloads).toHaveLength(1);
     expect(vault.adapter.writeBinary).not.toHaveBeenCalled();
   });
+
+  it("forgets the active profile's cursor and versions on Reset Plugin State", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p2",
+      feedCursors: { p1: "after-item-1", p2: "after-item-1" },
+      feedEtags: {
+        p1: { "item-1": OLD_VERSION },
+        p2: { "item-1": OLD_VERSION },
+      },
+    });
+
+    await plugin.resetPluginState();
+
+    expect(plugin.data.feedCursors?.["p2"]).toBeUndefined();
+    expect(plugin.data.feedEtags?.["p2"]).toBeUndefined();
+    expect(plugin.data.feedEtags?.["p1"]).toEqual({ "item-1": OLD_VERSION });
+  });
+
+  it("re-compares bytes for a non-default profile on the drain after Reset Plugin State", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p2",
+      feedEtags: { p2: { "item-1": OLD_VERSION } },
+    });
+    await plugin.resetPluginState();
+
+    const vault = makeVaultStub();
+    vault.adapter.readBinary.mockResolvedValue(OLD_BYTES.buffer);
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    const downloads: string[] = [];
+    global.fetch = feedThenBytes({
+      files: [makeFeedEntry({ eTag: OLD_VERSION })],
+      bytes: OLD_BYTES,
+      downloads,
+    });
+
+    await plugin.performSync();
+
+    expect(downloads).toHaveLength(1);
+    expect(vault.adapter.writeBinary).not.toHaveBeenCalled();
+    expect(plugin.data.feedEtags?.["p2"]?.["item-1"]).toBe(OLD_VERSION);
+  });
 });

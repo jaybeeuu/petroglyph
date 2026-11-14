@@ -117,4 +117,21 @@ describe("PetroglyphPlugin manual sync/reset commands", () => {
     expect(plugin.savePluginData).toHaveBeenCalled();
     expect(Notice).toHaveBeenCalledWith("Full reset complete");
   });
+
+  it("fullReset clears the active profile's cursor and versions", async () => {
+    const plugin = await makePluginWithMocks({
+      jwt: "jwt-token",
+      activeProfileId: "p2",
+      feedCursors: { p2: "tok" },
+      feedEtags: { p2: { "item-1": '"{00000000-0000-0000-0000-000000000001},21"' } },
+    });
+    global.fetch = vi.fn(() =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve({ resetToken: true }) }),
+    ) as unknown as typeof fetch;
+
+    await plugin.fullReset();
+
+    expect(plugin["_data"].feedCursors?.["p2"]).toBeUndefined();
+    expect(plugin["_data"].feedEtags?.["p2"]).toBeUndefined();
+  });
 });

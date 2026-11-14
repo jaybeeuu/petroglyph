@@ -412,14 +412,17 @@ export class PetroglyphPlugin extends Plugin {
    * Reset plugin state: forget the feed cursor AND the recorded versions for the
    * active profile only, so the next sync re-enumerates the feed from the head
    * and rewrites whatever the bytes say changed. Keeping the versions would make
-   * the reset skip every rewrite it exists to cause.
+   * the reset skip every rewrite it exists to cause. The profile comes from the
+   * same resolver every drain writes under, so a user whose active profile is not
+   * "default" is reset too.
    */
   async resetPluginState(): Promise<void> {
+    const profileId = this.resolveProfileId();
     const hasRecordedState =
-      this._data.feedCursors?.[DEFAULT_PROFILE_ID] !== undefined ||
-      Object.keys(this._data.feedEtags?.[DEFAULT_PROFILE_ID] ?? {}).length > 0;
+      this._data.feedCursors?.[profileId] !== undefined ||
+      Object.keys(this._data.feedEtags?.[profileId] ?? {}).length > 0;
     if (hasRecordedState) {
-      await this.saveFeedState(DEFAULT_PROFILE_ID, { etags: {} });
+      await this.saveFeedState(profileId, { etags: {} });
     }
     new Notice("Plugin state reset: local sync token cleared");
   }
@@ -452,7 +455,11 @@ export class PetroglyphPlugin extends Plugin {
   }
 
   /**
-   * Full reset: POST /sync/reset {scope: 'full'}; clear local token if resetToken in response.
+   * Full reset: POST /sync/reset {scope: 'full'} and, when the response confirms
+   * the server token was dropped, forget the active profile's cursor AND recorded
+   * versions, so the next sync re-enumerates and re-compares every file. The
+   * server resets one profile, so the local clear covers the same one: the
+   * profile every drain writes under, resolved by {@link resolveProfileId}.
    */
   async fullReset(): Promise<void> {
     if (this._data.jwt === undefined) {
@@ -474,7 +481,7 @@ export class PetroglyphPlugin extends Plugin {
       }
       const body: unknown = await resp.json();
       if (isRecord(body) && body["resetToken"] === true) {
-        await this.saveFeedState(DEFAULT_PROFILE_ID, { etags: {} });
+        await this.saveFeedState(this.resolveProfileId(), { etags: {} });
       }
       new Notice("Full reset complete");
     } catch {
