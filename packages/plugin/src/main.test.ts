@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import type { App, PluginManifest } from "obsidian";
 import type { FeedEntry } from "./feed.js";
-import { SYNC_RECHECK_DELAY_MS } from "./main.js";
 import type { PetroglyphPlugin } from "./main.js";
 
 // Hoisted so the `obsidian` mock factory can use it: importing `main.js` for its
@@ -1258,10 +1257,6 @@ describe("syncNow", () => {
   });
 
   it("spaces its rechecks 2500ms apart", async () => {
-    // The spacing is part of the acceptance spec, so its value is pinned here;
-    // the clock steps below read the constant, which only proves the wait uses it.
-    expect(SYNC_RECHECK_DELAY_MS).toBe(2500);
-
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
     const recorder = stubSyncFetch(queuedTrigger(), () =>
       Promise.resolve(jsonResponse(emptyFeed())),
@@ -1271,7 +1266,9 @@ describe("syncNow", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(recorder.files).toHaveLength(1);
 
-    await vi.advanceTimersByTimeAsync(SYNC_RECHECK_DELAY_MS - 1);
+    // Step by literals, not the exported constant: the clock would otherwise
+    // read whatever the constant holds and never see a changed delay.
+    await vi.advanceTimersByTimeAsync(2499);
     expect(recorder.files).toHaveLength(1);
 
     await vi.advanceTimersByTimeAsync(1);
@@ -1346,6 +1343,64 @@ describe("syncNow", () => {
     expect(Notice).not.toHaveBeenCalled();
   });
 
+  it("writes the recheck's files but reports nothing when the plugin unloads during that write", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const vault = makeVaultStub();
+    // The unload lands after the drain reached the file, so the write lands but
+    // the report must not.
+    vault.adapter.writeBinary = vi.fn(() => {
+      plugin.onunload();
+      return Promise.resolve();
+    });
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    let drains = 0;
+    stubSyncFetch(queuedTrigger(), (url) => {
+      if (!url.includes("/files")) return Promise.resolve(bytesResponse());
+      drains += 1;
+      return Promise.resolve(
+        jsonResponse(
+          drains === 1
+            ? emptyFeed()
+            : { files: [makeFeedEntry({ itemId: "item-1", name: "one.pdf" })], nextToken: null },
+        ),
+      );
+    });
+
+    const sync = plugin.syncNow();
+    await vi.advanceTimersByTimeAsync(SYNC_WAIT_CAP_MS);
+    await sync;
+
+    expect(vault.adapter.writeBinary).toHaveBeenCalledWith(
+      "handwritten/one.pdf",
+      expect.any(Uint8Array),
+    );
+    expect(Notice).not.toHaveBeenCalled();
+  });
+
+  it("reports nothing when the plugin unloads during the log flush", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    // The drain has finished by the time the log reaches the adapter, so this is
+    // the last moment an unload can arrive before the notice.
+    const logAdapter = {
+      read: () => Promise.resolve(""),
+      rename: () => Promise.resolve(),
+      append: () => {
+        plugin.onunload();
+        return Promise.resolve();
+      },
+    };
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault: { adapter: logAdapter } };
+    stubSyncFetch(queuedTrigger(), () => Promise.resolve(jsonResponse(emptyFeed())));
+
+    const sync = plugin.syncNow();
+    await vi.advanceTimersByTimeAsync(SYNC_WAIT_CAP_MS);
+    await sync;
+
+    expect(Notice).not.toHaveBeenCalled();
+  });
+
   it("ignores a second click while the first sync is still waiting", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
     const vault = makeVaultStub();
@@ -1414,8 +1469,47 @@ describe("syncNow", () => {
 
     await runSync(plugin);
 
-    expect(Notice).toHaveBeenCalledWith("Sync request failed - checking for files");
+    // The failure is logged, not notified: the drain's outcome is the report.
+    expect(Notice).toHaveBeenCalledTimes(1);
+    expect(Notice).toHaveBeenCalledWith(
+      "Sync request failed - new files will arrive on the next poll",
+    );
     expect(files).toHaveLength(3);
+  });
+
+  it("shows one notice when the trigger answers a 409 the plugin cannot act on", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const recorder = stubSyncFetch(
+      statusResponse(409, { error: { code: "conflict", message: "The walk is already running." } }),
+      () => Promise.resolve(jsonResponse(emptyFeed())),
+    );
+
+    await runSync(plugin);
+
+    expect(Notice).toHaveBeenCalledTimes(1);
+    expect(Notice).toHaveBeenCalledWith(
+      "Sync request failed - new files will arrive on the next poll",
+    );
+    // A bare conflict leaves the feed worth draining.
+    expect(recorder.files).toHaveLength(3);
+  });
+
+  it("frees the manual-sync slot when the drain throws", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    plugin.saveData = vi.fn(() => Promise.reject(new Error("disk full")));
+    const recorder = stubSyncFetch(queuedTrigger(), () =>
+      Promise.resolve(jsonResponse(emptyFeed())),
+    );
+
+    await expect(plugin.syncNow()).rejects.toThrow("disk full");
+    const drainedBeforeThrow = recorder.files.length;
+
+    plugin.saveData = vi.fn(() => Promise.resolve());
+    await runSync(plugin);
+
+    // A second click still drains, so the thrown sync did not keep the slot.
+    expect(recorder.files.length).toBeGreaterThan(drainedBeforeThrow);
+    expect(Notice).toHaveBeenCalledTimes(1);
   });
 
   it("does not reach the API when OneDrive is not connected", async () => {

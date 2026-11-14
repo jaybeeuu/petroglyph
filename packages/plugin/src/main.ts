@@ -48,6 +48,18 @@ export type FeedDrain = { synced: number; failed: number } & (
 );
 
 /**
+ * What POST /onedrive/sync-trigger means for the sync. "failed" is a request the
+ * plugin could not complete or could not read; the drain still runs because the
+ * server may have walked OneDrive anyway. "refused" carries the server's own
+ * message and stops the sync. "stop" means the request was never made.
+ */
+type TriggerOutcome =
+  | { kind: "continue" }
+  | { kind: "failed" }
+  | { kind: "stop" }
+  | { kind: "refused"; message: string };
+
+/**
  * Pages one drain may request before giving up. A feed whose cursor stops
  * advancing would otherwise hang the plugin forever, every poll interval.
  */
@@ -68,11 +80,11 @@ export const SYNC_RECHECK_DELAY_MS = 2500;
  */
 export const SYNC_RECHECK_ATTEMPTS = 2;
 
-/** Shown when the trigger answers something the plugin cannot read. */
-const TRIGGER_FAILED_NOTICE = "Sync request failed - checking for files";
-
 /** Shown when the trigger was accepted but no file arrived before the cap. */
 const SYNC_REQUESTED_NOTICE = "Sync requested - new files will arrive on the next poll";
+
+/** Shown instead when the trigger failed, so the claim of a request stays true. */
+const SYNC_REQUEST_FAILED_NOTICE = "Sync request failed - new files will arrive on the next poll";
 
 /** The structured error envelope from `docs/api-conventions.md`. */
 const errorEnvelopeSchema = z.object({
@@ -203,42 +215,48 @@ export class PetroglyphPlugin extends Plugin {
     const controller = new AbortController();
     this._syncAbort = controller;
 
+    let notice: string | null;
+    try {
+      notice = await this.runManualSync(controller);
+      if (notice === null) return;
+      await this._log.flush();
+      // The single report gate. A drain already in flight still finishes its
+      // writes when the plugin unloads, and the flush above takes a moment, but
+      // no notice is shown once `onunload()` has aborted this sync.
+      if (syncAborted(controller)) return;
+      new Notice(notice);
+    } finally {
+      // The slot is held until the report is done, so `onunload()` can abort the
+      // controller at any point — and an unexpected rejection must not keep the
+      // slot either, or the button stays dead for the rest of the session.
+      this.endSync(controller);
+    }
+  }
+
+  /**
+   * Runs one manual sync and returns the single notice it earned, or null when
+   * it has nothing to report. Reporting is the caller's job, so an aborted sync
+   * can drop the notice for every path — the first drain, the rechecks, and a
+   * recheck that finished its writes.
+   */
+  private async runManualSync(controller: AbortController): Promise<string | null> {
     const trigger = await this.triggerSyncWalk();
     if (syncAborted(controller)) {
       // `onunload()` ran while the trigger was in flight: drain nothing.
-      this.endSync(controller);
-      return;
+      return null;
     }
-    if (trigger === "stop") {
-      this.endSync(controller);
-      await this._log.flush();
-      return;
-    }
+    if (trigger.kind === "refused") return trigger.message;
+    if (trigger.kind === "stop") return null;
 
     const profileId = this.resolveProfileId();
-    let drain: FeedDrain | null = await this.drainFilesFeed(profileId);
-    if (syncAborted(controller)) {
-      this.endSync(controller);
-      return;
-    }
+    let drain: FeedDrain = await this.drainFilesFeed(profileId);
+    if (syncAborted(controller)) return null;
     if (drain.ok && drain.synced === 0) {
-      drain = await this.recheckFilesFeed(profileId, drain, controller.signal);
+      const rechecked = await this.recheckFilesFeed(profileId, drain, controller.signal);
+      if (rechecked === null) return null;
+      drain = rechecked;
     }
-    this.endSync(controller);
-
-    // An aborted sync writes nothing and reports nothing: no log flush, no
-    // notice. Only the recheck wait resolves to null.
-    if (drain === null) return;
-    await this._log.flush();
-    if (drain.ok) {
-      new Notice(drain.synced === 0 ? SYNC_REQUESTED_NOTICE : syncCompleteNotice(drain.synced));
-      return;
-    }
-    if (drain.reason === "files") {
-      new Notice(fileFailureNotice(drain.synced, drain.failed));
-      return;
-    }
-    new Notice(FEED_FAILURE_NOTICES[drain.reason]);
+    return this.describeDrain(drain, trigger.kind === "failed");
   }
 
   /** Releases the manual-sync slot, unless `onunload()` already cleared it. */
@@ -247,13 +265,28 @@ export class PetroglyphPlugin extends Plugin {
   }
 
   /**
-   * POST /onedrive/sync-trigger asks the server to enqueue one OneDrive walk.
-   * "stop" means a notice was shown and the feed must not be drained; the
-   * trigger is only a bell, so every other answer falls through to the drain.
+   * The one notice a drain earns. `triggerFailed` only rewords the empty case:
+   * claiming the sync was requested would be false when the request failed.
    */
-  private async triggerSyncWalk(): Promise<"continue" | "stop"> {
+  private describeDrain(drain: FeedDrain, triggerFailed: boolean): string {
+    if (!drain.ok) {
+      return drain.reason === "files"
+        ? fileFailureNotice(drain.synced, drain.failed)
+        : FEED_FAILURE_NOTICES[drain.reason];
+    }
+    if (drain.synced > 0) return syncCompleteNotice(drain.synced);
+    return triggerFailed ? SYNC_REQUEST_FAILED_NOTICE : SYNC_REQUESTED_NOTICE;
+  }
+
+  /**
+   * POST /onedrive/sync-trigger asks the server to enqueue one OneDrive walk.
+   * The trigger is only a bell: "failed" means the request was not completed or
+   * not understood, and the feed is still worth draining. "refused" carries the
+   * server's own message and stops the sync; "stop" means it was not attempted.
+   */
+  private async triggerSyncWalk(): Promise<TriggerOutcome> {
     const jwt = this._data.jwt;
-    if (jwt === undefined) return "stop";
+    if (jwt === undefined) return { kind: "stop" };
 
     const url = `${this._data.apiBaseUrl}/onedrive/sync-trigger`;
     let response: Response;
@@ -264,27 +297,21 @@ export class PetroglyphPlugin extends Plugin {
       });
     } catch (error) {
       this._log.warn("trigger", "request failed", { url, error: describeError(error) });
-      new Notice(TRIGGER_FAILED_NOTICE);
-      return "continue";
+      return { kind: "failed" };
     }
 
     this._log.info("trigger", "requested", { url, status: response.status });
-    if (response.status === 202) return "continue";
+    if (response.status === 202) return { kind: "continue" };
     if (response.status === 401) {
       // Keyed on the status: the shared JWT middleware still answers a flat
       // `{ "error": "UNAUTHORIZED" }` with no `code` to branch on.
-      new Notice("Not connected. Cannot sync.");
-      return "stop";
+      return { kind: "refused", message: "Not connected. Cannot sync." };
     }
     if (response.status === 409) {
       const refusal = await this.readTriggerRefusal(response);
-      if (refusal !== null) {
-        new Notice(refusal);
-        return "stop";
-      }
+      if (refusal !== null) return { kind: "refused", message: refusal };
     }
-    new Notice(TRIGGER_FAILED_NOTICE);
-    return "continue";
+    return { kind: "failed" };
   }
 
   /**
