@@ -53,6 +53,12 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
           "dynamodb:UpdateItem",
           "dynamodb:DeleteItem",
           "dynamodb:Query",
+          # The profile path reset and the sync reset discard records 25 at a
+          # time, and a token-reuse sweep reads a user's refresh tokens with a
+          # filtered Scan. src/api-iam-policy.test.ts holds this list to the
+          # calls the api code sends.
+          "dynamodb:BatchWriteItem",
+          "dynamodb:Scan",
         ]
         Resource = [
           aws_dynamodb_table.users.arn,
@@ -80,10 +86,11 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
       {
         # A profile's source folder change discards the objects its staged
         # records name; the records are already gone by then, so a failure here
-        # leaves no reader behind and the lifecycle rule expires the rest.
+        # leaves no reader behind and the lifecycle rule expires the rest. The
+        # reset deletes them 1000 at a time, hence DeleteObjects.
         Sid      = "S3DeleteStagedObjects"
         Effect   = "Allow"
-        Action   = "s3:DeleteObject"
+        Action   = ["s3:DeleteObject", "s3:DeleteObjects"]
         Resource = "${local.staged_bucket_arn}/*"
       },
       {

@@ -43,7 +43,7 @@ resource "aws_lambda_function" "petroglyph_api" {
       DELTA_TRIGGER_QUEUE_URL         = aws_sqs_queue.delta_trigger.url
       # Declared because the profile path reset builds an S3 client for the
       # staged bucket; Lambda sets AWS_REGION itself, to the same value.
-      AWS_REGION                      = local.aws_region
+      AWS_REGION = local.aws_region
     }
   }
 
