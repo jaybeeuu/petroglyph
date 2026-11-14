@@ -47,6 +47,13 @@ function createMemIndexStore(options: { failOnItemId?: string } = {}): MemIndexS
       if (index >= 0) records.splice(index, 1);
       return Promise.resolve();
     },
+    removeMany(profileId, itemIds) {
+      for (const itemId of itemIds) {
+        const index = records.findIndex((r) => r.profileId === profileId && r.itemId === itemId);
+        if (index >= 0) records.splice(index, 1);
+      }
+      return Promise.resolve();
+    },
     listUnderPath(profileId, path) {
       return Promise.resolve(
         records.filter(
@@ -84,6 +91,10 @@ function createObjectStoreSpy(): { objectStore: StagedObjectStore; deletedKeys: 
       get: () => Promise.resolve(null),
       delete: (key) => {
         deletedKeys.push(key);
+        return Promise.resolve();
+      },
+      deleteMany: (keys) => {
+        deletedKeys.push(...keys);
         return Promise.resolve();
       },
       presignGet: () => Promise.resolve(""),

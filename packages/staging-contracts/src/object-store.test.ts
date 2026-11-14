@@ -24,6 +24,14 @@ interface GetCommandInput {
 
 type PutCall = [{ input: PutCommandInput }];
 type GetCall = [{ input: GetCommandInput }];
+type DeleteObjectsCall = [{ input: { Bucket: string; Delete: { Objects: { Key: string }[] } } }];
+
+/** The keys one `deleteMany` call asked S3 to delete. */
+function deleteObjects(send: ReturnType<typeof vi.fn>, index: number): { Key: string }[] {
+  const command = (send.mock.calls[index] as DeleteObjectsCall)[0];
+  expect(command.input.Bucket).toBe("petroglyph-staged-pdfs");
+  return command.input.Delete.Objects;
+}
 
 /** Narrow a store get result — get returns null for absent; callers expect present. */
 function requireStored(result: StagedObjectStoreGetResult | null): StagedObjectStoreGetResult {
@@ -139,6 +147,38 @@ describe("S3StagedObjectStore", () => {
       Bucket: "petroglyph-staged-pdfs",
       Key: "staging/v1/p1/a.pdf",
     });
+  });
+
+  it("deleteMany deletes in batches of 1000 keys, one request per batch", async () => {
+    const send = vi.fn().mockResolvedValue({});
+    const client = { send } as unknown as S3Client;
+    const store = new S3StagedObjectStore({
+      bucket: "petroglyph-staged-pdfs",
+      region: "eu-west-2",
+      client,
+    });
+
+    await store.deleteMany(
+      Array.from({ length: 1001 }, (_, index) => `staging/v1/p1/${index}.pdf`),
+    );
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(deleteObjects(send, 0)).toHaveLength(1000);
+    expect(deleteObjects(send, 1)).toEqual([{ Key: "staging/v1/p1/1000.pdf" }]);
+  });
+
+  it("deleteMany fails loudly when S3 refuses a key, rather than counting it as gone", async () => {
+    const send = vi.fn().mockResolvedValue({ Errors: [{ Key: "staging/v1/p1/a.pdf" }] });
+    const client = { send } as unknown as S3Client;
+    const store = new S3StagedObjectStore({
+      bucket: "petroglyph-staged-pdfs",
+      region: "eu-west-2",
+      client,
+    });
+
+    await expect(store.deleteMany(["staging/v1/p1/a.pdf"])).rejects.toThrow(
+      "S3 refused 1 staged object delete(s)",
+    );
   });
 
   it("presignGet returns a bucket-rooted presigned URL with an expiry and content-disposition override", async () => {

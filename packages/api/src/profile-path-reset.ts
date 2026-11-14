@@ -36,20 +36,44 @@ export interface ProfilePathResetDeps {
   stagedObjects: () => StagedObjectStore;
   clearChangeToken: (connection: ConnectionKey) => Promise<void>;
   enqueueDeltaTrigger: DeltaTriggerEnqueuer;
+  /**
+   * Records one invocation may discard; defaults to RESET_RECORD_BUDGET. The
+   * default is sized for the API lambda's 30 s timeout, and exists as a field
+   * so a test can prove the bound at a scale LocalStack can stage quickly.
+   */
+  recordBudget?: number;
 }
 
 /**
- * Discards one profile's staged state and asks the adapter to walk the drive
- * again from the beginning. A command: it reports only that it finished.
+ * Whether one attempt discarded everything. "incomplete" means the budget ran
+ * out with records still staged, so the caller must not report success: the
+ * marker it stored keeps the reset owed and a repeated request resumes it.
  */
-export type ProfilePathReset = (target: ProfilePathResetTarget) => Promise<void>;
+export type ProfilePathResetOutcome = "completed" | "incomplete";
 
 /**
- * Records deleted per page. A profile can hold a whole drive's worth of
- * staged files, so the reset reads, deletes and forgets one page at a time
- * instead of holding every key in memory.
+ * Discards one profile's staged state and asks the adapter to walk the drive
+ * again from the beginning. A command: it reports only whether its sweep
+ * finished.
+ */
+export type ProfilePathReset = (target: ProfilePathResetTarget) => Promise<ProfilePathResetOutcome>;
+
+/**
+ * Records read and deleted per page. A page is written back as 4
+ * BatchWriteItem calls (DynamoDB takes 25 at a time) plus 1 DeleteObjects call
+ * (S3 takes 1000), instead of 2 calls per record.
  */
 const RESET_PAGE_LIMIT = 100;
+
+/**
+ * Records one reset attempt may discard — 2000 records is 20 pages, so about
+ * 100 batched requests. At the ~30 ms a DynamoDB or S3 request costs from
+ * inside its own region that is roughly 3 s, a tenth of the API lambda's 30 s
+ * timeout. A larger profile does not overrun the lambda: the attempt stops at
+ * the budget, reports "incomplete", and the next request carries on from what
+ * is still staged.
+ */
+const RESET_RECORD_BUDGET = 2000;
 
 /**
  * The reset owed when a profile's `sourceFolderPath` changes. The feed scopes
@@ -63,39 +87,60 @@ const RESET_PAGE_LIMIT = 100;
  * 2. the staged objects those records name — after the records, so a failure
  *    between the two leaves objects with no reader rather than records whose
  *    object 404s from `GET /files`;
- * 3. the connection's change token — last, so a failure above leaves a token,
- *    a pending marker and a walk that is still correct;
+ * 3. the connection's change token — only once no staged record is left, so a
+ *    partial sweep never drops a token that the pending marker cannot re-earn;
  * 4. the bell — only once the state it re-enumerates is actually gone.
  *
- * Every step is idempotent, so a retry of the whole reset is safe. A partial
- * failure leaves the profile's marker set (the caller wrote it before calling
- * this), so the next walk re-enumerates from the beginning and the reset is
- * not half-forgotten; abandoned staged objects expire on the bucket's
- * `expire-staged-pdfs` lifecycle rule.
+ * Two properties make an attempt safe to repeat, and they are the reason a
+ * sweep that cannot finish is not a lost cause:
+ * - every delete is idempotent, so repeating one is a no-op;
+ * - the sweep re-reads the feed each attempt, so it resumes at whatever is
+ *   still staged rather than at a cursor the caller has to carry. Nothing is
+ *   counted down and nothing is assumed about how far a killed attempt got.
+ *
+ * A record budget bounds one attempt (see RESET_RECORD_BUDGET) and a remaining
+ * page makes it report "incomplete" instead of pretending to be done. The
+ * caller has already stored the profile's marker before calling this, so the
+ * obligation survives the failure of either side.
  */
 export function createProfilePathReset(deps: ProfilePathResetDeps): ProfilePathReset {
   return async (target) => {
     const index = deps.stagedIndex();
     const objects = deps.stagedObjects();
+    const budget = deps.recordBudget ?? RESET_RECORD_BUDGET;
 
+    let deleted = 0;
     let cursor: string | undefined;
-    do {
+    for (;;) {
+      const remaining = budget - deleted;
+      // One record past the budget is enough to know the sweep is not done, so
+      // the attempt never spends more than it is allowed and never guesses.
       const page = await index.queryFeed({
         profileId: target.profileId,
-        limit: RESET_PAGE_LIMIT,
+        limit: Math.min(RESET_PAGE_LIMIT, Math.max(remaining, 1)),
         ...(cursor === undefined ? {} : { cursor }),
       });
-      for (const record of page.records) {
-        await index.remove(record.profileId, record.itemId);
+      if (page.records.length === 0) {
+        break;
       }
-      for (const record of page.records) {
-        await objects.delete(record.s3Key);
+      if (remaining <= 0) {
+        return "incomplete";
+      }
+      await index.removeMany(
+        target.profileId,
+        page.records.map((record) => record.itemId),
+      );
+      await objects.deleteMany(page.records.map((record) => record.s3Key));
+      deleted += page.records.length;
+      if (page.nextCursor === undefined) {
+        break;
       }
       cursor = page.nextCursor;
-    } while (cursor !== undefined);
+    }
 
     await deps.clearChangeToken({ userId: target.userId, provider: ONEDRIVE_PROVIDER });
     await deps.enqueueDeltaTrigger({ userId: target.userId, provider: ONEDRIVE_PROVIDER });
+    return "completed";
   };
 }
 

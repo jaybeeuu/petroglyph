@@ -65,6 +65,13 @@ class MemoryIndex implements StagedIndexStore {
     return Promise.resolve();
   }
 
+  removeMany(profileId: string, itemIds: readonly string[]): Promise<void> {
+    for (const itemId of itemIds) {
+      this.records.delete(this.key(profileId, itemId));
+    }
+    return Promise.resolve();
+  }
+
   listUnderPath(profileId: string, path: string): Promise<StagedRecord[]> {
     return Promise.resolve(
       [...this.records.values()].filter(

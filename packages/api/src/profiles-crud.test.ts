@@ -72,7 +72,7 @@ describe("profiles CRUD handlers", () => {
     mockDeleteProfile.mockReset();
     mockDbSend.mockReset();
     mockResetProfile.mockReset();
-    mockResetProfile.mockResolvedValue(undefined);
+    mockResetProfile.mockResolvedValue("completed");
     resetKeyCache();
   });
 
@@ -204,6 +204,58 @@ describe("profiles CRUD handlers", () => {
         sourceFolderPath: "onyx/NoteAir5C/Notebooks",
         deltaResetPending: true,
       });
+    });
+
+    it("re-runs the reset when a request names the source folder and the previous reset never finished", async () => {
+      // The earlier attempt already stored the new path, so this request is
+      // "not a change". The marker is what says the sweep is still owed, and a
+      // repeated request is the only thing that can carry it on.
+      const existing = makeProfile({
+        sourceFolderPath: "onyx/NoteAir5C/Notebooks",
+        deltaResetPending: true,
+      });
+      mockGetProfile.mockResolvedValue(existing);
+      mockPutProfile.mockResolvedValue(undefined);
+
+      const response = await request("PUT", "/profiles/profile-1", {
+        sourceFolderPath: "onyx/NoteAir5C/Notebooks",
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockResetProfile).toHaveBeenCalledOnce();
+      expect(mockPutProfile.mock.calls[0]?.[2]).toMatchObject({ deltaResetPending: true });
+    });
+
+    it("does not re-run a finished reset when a rename repeats the stored source folder", async () => {
+      const existing = makeProfile({ sourceFolderPath: "onyx/NoteAir5C" });
+      mockGetProfile.mockResolvedValue(existing);
+      mockPutProfile.mockResolvedValue(undefined);
+
+      const response = await request("PUT", "/profiles/profile-1", {
+        name: "Renamed",
+        sourceFolderPath: "onyx/NoteAir5C",
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockResetProfile).not.toHaveBeenCalled();
+      expect(mockPutProfile.mock.calls[0]?.[2]).not.toHaveProperty("deltaResetPending");
+    });
+
+    it("answers 503 when the sweep was cut short by its budget, leaving the marker set", async () => {
+      const existing = makeProfile({ sourceFolderPath: "onyx/NoteAir5C" });
+      mockGetProfile.mockResolvedValue(existing);
+      mockPutProfile.mockResolvedValue(undefined);
+      mockResetProfile.mockResolvedValue("incomplete");
+
+      const response = await request("PUT", "/profiles/profile-1", {
+        sourceFolderPath: "onyx/NoteAir5C/Notebooks",
+      });
+
+      // Staged records remain, so 200 would be a lie; the stored marker is what
+      // makes the repeat finish the job.
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ error: { code: "reset_incomplete" } });
+      expect(mockPutProfile.mock.calls[0]?.[2]).toMatchObject({ deltaResetPending: true });
     });
 
     it("does not reset when the incoming path normalises to the stored one", async () => {

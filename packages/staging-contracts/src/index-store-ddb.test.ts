@@ -12,6 +12,21 @@ function commandCall(
   return (send.mock.calls[index] as [{ input: { [key: string]: unknown } }])[0];
 }
 
+/** The keys one `removeMany` call asked DynamoDB to delete. */
+function deleteKeys(
+  send: ReturnType<typeof vi.fn>,
+  index: number,
+): { profileId: string; itemId: string }[] {
+  const input = commandCall(send, index).input as {
+    RequestItems: {
+      [tableName: string]: { DeleteRequest: { Key: { profileId: string; itemId: string } } }[];
+    };
+  };
+  return (input.RequestItems["petroglyph-file-records"] ?? []).map(
+    (request) => request.DeleteRequest.Key,
+  );
+}
+
 function createRecord(overrides: Partial<StagedRecord> = {}): StagedRecord {
   return {
     profileId: "p1",
@@ -79,6 +94,54 @@ describe("DynamoDBStagedIndexStore", () => {
       TableName: "petroglyph-file-records",
       Key: { profileId: "p1", itemId: "item-1" },
     });
+  });
+
+  it("removes many records in batches of 25, rewriting a batch DynamoDB leaves unprocessed", async () => {
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce({
+        UnprocessedItems: {
+          "petroglyph-file-records": [
+            { DeleteRequest: { Key: { profileId: "p1", itemId: "item-25" } } },
+          ],
+        },
+      })
+      .mockResolvedValue({});
+    const store = new DynamoDBStagedIndexStore({
+      ...options,
+      client: { send } as unknown as DynamoDBDocumentClient,
+    });
+
+    await store.removeMany(
+      "p1",
+      Array.from({ length: 26 }, (_, index) => `item-${index + 1}`),
+    );
+
+    // 26 keys is two batches, plus one retry round for the batch DynamoDB refused.
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(deleteKeys(send, 0)).toHaveLength(25);
+    expect(deleteKeys(send, 0)[0]).toEqual({ profileId: "p1", itemId: "item-1" });
+    expect(deleteKeys(send, 1)).toEqual(deleteKeys(send, 0));
+    expect(deleteKeys(send, 2)).toEqual([{ profileId: "p1", itemId: "item-26" }]);
+  });
+
+  it("fails loudly when DynamoDB never accepts a batch, so a sweep never claims a delete that did not happen", async () => {
+    const unprocessed = {
+      UnprocessedItems: {
+        "petroglyph-file-records": [
+          { DeleteRequest: { Key: { profileId: "p1", itemId: "item-1" } } },
+        ],
+      },
+    };
+    const send = vi.fn().mockResolvedValue(unprocessed);
+    const store = new DynamoDBStagedIndexStore({
+      ...options,
+      client: { send } as unknown as DynamoDBDocumentClient,
+    });
+
+    await expect(store.removeMany("p1", ["item-1"])).rejects.toThrow(
+      "DynamoDB left 1 staged record delete(s) unprocessed after 3 rounds",
+    );
   });
 
   it("queries the feed ordered, cursor-paged via ExclusiveStartKey", async () => {

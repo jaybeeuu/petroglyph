@@ -16,6 +16,12 @@ export interface StagedIndexStore {
   get(profileId: string, itemId: string): Promise<StagedRecord | null>;
   remove(profileId: string, itemId: string): Promise<void>;
   /**
+   * Removes many records in as few requests as the backend allows, so a bulk
+   * sweep costs one request per batch instead of one per record. Idempotent
+   * like `remove`: a key that is already gone is not an error.
+   */
+  removeMany(profileId: string, itemIds: readonly string[]): Promise<void>;
+  /**
    * Records whose relativePath is exactly `path` or nested under it — the
    * folder-delete sweep's read set.
    */

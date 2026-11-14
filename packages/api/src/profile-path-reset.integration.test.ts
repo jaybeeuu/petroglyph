@@ -39,7 +39,7 @@ const BUCKET = "petroglyph-staged-pdfs";
 const PROFILES_TABLE = "petroglyph-sync-profiles-reset";
 const STAGED_RECORDS_TABLE = "petroglyph-staged-records-reset";
 const DELTA_STATES_TABLE = "petroglyph-delta-states-reset";
-const QUEUE_NAME = "petroglyph-delta-trigger-reset.fifo";
+const QUEUE_NAME = "petroglyph-delta-trigger-reset";
 
 const USER_ID = "user-42";
 const PROFILE_ID = "profile-1";
@@ -52,6 +52,8 @@ describe("PUT /profiles/:id against LocalStack staged records, S3 and FIFO SQS",
   let s3: S3Client;
   let sqs: SQSClient;
   let queueUrl: string;
+  let sqsEndpoint: string;
+  let queueOrdinal = 0;
   let privateKey: CryptoKey;
 
   beforeAll(async () => {
@@ -68,6 +70,7 @@ describe("PUT /profiles/:id against LocalStack staged records, S3 and FIFO SQS",
       .start();
 
     const endpoint = `http://localhost:${container.getMappedPort(4566)}`;
+    sqsEndpoint = endpoint;
     const rawDynamo = new DynamoDBClient({ region: REGION, endpoint, credentials: CREDENTIALS });
     await createTable(rawDynamo, PROFILES_TABLE, "userId", "profileId");
     await createTable(rawDynamo, STAGED_RECORDS_TABLE, "profileId", "itemId");
@@ -78,10 +81,6 @@ describe("PUT /profiles/:id against LocalStack staged records, S3 and FIFO SQS",
     await s3.send(new CreateBucketCommand({ Bucket: BUCKET }));
 
     sqs = new SQSClient({ region: REGION, endpoint, credentials: CREDENTIALS });
-    queueUrl = `${endpoint}/${ACCOUNT_ID}/${QUEUE_NAME}`;
-    await sqs.send(
-      new CreateQueueCommand({ QueueName: QUEUE_NAME, Attributes: { FifoQueue: "true" } }),
-    );
 
     const keyPair = await generateKeyPair("RS256");
     privateKey = keyPair.privateKey as CryptoKey;
@@ -103,9 +102,17 @@ describe("PUT /profiles/:id against LocalStack staged records, S3 and FIFO SQS",
   }, 30_000);
 
   beforeEach(async () => {
-    // One shared container and queue: every test starts from an empty queue so
-    // a leftover bell cannot stand in for the one it means to observe.
-    await drainBells();
+    // A fresh queue per test, and a fresh name for it: SQS drops a second
+    // message carrying a deduplication id it has already seen, and it remembers
+    // that id for five minutes after the message itself is gone. Every reset
+    // bells the same connection, so a merely drained queue would still swallow
+    // the bell of a test that ran after one that had already belled.
+    queueOrdinal += 1;
+    const queueName = `${QUEUE_NAME}-${queueOrdinal}.fifo`;
+    queueUrl = `${sqsEndpoint}/${ACCOUNT_ID}/${queueName}`;
+    await sqs.send(
+      new CreateQueueCommand({ QueueName: queueName, Attributes: { FifoQueue: "true" } }),
+    );
   }, 30_000);
 
   /**
@@ -305,7 +312,7 @@ describe("PUT /profiles/:id against LocalStack staged records, S3 and FIFO SQS",
     // A request that walked the drive inline could not answer 200 with no Graph
     // anywhere in this process; one bell is all the adapter is asked for.
     expect(await drainBells()).toEqual([{ userId: USER_ID, provider: "onedrive" }]);
-  });
+  }, 30_000);
 
   it("changing only the name resets nothing and bells nothing", async () => {
     await dynamo.send(new PutCommand({ TableName: PROFILES_TABLE, Item: makeProfile() }));
@@ -321,7 +328,7 @@ describe("PUT /profiles/:id against LocalStack staged records, S3 and FIFO SQS",
     expect(await storedProfile()).toMatchObject({ name: "Renamed" });
     expect((await storedProfile())?.deltaResetPending).toBeUndefined();
     expect(await drainBells()).toEqual([]);
-  });
+  }, 30_000);
 
   it("a failed staged-object delete leaves the records gone and the marker set, so the next walk still starts over", async () => {
     await dynamo.send(new PutCommand({ TableName: PROFILES_TABLE, Item: makeProfile() }));
@@ -331,6 +338,7 @@ describe("PUT /profiles/:id against LocalStack staged records, S3 and FIFO SQS",
       put: () => Promise.reject(new Error("unused")),
       get: () => Promise.resolve(null),
       delete: () => Promise.reject(new Error("s3 unavailable")),
+      deleteMany: () => Promise.reject(new Error("s3 unavailable")),
       presignGet: () => Promise.reject(new Error("unused")),
     };
 
@@ -351,7 +359,72 @@ describe("PUT /profiles/:id against LocalStack staged records, S3 and FIFO SQS",
     });
     expect(await storedChangeToken()).toMatchObject({ deltaLink: STORED_DELTA_LINK });
     expect(await drainBells()).toEqual([]);
-  });
+  }, 30_000);
+
+  it("a reset that failed is finished by resending the same request, because the marker keeps the reset owed", async () => {
+    await dynamo.send(new PutCommand({ TableName: PROFILES_TABLE, Item: makeProfile() }));
+    await stageFile("item-1");
+    await stageFile("item-2");
+    await storeChangeToken(STORED_DELTA_LINK);
+    // The first sweep fails with nothing deleted, which is the state a killed
+    // invocation leaves behind: the profile already holds the new path, so the
+    // repeat is "not a change" and only the stored marker can re-drive it.
+    const index = new DynamoDBStagedIndexStore({
+      client: dynamo,
+      tableName: STAGED_RECORDS_TABLE,
+    });
+    vi.spyOn(index, "removeMany").mockRejectedValueOnce(new Error("index unavailable"));
+    const deps = createResetDeps({ stagedIndex: () => index });
+
+    const failed = await putProfile({ sourceFolderPath: `${STORED_PATH}/Notebooks` }, deps);
+    expect(failed.status).toBe(500);
+    expect(await stagedItemIds()).toEqual(["item-1", "item-2"]);
+    expect(await storedProfile()).toMatchObject({
+      sourceFolderPath: `${STORED_PATH}/Notebooks`,
+      deltaResetPending: true,
+    });
+    expect(await drainBells()).toEqual([]);
+
+    const retried = await putProfile({ sourceFolderPath: `${STORED_PATH}/Notebooks` }, deps);
+
+    expect(retried.status).toBe(200);
+    expect(await stagedItemIds()).toEqual([]);
+    expect(await objectExists(`staging/v1/${PROFILE_ID}/${STORED_PATH}/item-1.pdf`)).toBe(false);
+    expect(await objectExists(`staging/v1/${PROFILE_ID}/${STORED_PATH}/item-2.pdf`)).toBe(false);
+    expect(await storedChangeToken()).toBeUndefined();
+    expect(await drainBells()).toEqual([{ userId: USER_ID, provider: "onedrive" }]);
+  }, 30_000);
+
+  it("discards a profile bigger than one attempt over two requests, and reports each attempt honestly", async () => {
+    await dynamo.send(new PutCommand({ TableName: PROFILES_TABLE, Item: makeProfile() }));
+    await stageFile("item-1");
+    await stageFile("item-2");
+    await stageFile("item-3");
+    await storeChangeToken(STORED_DELTA_LINK);
+    // Two records per attempt stands in for the 2000 the deployed reset takes:
+    // same loop, same bound, at a scale LocalStack can stage quickly.
+    const deps = createResetDeps({ recordBudget: 2 });
+
+    const first = await putProfile({ sourceFolderPath: `${STORED_PATH}/Notebooks` }, deps);
+
+    // A sweep that did not finish must not answer 200, and it must not drop the
+    // token or bell a walk that would then find half the old state still served.
+    expect(first.status).toBe(503);
+    expect(await stagedItemIds()).toEqual(["item-3"]);
+    expect(await objectExists(`staging/v1/${PROFILE_ID}/${STORED_PATH}/item-1.pdf`)).toBe(false);
+    expect(await objectExists(`staging/v1/${PROFILE_ID}/${STORED_PATH}/item-3.pdf`)).toBe(true);
+    expect(await storedProfile()).toMatchObject({ deltaResetPending: true });
+    expect(await storedChangeToken()).toMatchObject({ deltaLink: STORED_DELTA_LINK });
+    expect(await drainBells()).toEqual([]);
+
+    const second = await putProfile({ sourceFolderPath: `${STORED_PATH}/Notebooks` }, deps);
+
+    expect(second.status).toBe(200);
+    expect(await stagedItemIds()).toEqual([]);
+    expect(await objectExists(`staging/v1/${PROFILE_ID}/${STORED_PATH}/item-3.pdf`)).toBe(false);
+    expect(await storedChangeToken()).toBeUndefined();
+    expect(await drainBells()).toEqual([{ userId: USER_ID, provider: "onedrive" }]);
+  }, 30_000);
 
   it("reports 500 and bells nothing when the staged index cannot be read", async () => {
     await dynamo.send(new PutCommand({ TableName: PROFILES_TABLE, Item: makeProfile() }));
@@ -360,6 +433,7 @@ describe("PUT /profiles/:id against LocalStack staged records, S3 and FIFO SQS",
       upsert: () => Promise.resolve(),
       get: () => Promise.resolve(null),
       remove: () => Promise.resolve(),
+      removeMany: () => Promise.resolve(),
       listUnderPath: () => Promise.resolve([]),
       removeUnderPath: () => Promise.resolve(),
       queryFeed: () => Promise.reject(new Error("index unavailable")),
@@ -373,7 +447,7 @@ describe("PUT /profiles/:id against LocalStack staged records, S3 and FIFO SQS",
     expect(response.status).toBe(500);
     expect(await storedChangeToken()).toMatchObject({ deltaLink: STORED_DELTA_LINK });
     expect(await drainBells()).toEqual([]);
-  });
+  }, 30_000);
 });
 
 function createTable(

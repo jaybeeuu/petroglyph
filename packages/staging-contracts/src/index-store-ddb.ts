@@ -1,4 +1,5 @@
 import {
+  BatchWriteCommand,
   DeleteCommand,
   GetCommand,
   PutCommand,
@@ -8,6 +9,16 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { stagedRecordSchema, type StagedRecord } from "./record.js";
 import type { FeedPage, StagedIndexStore } from "./index-store.js";
+
+/** DynamoDB accepts at most 25 write requests in one BatchWrite command. */
+const BATCH_WRITE_LIMIT = 25;
+
+/**
+ * Rounds a batch gets before its unprocessed keys become an error. DynamoDB
+ * hands back the keys it did not write, and a bulk sweep is exactly where
+ * throttling happens, so one retry round is worth the code.
+ */
+const BATCH_WRITE_ROUNDS = 3;
 
 function extractLastEvaluatedItemId(
   lastEvaluatedKey: { [key: string]: unknown } | undefined,
@@ -71,6 +82,44 @@ export class DynamoDBStagedIndexStore implements StagedIndexStore {
         Key: { profileId, itemId },
       }),
     );
+  }
+
+  async removeMany(profileId: string, itemIds: readonly string[]): Promise<void> {
+    for (let start = 0; start < itemIds.length; start += BATCH_WRITE_LIMIT) {
+      await this.#removeBatch(profileId, itemIds.slice(start, start + BATCH_WRITE_LIMIT));
+    }
+  }
+
+  /**
+   * Deletes one batch, rewriting only the keys DynamoDB reports as unprocessed.
+   * A remainder after the last round is an error: the caller's sweep is
+   * repeatable, so failing loudly beats reporting a delete that did not happen.
+   */
+  async #removeBatch(profileId: string, itemIds: readonly string[]): Promise<void> {
+    const pending = itemIds;
+    for (let round = 1; pending.length > 0; round += 1) {
+      const result = await this.#client.send(
+        new BatchWriteCommand({
+          RequestItems: {
+            [this.#tableName]: pending.map((itemId) => ({
+              DeleteRequest: { Key: { profileId, itemId } },
+            })),
+          },
+        }),
+      );
+      const unprocessed = result.UnprocessedItems?.[this.#tableName] ?? [];
+      if (unprocessed.length === 0) {
+        return;
+      }
+      if (round === BATCH_WRITE_ROUNDS) {
+        throw new Error(
+          `DynamoDB left ${unprocessed.length} staged record delete(s) unprocessed after ${round} rounds`,
+        );
+      }
+      // The whole batch is retried, not just the keys DynamoDB echoed back: a
+      // delete of an already-deleted key is a no-op, so rewriting the batch is
+      // both safe and cheaper than reading the echoed request.
+    }
   }
 
   async listUnderPath(profileId: string, path: string): Promise<StagedRecord[]> {

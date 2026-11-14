@@ -495,12 +495,13 @@ describe("runDeltaSync — adapter driver", () => {
     expect(continuations).toEqual([]);
   });
 
-  it("takes on a pending reset before the first page: marker consumed, token dropped, walk starts over", async () => {
-    // The order matters. The marker and the token are both obligations to
-    // start over, so both are discharged before any page is requested: a walk
-    // that fails after this point still leaves an empty token, and the retry
-    // re-enumerates the drive instead of resuming a point that never saw the
-    // new folder.
+  it("takes on a pending reset before the first page: token dropped, then the marker consumed, then the walk starts over", async () => {
+    // The order matters, and the TOKEN goes first. The marker is the only thing
+    // that says a full re-enumerate is owed: consuming it before the token is
+    // gone would let a failed clear leave a walk that resumes the stale token
+    // with nothing left to make it start over, so the new folder would never be
+    // enumerated and no redelivery could tell. Both are discharged before any
+    // page is requested, so a walk that fails below still leaves an empty token.
     const stored = { deltaLink: SECOND_PAGE, updatedAt: "2026-09-01T00:00:00.000Z" };
     const sequence: string[] = [];
     const deltaStateStore: DeltaStateStore = {
@@ -538,7 +539,8 @@ describe("runDeltaSync — adapter driver", () => {
       requestContinuation: () => Promise.resolve(),
     });
 
-    // The walk reads the token AFTER the clear, so it finds nothing to resume from.
-    expect(sequence).toEqual(["consume", "clear", "read", "request " + INITIAL_URL]);
+    // The walk reads the token AFTER both are discharged, so it finds nothing
+    // to resume from — and the clear precedes the consume that could hide it.
+    expect(sequence).toEqual(["clear", "consume", "read", "request " + INITIAL_URL]);
   });
 });

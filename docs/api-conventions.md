@@ -79,6 +79,7 @@ Codes in use:
 | `invalid_request`    | 400    | body/query/params failed validation (with `details`) |
 | `not_found`          | 404    | no such resource, or not visible to this user        |
 | `conflict`           | 409    | the request contradicts current state                |
+| `reset_incomplete`   | 503    | a source-folder reset is unfinished; repeat it       |
 | `no_connection`      | 409    | no stored connection for this user/provider          |
 | `reconnect_required` | 409    | the grant is dead; a human must reconnect            |
 | `provider_error`     | 502    | the upstream provider failed                         |

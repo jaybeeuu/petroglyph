@@ -50,7 +50,8 @@ export interface RunDeltaSyncOptions {
   /**
    * A profile's source folder changed, so this connection owes a full
    * re-enumerate. `consume` clears the marker the write path set; the walk then
-   * drops the stored token and starts from the drive root.
+   * drops the stored token and starts from the drive root. Called only once the
+   * token is gone — see the call site.
    */
   pendingReset?: PendingReset;
   /**
@@ -110,9 +111,17 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
   // obligations are discharged BEFORE the first page, so a walk that fails
   // below leaves an empty token and the retry still enumerates the whole drive
   // instead of resuming from a point that never saw the new folder.
+  //
+  // Token first, marker second, and never the other way round. The marker is
+  // the only signal that a full re-enumerate is owed, so consuming it before
+  // the token is gone would let a failed clear leave a walk that resumes the
+  // stale token with nothing left to make it start over: the new folder would
+  // never be enumerated, and no redelivery could tell. With the token gone
+  // first, a failure at either step still leaves the marker set (nothing was
+  // consumed), and the redelivered bell walks from the drive root.
   if (options.pendingReset !== undefined) {
-    await options.pendingReset.consume();
     await options.deltaStateStore.clear(connection.userId, connection.provider);
+    await options.pendingReset.consume();
     log(
       `[adapter] pending profile reset for ${connection.userId}/${connection.provider}: ` +
         `full enumerate from the drive root`,

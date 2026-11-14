@@ -35,6 +35,13 @@ function memStore(): StagedIndexStore & { records: StagedRecord[] } {
       if (i >= 0) records.splice(i, 1);
       return Promise.resolve();
     },
+    removeMany(profileId, itemIds) {
+      for (const itemId of itemIds) {
+        const i = records.findIndex((r) => r.profileId === profileId && r.itemId === itemId);
+        if (i >= 0) records.splice(i, 1);
+      }
+      return Promise.resolve();
+    },
     listUnderPath(profileId, path) {
       return Promise.resolve(
         records.filter(
@@ -141,6 +148,10 @@ function objectStoreSpy(): { objectStore: StagedObjectStore; deleteCalls: string
   const objectStore = {
     delete: (key: string) => {
       deleteCalls.push(key);
+      return Promise.resolve();
+    },
+    deleteMany: (keys: readonly string[]) => {
+      deleteCalls.push(...keys);
       return Promise.resolve();
     },
   } as unknown as StagedObjectStore;

@@ -1,11 +1,15 @@
 import {
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   PutObjectCommand,
   S3Client,
   type ServiceOutputTypes,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+/** S3 accepts at most 1000 keys in one DeleteObjects request. */
+const DELETE_OBJECTS_LIMIT = 1000;
 
 export interface StagedObjectStorePutResult {
   versionId?: string;
@@ -36,6 +40,12 @@ export interface StagedObjectStore {
   get(key: string): Promise<StagedObjectStoreGetResult | null>;
   /** Idempotent: deleting a missing object is a no-op. */
   delete(key: string): Promise<void>;
+  /**
+   * Deletes many keys in as few requests as the backend allows, so a bulk
+   * sweep costs one request per batch instead of one per object. Idempotent
+   * like `delete`: a key that is already gone is not an error.
+   */
+  deleteMany(keys: readonly string[]): Promise<void>;
   presignGet(key: string, options?: StagedObjectStorePresignGetOptions): Promise<string>;
 }
 
@@ -109,6 +119,27 @@ export class S3StagedObjectStore implements StagedObjectStore {
         Key: key,
       }),
     );
+  }
+
+  async deleteMany(keys: readonly string[]): Promise<void> {
+    for (let start = 0; start < keys.length; start += DELETE_OBJECTS_LIMIT) {
+      const result = await this.#client.send(
+        new DeleteObjectsCommand({
+          Bucket: this.#bucket,
+          Delete: {
+            Objects: keys.slice(start, start + DELETE_OBJECTS_LIMIT).map((Key) => ({ Key })),
+            // Only failures are worth reading; a successful key needs no reply.
+            Quiet: true,
+          },
+        }),
+      );
+      const failed = result.Errors ?? [];
+      if (failed.length > 0) {
+        // A missing key is not an error here, so any entry is a real failure:
+        // report the count, never the keys.
+        throw new Error(`S3 refused ${failed.length} staged object delete(s)`);
+      }
+    }
   }
 
   async presignGet(
