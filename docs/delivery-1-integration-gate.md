@@ -2,6 +2,9 @@
 
 **Gate bead:** `petroglyph-j1gn.52` · **Assembled:** 2026-11-13 · **`main` at assembly:** `5738890`
 
+This is a point-in-time record. A link that still resolves proves the state on the assembly date,
+not the state now — re-run the checks before treating this as current proof.
+
 This record covers the machine-checkable half of the Delivery 1 gate: green CI on `main` for every
 delivered chunk, the four per-package LocalStack suites, the chunk-9 deploy run, and the boundary
 tests. The production run-through lives in `petroglyph-twiy`; the vault proof lives in
