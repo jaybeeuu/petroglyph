@@ -189,7 +189,7 @@ To force a sweep outside the schedule, invoke the function directly; to bell a s
 
 `POST /onedrive/sync-trigger` enqueues one delta bell for the caller's OneDrive connection and answers `202 { "status": "queued" }`. It is the third producer of the bell body, beside the sweep and the adapter's own page continuation, and it publishes the same body to the same queue. The API does no work itself: no Graph call, no token resolution, no job record. The adapter walks and the plugin keeps polling `GET /files`. Two 409s answer instead of a bell — `no_connection` when onboarding never stored a connection, `reconnect_required` when the grant is dead.
 
-The plugin's `syncNow()` today drains the feed and calls nothing on the server, so pressing Sync Now stages no new files until that call is wired in.
+The plugin's `syncNow()` calls this endpoint before it drains the feed, so a press asks for a walk and then reads `GET /files` a moment later. The press does not wait on the server: the plugin re-checks the feed twice, 2500 ms apart, stops early when a file arrives, and otherwise reports `Sync requested - new files will arrive on the next poll`. A trigger that fails, or a `409` that does not stop the sync, still falls through to the drain; a `401` and the two 409s above stop it. Aborting (plugin unload) cancels the wait, so nothing is written or reported afterwards.
 
 A press answers `202` even when SQS collapses the message, so read `202` as "a bell is enqueued", not "a second walk will start". The dedupe identity here is the connection alone (`<userId>:<provider>`), with no time bucket, so every press inside one five-minute window collapses into the first.
 
