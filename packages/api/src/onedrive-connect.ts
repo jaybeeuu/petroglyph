@@ -1,5 +1,6 @@
 import { markConnected, registerGraphSubscription } from "./onedrive-lifecycle.js";
 import { z } from "zod";
+import { ConditionalCheckFailedException } from "@aws-sdk/client-dynamodb";
 import { DeleteCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { defineEndpoint } from "@petroglyph/contracts/hono";
 import { bridgeOnedriveCallback, connectOnedrive } from "@petroglyph/contracts/operations";
@@ -138,38 +139,30 @@ async function storeTokensInDynamoDB(
   );
 }
 
-async function upsertSyncProfile(userId: string): Promise<void> {
-  const now = new Date().toISOString();
-  await docClient().send(
-    new UpdateCommand({
-      TableName: syncProfilesTable(),
-      Key: { userId, profileId: "default" },
-      UpdateExpression:
-        "SET createdAt = if_not_exists(createdAt, :now), " +
-        "updatedAt = :now, " +
-        "oneDriveConnected = :true, " +
-        "#name = :name, " +
-        "sourceFolderPath = :rootPath, " +
-        "destinationVaultPath = :defaultDest, " +
-        "#active = :true, " +
-        "initialSyncEnabled = :true, " +
-        "#enabled = :true, " +
-        "pollingIntervalMinutes = :interval",
-      ExpressionAttributeNames: {
-        "#name": "name",
-        "#active": "active",
-        "#enabled": "enabled",
-      },
-      ExpressionAttributeValues: {
-        ":now": now,
-        ":true": true,
-        ":name": "default",
-        ":rootPath": "/",
-        ":defaultDest": "handwritten",
-        ":interval": 5,
-      },
-    }),
-  );
+async function stampProfileConnected(userId: string): Promise<void> {
+  try {
+    await docClient().send(
+      new UpdateCommand({
+        TableName: syncProfilesTable(),
+        Key: { userId, profileId: "default" },
+        // Connect may stamp a profile the user already created, but it must not
+        // create one: the folder-to-vault mapping is the user's own action.
+        ConditionExpression: "attribute_exists(userId)",
+        UpdateExpression: "SET oneDriveConnected = :true, updatedAt = :now",
+        ExpressionAttributeValues: {
+          ":true": true,
+          ":now": new Date().toISOString(),
+        },
+      }),
+    );
+    console.info("[onedrive-connect] OneDrive profile marked connected", { userId });
+  } catch (err) {
+    if (err instanceof ConditionalCheckFailedException) {
+      console.info("[onedrive-connect] No OneDrive profile to mark connected", { userId });
+      return;
+    }
+    throw err;
+  }
 }
 
 export const bridgeOnedriveCallbackEndpoint = defineEndpoint(
@@ -267,8 +260,7 @@ export const connectOnedriveEndpoint = defineEndpoint(
     });
     console.info("[onedrive-connect] Seeded the connection token vault", { userId });
     await registerGraphSubscription(tokens.access_token, userId);
-    await upsertSyncProfile(userId);
-    console.info("[onedrive-connect] OneDrive profile updated", { userId });
+    await stampProfileConnected(userId);
     await markConnected(userId);
     console.info("[onedrive-connect] User record updated", { userId });
 

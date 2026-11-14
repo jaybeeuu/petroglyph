@@ -1039,6 +1039,7 @@ paths:
                     type: string
                     enum:
                       - connected
+                      - connected_no_profile
                       - disconnected
                       - never_connected
                       - reconnect_required

@@ -1,3 +1,4 @@
+import { ConditionalCheckFailedException } from "@aws-sdk/client-dynamodb";
 import { DeleteCommand, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -59,13 +60,31 @@ function makeMsTokenResponse(): object {
   };
 }
 
-function setupDynamoMock(stateItem: object | undefined): void {
+const SYNC_PROFILES_TABLE = "petroglyph-sync-profiles-test";
+
+function setupDynamoMock(
+  stateItem: object | undefined,
+  options: { profileExists?: boolean } = {},
+): void {
+  const { profileExists = false } = options;
   mockDbSend.mockImplementation((cmd: unknown) => {
     if (cmd instanceof GetCommand) {
       return Promise.resolve({ Item: stateItem });
     }
     if (cmd instanceof DeleteCommand) return Promise.resolve({});
-    if (cmd instanceof UpdateCommand) return Promise.resolve({});
+    if (cmd instanceof UpdateCommand) {
+      // The profile write is conditional, so the store refuses it when the
+      // item is absent. Connect must not fall back to creating one.
+      if (cmd.input.TableName === SYNC_PROFILES_TABLE && !profileExists) {
+        return Promise.reject(
+          new ConditionalCheckFailedException({
+            message: "The conditional request failed",
+            $metadata: {},
+          }),
+        );
+      }
+      return Promise.resolve({});
+    }
     return Promise.resolve({});
   });
 }
@@ -458,68 +477,63 @@ describe("POST /onedrive/connect", () => {
     expect(graphCall).toBeUndefined();
   });
 
-  // ── Behaviour 8: SyncProfile upserted in DynamoDB ───────────────────────
+  // ── Behaviour 8: an existing SyncProfile is stamped, never created ──────
 
-  it("upserts SyncProfile and clears reconnect_required in users table", async () => {
-    setupDynamoMock(makeStateItem());
+  it("mark an existing SyncProfile connected with a conditional update", async () => {
+    setupDynamoMock(makeStateItem(), { profileExists: true });
     setupFetchMock();
 
     await postConnect({ code: VALID_CODE, state: VALID_STATE });
 
-    const updateCalls = mockDbSend.mock.calls.filter(([cmd]) => cmd instanceof UpdateCommand);
-    expect(updateCalls).toHaveLength(3); // tokens + sync profile + markConnected
-
-    // token store
-    const [tokenCmd] = updateCalls[0] as [
-      { input: { TableName: string; Key: { tokenHash: string } } },
-    ];
-    expect(tokenCmd.input.TableName).toBe("petroglyph-refresh_tokens-test");
-
-    // sync profile
-    const [syncProfileCmd] = updateCalls[1] as [
+    const profileUpdates = mockDbSend.mock.calls.filter(
+      ([cmd]) => cmd instanceof UpdateCommand && cmd.input.TableName === SYNC_PROFILES_TABLE,
+    );
+    expect(profileUpdates).toHaveLength(1);
+    const [profileCmd] = profileUpdates[0] as [
       {
         input: {
-          TableName: string;
           Key: { userId: string; profileId: string };
           UpdateExpression: string;
+          ConditionExpression: string;
           ExpressionAttributeValues: { [key: string]: unknown };
         };
       },
     ];
-    expect(syncProfileCmd.input.TableName).toBe("petroglyph-sync-profiles-test");
-    expect(syncProfileCmd.input.Key.userId).toBe(USER_ID);
-    expect(syncProfileCmd.input.Key.profileId).toBe("default");
-    expect(syncProfileCmd.input.ExpressionAttributeValues[":true"]).toBe(true);
-    expect(typeof syncProfileCmd.input.ExpressionAttributeValues[":now"]).toBe("string");
+    expect(profileCmd.input.Key).toEqual({ userId: USER_ID, profileId: "default" });
+    expect(profileCmd.input.ConditionExpression).toContain("attribute_exists");
+    expect(profileCmd.input.UpdateExpression).toContain("oneDriveConnected");
+    expect(profileCmd.input.ExpressionAttributeValues[":true"]).toBe(true);
+    // Connect owns the connection flag only, never the mapping.
+    expect(profileCmd.input.UpdateExpression).not.toContain("sourceFolderPath");
+    expect(profileCmd.input.UpdateExpression).not.toContain("destinationVaultPath");
 
-    // all required sync-profile fields set with sensible defaults
-    expect(syncProfileCmd.input.ExpressionAttributeValues[":name"]).toBe("default");
-    expect(syncProfileCmd.input.ExpressionAttributeValues[":rootPath"]).toBe("/");
-    expect(syncProfileCmd.input.ExpressionAttributeValues[":defaultDest"]).toBe("handwritten");
-    expect(syncProfileCmd.input.ExpressionAttributeValues[":interval"]).toBe(5);
-    expect(syncProfileCmd.input.UpdateExpression).toContain("#name");
-    expect(syncProfileCmd.input.UpdateExpression).toContain("sourceFolderPath");
-    expect(syncProfileCmd.input.UpdateExpression).toContain("destinationVaultPath");
-    expect(syncProfileCmd.input.UpdateExpression).toContain("#active");
-    expect(syncProfileCmd.input.UpdateExpression).toContain("initialSyncEnabled");
-    expect(syncProfileCmd.input.UpdateExpression).toContain("#enabled");
-    expect(syncProfileCmd.input.UpdateExpression).toContain("pollingIntervalMinutes");
+    const userUpdate = mockDbSend.mock.calls.find(
+      ([cmd]) => cmd instanceof UpdateCommand && cmd.input.TableName === "petroglyph-users-test",
+    ) as [{ input: { ExpressionAttributeValues: { [key: string]: unknown } } }] | undefined;
+    expect(userUpdate?.[0].input.ExpressionAttributeValues[":status"]).toBe("connected");
+  });
 
-    // markConnected
-    const [userCmd] = updateCalls[2] as [
-      {
-        input: {
-          TableName: string;
-          Key: { userId: string };
-          UpdateExpression: string;
-          ExpressionAttributeValues: { [key: string]: unknown };
-        };
-      },
-    ];
-    expect(userCmd.input.TableName).toBe("petroglyph-users-test");
-    expect(userCmd.input.Key.userId).toBe(USER_ID);
-    expect(userCmd.input.UpdateExpression).toContain("oneDriveStatus");
-    expect(userCmd.input.ExpressionAttributeValues[":status"]).toBe("connected");
+  it("creates no SyncProfile for a user who has none", async () => {
+    setupDynamoMock(makeStateItem());
+    setupFetchMock();
+
+    const res = await postConnect({ code: VALID_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(200);
+    const profileWrites = mockDbSend.mock.calls.filter(([cmd]) => {
+      if (cmd instanceof PutCommand) return cmd.input.TableName === SYNC_PROFILES_TABLE;
+      if (cmd instanceof UpdateCommand) return cmd.input.TableName === SYNC_PROFILES_TABLE;
+      return false;
+    });
+    // A conditional update is allowed to be attempted and refused. A put, or an
+    // unconditional update, would create the whole-drive profile that started
+    // the re-ingest loop.
+    expect(profileWrites.every(([cmd]) => cmd instanceof UpdateCommand)).toBe(true);
+    for (const [cmd] of profileWrites) {
+      if (cmd instanceof UpdateCommand) {
+        expect(cmd.input.ConditionExpression).toContain("attribute_exists");
+      }
+    }
   });
 
   // ── Behaviour 9: returns 200 { status: 'connected' } ────────────────────
