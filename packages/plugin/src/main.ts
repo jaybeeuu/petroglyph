@@ -19,6 +19,7 @@ const DEFAULT_DATA: PluginData = {
   apiBaseUrl: "https://api.petroglyph.page",
   syncIntervalMinutes: 5,
   feedCursors: {},
+  feedEtags: {},
 };
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
@@ -81,6 +82,37 @@ function companionNote(entry: FeedEntry): string {
     "---",
     "",
   ].join("\n");
+}
+
+/**
+ * Records a version the vault now holds. An entry that carried no version records
+ * nothing, so that item is compared by its bytes on the next drain — an absent
+ * version must never be read back as "unchanged".
+ */
+function recordVersion(
+  seen: { [itemId: string]: string },
+  itemId: string,
+  eTag: string | undefined,
+): void {
+  if (eTag !== undefined) seen[itemId] = eTag;
+}
+
+/**
+ * The saved `{profileId: {itemId: eTag}}` map, keeping only string pairs. The
+ * state is local and hand-editable, so it is parsed rather than trusted.
+ */
+function parseFeedEtags(raw: unknown): { [profileId: string]: { [itemId: string]: string } } {
+  const etags: { [profileId: string]: { [itemId: string]: string } } = {};
+  if (!isRecord(raw)) return etags;
+  for (const [profileId, byItem] of Object.entries(raw)) {
+    if (!isRecord(byItem)) continue;
+    const items: { [itemId: string]: string } = {};
+    for (const [itemId, eTag] of Object.entries(byItem)) {
+      if (typeof eTag === "string" && eTag !== "") items[itemId] = eTag;
+    }
+    if (Object.keys(items).length > 0) etags[profileId] = items;
+  }
+  return etags;
 }
 
 function decodeJwtExpiry(jwt: string): number {
@@ -175,9 +207,25 @@ export class PetroglyphPlugin extends Plugin {
 
     const headers = { Authorization: `Bearer ${jwt}` };
     let cursor = this._data.feedCursors?.[profileId];
+    // A drain that starts at the head re-reads every item the profile holds, so
+    // what it sees is the whole served set: pruning the recorded versions to it
+    // bounds the map and drops items that were deleted. A drain resumed mid-feed
+    // only adds what it sees and keeps the rest.
+    let startedAtHead = cursor === undefined;
+    const recordedEtags = this.feedEtagsFor(profileId);
+    const seenEtags: { [itemId: string]: string } = {};
     let retriedRejectedCursor = false;
     let synced = 0;
     let failed = 0;
+
+    /** Saves this drain's progress: the versions it confirmed and, when it has one, its cursor. */
+    const saveProgress = async (nextCursor: string | undefined): Promise<void> => {
+      const etags = startedAtHead ? seenEtags : { ...recordedEtags, ...seenEtags };
+      await this.saveFeedState(profileId, {
+        ...(nextCursor === undefined ? {} : { cursor: nextCursor }),
+        etags,
+      });
+    };
 
     for (let page = 0; ; page += 1) {
       if (page >= MAX_FEED_PAGES) return { ok: false, reason: "stalled", synced, failed };
@@ -196,8 +244,10 @@ export class PetroglyphPlugin extends Plugin {
 
       if (response.status === 400 && !retriedRejectedCursor) {
         retriedRejectedCursor = true;
-        await this.saveFeedCursor(profileId, undefined);
+        await this.saveFeedState(profileId, { etags: recordedEtags });
         cursor = undefined;
+        // The retry starts at the head, so its seen set is the whole profile.
+        startedAtHead = true;
         continue;
       }
       if (!response.ok) {
@@ -219,45 +269,99 @@ export class PetroglyphPlugin extends Plugin {
       this.logFeedPage(feed.files.length, feed.nextToken);
 
       for (const entry of feed.files) {
-        if ((await this.writeFeedEntry(entry, destination.root)) === "failed") failed += 1;
+        const outcome = await this.writeFeedEntry(entry, destination.root, {
+          recorded: recordedEtags,
+          seen: seenEtags,
+        });
+        if (outcome === "failed") failed += 1;
         else synced += 1;
       }
 
-      if (failed > 0) return { ok: false, reason: "files", synced, failed };
+      // A page whose files failed must not advance the cursor, but the versions it
+      // did confirm are kept, so those files are not downloaded again.
+      if (failed > 0) {
+        await saveProgress(cursor);
+        return { ok: false, reason: "files", synced, failed };
+      }
 
-      await this.saveFeedCursor(profileId, feed.nextToken ?? undefined);
+      await saveProgress(feed.nextToken ?? undefined);
       if (feed.nextToken === null) return { ok: true, synced, failed };
       cursor = feed.nextToken;
     }
   }
 
-  /** Stores the profile's feed cursor; `undefined` forgets it. */
-  private async saveFeedCursor(profileId: string, cursor: string | undefined): Promise<void> {
+  /** The versions the vault holds for one profile, or an empty map. */
+  private feedEtagsFor(profileId: string): { [itemId: string]: string } {
+    return this._data.feedEtags?.[profileId] ?? {};
+  }
+
+  /**
+   * Stores one profile's feed progress: its itemId cursor and the versions the
+   * vault holds. Both live in the same saved data, so Reset Plugin State (local)
+   * clears them together — a reset that kept the versions would skip every
+   * rewrite the re-enumeration was meant to make. An `undefined` cursor forgets
+   * the cursor; an empty version map forgets the versions.
+   */
+  private async saveFeedState(
+    profileId: string,
+    state: { cursor?: string; etags: { [itemId: string]: string } },
+  ): Promise<void> {
     const cursors: { [key: string]: string } = {};
     for (const [key, value] of Object.entries(this._data.feedCursors ?? {})) {
       if (key !== profileId) cursors[key] = value;
     }
-    if (cursor !== undefined) cursors[profileId] = cursor;
-    this._data = { ...this._data, feedCursors: cursors };
+    if (state.cursor !== undefined) cursors[profileId] = state.cursor;
+
+    const etags: { [profileId: string]: { [itemId: string]: string } } = {};
+    for (const [key, value] of Object.entries(this._data.feedEtags ?? {})) {
+      if (key !== profileId) etags[key] = value;
+    }
+    if (Object.keys(state.etags).length > 0) etags[profileId] = state.etags;
+
+    this._data = { ...this._data, feedCursors: cursors, feedEtags: etags };
     await this.savePluginData();
   }
 
   /**
    * Writes one staged file into the vault, plus its companion note. An entry
-   * whose bytes already match the vault file is skipped, so a repeated poll
-   * does not churn the note's timestamps. An entry whose path would leave the
-   * vault is rejected before anything is downloaded or written, and a failed
-   * entry is reported, never thrown: one bad file must not abort the rest of
-   * the page.
+   * whose version the vault already holds is skipped without a download, and an
+   * entry whose bytes already match the vault file is skipped without a write,
+   * so neither a repeated poll nor a metadata-only change churns the file. An
+   * entry whose path would leave the vault is rejected before anything is
+   * downloaded or written, and a failed entry is reported, never thrown: one bad
+   * file must not abort the rest of the page.
    */
-  private async writeFeedEntry(entry: FeedEntry, root: string): Promise<"synced" | "failed"> {
+  private async writeFeedEntry(
+    entry: FeedEntry,
+    root: string,
+    versions: {
+      /** The version the vault received the last time this item was served. */
+      recorded: { [itemId: string]: string };
+      /** The versions this drain has confirmed, saved as the new local state. */
+      seen: { [itemId: string]: string };
+    },
+  ): Promise<"synced" | "failed"> {
     const mapping = vaultPathsFor(root, entry);
     if (!mapping.ok) {
       this.logVault("rejected: outside the vault", entry.relativePath);
       return "failed";
     }
     const paths = mapping.paths;
+    const eTag = entry.eTag;
     try {
+      // The version says "changed"; the bytes still say "rewrite". A version the
+      // vault already holds skips the download, unless the vault file has gone
+      // missing — then the file must be fetched again whatever the version says.
+      if (
+        eTag !== undefined &&
+        versions.recorded[entry.itemId] === eTag &&
+        (await this.app.vault.adapter.exists(paths.pdf))
+      ) {
+        this.logVault("skipped unchanged version", paths.pdf);
+        versions.seen[entry.itemId] = eTag;
+        return "synced";
+      }
+
       const startedAt = Date.now();
       const response = await fetch(entry.s3PresignedUrl);
       this.logDownloadFailure(entry, startedAt, response);
@@ -272,6 +376,7 @@ export class PetroglyphPlugin extends Plugin {
 
       if (await this.isCurrentFile(paths.pdf, bytes)) {
         this.logVault("skipped identical", paths.pdf);
+        recordVersion(versions.seen, entry.itemId, eTag);
         return "synced";
       }
 
@@ -280,6 +385,7 @@ export class PetroglyphPlugin extends Plugin {
       if (paths.markdown !== paths.pdf) {
         await this.app.vault.adapter.write(paths.markdown, companionNote(entry));
       }
+      recordVersion(versions.seen, entry.itemId, eTag);
       return "synced";
     } catch (error) {
       this.logDownloadError(entry, error);
@@ -303,12 +409,17 @@ export class PetroglyphPlugin extends Plugin {
   }
 
   /**
-   * Reset plugin state: forget the feed cursor for the active profile only, so
-   * the next sync re-enumerates the feed from the head.
+   * Reset plugin state: forget the feed cursor AND the recorded versions for the
+   * active profile only, so the next sync re-enumerates the feed from the head
+   * and rewrites whatever the bytes say changed. Keeping the versions would make
+   * the reset skip every rewrite it exists to cause.
    */
   async resetPluginState(): Promise<void> {
-    if (this._data.feedCursors?.[DEFAULT_PROFILE_ID] !== undefined) {
-      await this.saveFeedCursor(DEFAULT_PROFILE_ID, undefined);
+    const hasRecordedState =
+      this._data.feedCursors?.[DEFAULT_PROFILE_ID] !== undefined ||
+      Object.keys(this._data.feedEtags?.[DEFAULT_PROFILE_ID] ?? {}).length > 0;
+    if (hasRecordedState) {
+      await this.saveFeedState(DEFAULT_PROFILE_ID, { etags: {} });
     }
     new Notice("Plugin state reset: local sync token cleared");
   }
@@ -363,7 +474,7 @@ export class PetroglyphPlugin extends Plugin {
       }
       const body: unknown = await resp.json();
       if (isRecord(body) && body["resetToken"] === true) {
-        await this.saveFeedCursor(DEFAULT_PROFILE_ID, undefined);
+        await this.saveFeedState(DEFAULT_PROFILE_ID, { etags: {} });
       }
       new Notice("Full reset complete");
     } catch {
@@ -718,6 +829,9 @@ export class PetroglyphPlugin extends Plugin {
       if (isRecord(savedCursors)) {
         saved.feedCursors = savedCursors as { [key: string]: string };
       }
+      if (isRecord(raw["feedEtags"])) {
+        saved.feedEtags = parseFeedEtags(raw["feedEtags"]);
+      }
       if (hasStringProp(raw, "oneDriveStatus")) {
         saved.oneDriveStatus = raw.oneDriveStatus;
       }
@@ -756,7 +870,7 @@ export class PetroglyphPlugin extends Plugin {
         ...(activeProfileId !== undefined ? { activeProfileId } : {}),
       };
 
-      // Clean up cursors whose profile IDs no longer exist
+      // Clean up cursors and versions whose profile IDs no longer exist
       if (this._data.feedCursors !== undefined) {
         const profileIds = new Set(profiles.map((p) => p.id));
         const cleanedCursors: { [key: string]: string } = {};
@@ -766,6 +880,17 @@ export class PetroglyphPlugin extends Plugin {
           }
         }
         this._data = { ...this._data, feedCursors: cleanedCursors };
+      }
+
+      if (this._data.feedEtags !== undefined) {
+        const profileIds = new Set(profiles.map((p) => p.id));
+        const cleanedEtags: { [profileId: string]: { [itemId: string]: string } } = {};
+        for (const [key, val] of Object.entries(this._data.feedEtags)) {
+          if (profileIds.has(key)) {
+            cleanedEtags[key] = val;
+          }
+        }
+        this._data = { ...this._data, feedEtags: cleanedEtags };
       }
 
       await this.savePluginData();

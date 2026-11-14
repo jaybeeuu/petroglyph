@@ -2628,3 +2628,251 @@ describe("diagnostics log", () => {
     expect(written).toContain("status=502");
   });
 });
+
+describe("version reconciliation", () => {
+  const OLD_VERSION = '"{00000000-0000-0000-0000-000000000001},21"';
+  const NEW_VERSION = '"{00000000-0000-0000-0000-000000000001},22"';
+  const OLD_BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+  const NEW_BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x32]);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.stubGlobal("window", makeWindowStub());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  /** Answers `/files` with one page, and every other URL with PDF bytes. */
+  function feedThenBytes(options: {
+    files: FeedEntry[];
+    bytes: Uint8Array;
+    downloads: string[];
+  }): typeof fetch {
+    return vi.fn((url) => {
+      if (typeof url === "string" && url.includes("/files")) {
+        return Promise.resolve(jsonResponse({ files: options.files, nextToken: null }));
+      }
+      options.downloads.push(String(url));
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(options.bytes.buffer),
+      } as unknown as Response);
+    }) as unknown as typeof fetch;
+  }
+
+  it("skips an item whose version the vault already holds, and never downloads it", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      feedEtags: { default: { "item-1": OLD_VERSION } },
+    });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    const downloads: string[] = [];
+    global.fetch = feedThenBytes({
+      files: [makeFeedEntry({ eTag: OLD_VERSION })],
+      bytes: OLD_BYTES,
+      downloads,
+    });
+
+    await plugin.performSync();
+
+    expect(downloads).toEqual([]);
+    expect(vault.adapter.writeBinary).not.toHaveBeenCalled();
+    expect(vault.adapter.write).not.toHaveBeenCalled();
+  });
+
+  it("writes an item the vault holds no version for, and records the version", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    const downloads: string[] = [];
+    global.fetch = feedThenBytes({
+      files: [makeFeedEntry({ eTag: NEW_VERSION })],
+      bytes: NEW_BYTES,
+      downloads,
+    });
+
+    await plugin.performSync();
+
+    expect(downloads).toEqual(["https://s3.example.com/file.pdf"]);
+    expect(vault.adapter.writeBinary).toHaveBeenCalledWith("handwritten/note.pdf", NEW_BYTES);
+    expect(plugin.data.feedEtags?.["default"]?.["item-1"]).toBe(NEW_VERSION);
+  });
+
+  it("rewrites the vault file when the version changed and the bytes differ", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      feedEtags: { default: { "item-1": OLD_VERSION } },
+    });
+    const vault = makeVaultStub();
+    vault.adapter.readBinary.mockResolvedValue(OLD_BYTES.buffer);
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    const downloads: string[] = [];
+    global.fetch = feedThenBytes({
+      files: [makeFeedEntry({ eTag: NEW_VERSION })],
+      bytes: NEW_BYTES,
+      downloads,
+    });
+
+    await plugin.performSync();
+
+    expect(vault.adapter.writeBinary).toHaveBeenCalledWith("handwritten/note.pdf", NEW_BYTES);
+    expect(plugin.data.feedEtags?.["default"]?.["item-1"]).toBe(NEW_VERSION);
+  });
+
+  it("does not rewrite when a changed version carries the same bytes, but records the version", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      feedEtags: { default: { "item-1": OLD_VERSION } },
+    });
+    const vault = makeVaultStub();
+    vault.adapter.readBinary.mockResolvedValue(NEW_BYTES.buffer);
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    const downloads: string[] = [];
+    global.fetch = feedThenBytes({
+      files: [makeFeedEntry({ eTag: NEW_VERSION })],
+      bytes: NEW_BYTES,
+      downloads,
+    });
+
+    await plugin.performSync();
+
+    expect(downloads).toHaveLength(1);
+    expect(vault.adapter.writeBinary).not.toHaveBeenCalled();
+    expect(plugin.data.feedEtags?.["default"]?.["item-1"]).toBe(NEW_VERSION);
+  });
+
+  it("downloads and byte-compares when the feed carries no version", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      feedEtags: { default: { "item-1": OLD_VERSION } },
+    });
+    const vault = makeVaultStub();
+    vault.adapter.readBinary.mockResolvedValue(OLD_BYTES.buffer);
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    const downloads: string[] = [];
+    global.fetch = feedThenBytes({
+      files: [makeFeedEntry({})],
+      bytes: OLD_BYTES,
+      downloads,
+    });
+
+    await plugin.performSync();
+
+    expect(downloads).toHaveLength(1);
+    expect(vault.adapter.writeBinary).not.toHaveBeenCalled();
+  });
+
+  it("rewrites an item that sorts below the cursor the previous drain reached", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      feedEtags: { default: { "item-a": OLD_VERSION } },
+    });
+    const vault = makeVaultStub();
+    vault.adapter.readBinary.mockResolvedValue(OLD_BYTES.buffer);
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    let version = OLD_VERSION;
+    const requested: string[] = [];
+    global.fetch = vi.fn((url) => {
+      if (typeof url !== "string" || !url.includes("/files")) {
+        return Promise.resolve({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(NEW_BYTES.buffer),
+        } as unknown as Response);
+      }
+      requested.push(url);
+      // The feed is itemId-ordered: a cursor naming the last item served can
+      // never be followed by an item that sorts below it.
+      const afterCursor = new URL(url).searchParams.get("nextToken");
+      if (afterCursor !== null) {
+        return Promise.resolve(jsonResponse({ files: [], nextToken: null }));
+      }
+      return Promise.resolve(
+        jsonResponse({
+          files: [makeFeedEntry({ itemId: "item-a", eTag: version })],
+          nextToken: "item-z",
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    // First drain: the vault already holds item-a's version, so nothing is read.
+    await plugin.performSync();
+    expect(vault.adapter.writeBinary).not.toHaveBeenCalled();
+    expect(requested).toEqual([
+      "https://api.petroglyph.page/files",
+      "https://api.petroglyph.page/files?nextToken=item-z",
+    ]);
+
+    // Re-upload: same itemId, new version. The feed serves it from the head,
+    // below the cursor the first drain reached.
+    version = NEW_VERSION;
+    requested.length = 0;
+    await plugin.performSync();
+
+    expect(vault.adapter.writeBinary).toHaveBeenCalledWith("handwritten/note.pdf", NEW_BYTES);
+    expect(plugin.data.feedEtags?.["default"]?.["item-a"]).toBe(NEW_VERSION);
+  });
+
+  it("keeps only the versions the completed drain was served", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      feedEtags: { default: { "item-1": OLD_VERSION, "item-gone": OLD_VERSION } },
+    });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    const downloads: string[] = [];
+    global.fetch = feedThenBytes({
+      files: [makeFeedEntry({ eTag: OLD_VERSION })],
+      bytes: OLD_BYTES,
+      downloads,
+    });
+
+    await plugin.performSync();
+
+    expect(plugin.data.feedEtags?.["default"]).toEqual({ "item-1": OLD_VERSION });
+  });
+
+  it("forgets the recorded versions on Reset Plugin State, so the next drain compares bytes again", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      feedEtags: { default: { "item-1": OLD_VERSION } },
+    });
+    await plugin.resetPluginState();
+
+    expect(plugin.data.feedEtags?.["default"]).toBeUndefined();
+
+    const vault = makeVaultStub();
+    vault.adapter.readBinary.mockResolvedValue(OLD_BYTES.buffer);
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    const downloads: string[] = [];
+    global.fetch = feedThenBytes({
+      files: [makeFeedEntry({ eTag: OLD_VERSION })],
+      bytes: OLD_BYTES,
+      downloads,
+    });
+
+    await plugin.performSync();
+
+    expect(downloads).toHaveLength(1);
+    expect(vault.adapter.writeBinary).not.toHaveBeenCalled();
+  });
+});

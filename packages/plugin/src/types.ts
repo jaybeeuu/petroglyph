@@ -15,6 +15,14 @@ export interface PluginData {
   oneDriveStatus?: string;
   syncIntervalMinutes?: number;
   feedCursors?: { [key: string]: string };
+  /**
+   * The version the vault last received for an item, per profile: `{profileId:
+   * {itemId: eTag}}`. This is what makes the drain reconcile instead of trust an
+   * itemId watermark — an entry whose `eTag` differs is rewritten even when its
+   * itemId sorts behind the cursor. Cleared with the cursor by Reset Plugin
+   * State (local).
+   */
+  feedEtags?: { [profileId: string]: { [itemId: string]: string } };
   activeProfileId?: string;
   profiles?: SyncProfile[];
 }

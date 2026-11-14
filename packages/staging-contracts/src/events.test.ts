@@ -46,6 +46,16 @@ describe("fileStagedDataSchema", () => {
     expect(() => fileStagedDataSchema.parse(withoutMimeType)).toThrow();
   });
 
+  it("carries the driveItem version when the payload has one", () => {
+    const withVersion = { ...stagedData, eTag: '"{GUID},22"' };
+
+    expect(fileStagedDataSchema.parse(withVersion)).toEqual(withVersion);
+  });
+
+  it("parses a payload with no version, so a stored row that predates it still reads", () => {
+    expect(fileStagedDataSchema.parse(stagedData)).not.toHaveProperty("eTag");
+  });
+
   it("rejects the deleted changeType (cross-reject)", () => {
     expect(() => fileStagedDataSchema.parse({ ...stagedData, changeType: "deleted" })).toThrow();
   });

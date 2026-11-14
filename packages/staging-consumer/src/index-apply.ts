@@ -26,6 +26,7 @@ export async function applyStaged(
     name: data.name,
     source: data.source,
     mimeType: data.mimeType,
+    ...(data.eTag === undefined ? {} : { eTag: data.eTag }),
     status: "staged",
     createdAt,
     ...(options.ttlSeconds === undefined

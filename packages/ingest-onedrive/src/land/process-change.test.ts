@@ -112,6 +112,24 @@ describe("processChange", () => {
     });
   });
 
+  it("carries the driveItem version onto the staged event", async () => {
+    const { putIfAbsent, run } = makeHarness();
+
+    await run({ ...created, eTag: '"{GUID},22"' });
+
+    const document = putIfAbsent.mock.calls[0]?.[0] as { data: { [key: string]: unknown } };
+    expect(document.data).toMatchObject({ eTag: '"{GUID},22"' });
+  });
+
+  it("emits no version key when the change carries none", async () => {
+    const { putIfAbsent, run } = makeHarness();
+
+    await run(created);
+
+    const document = putIfAbsent.mock.calls[0]?.[0] as { data: { [key: string]: unknown } };
+    expect(document.data).not.toHaveProperty("eTag");
+  });
+
   it("pre-filter: claim and extension both non-pdf -> no download, no land, no event", async () => {
     const harness = makeHarness();
     const nonPdf: FileChangeEvent = {

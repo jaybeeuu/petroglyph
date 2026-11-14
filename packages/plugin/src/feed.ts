@@ -8,6 +8,11 @@ export const feedEntrySchema = z.object({
   mimeType: z.string(),
   s3PresignedUrl: z.string().min(1),
   createdAt: z.string().min(1),
+  /**
+   * The source item's version. Optional so a feed that carries none still
+   * parses: an absent version is "unknown", never "unchanged".
+   */
+  eTag: z.string().min(1).optional(),
 });
 
 export type FeedEntry = z.infer<typeof feedEntrySchema>;

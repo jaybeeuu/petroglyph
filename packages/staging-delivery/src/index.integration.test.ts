@@ -41,12 +41,13 @@ function apiGatewayEvent(
   method: string,
   rawPath: string,
   authorization?: string,
+  rawQueryString = "",
 ): ApiGatewayV2Event {
   return {
     version: "2.0",
     routeKey: `${method} ${rawPath}`,
     rawPath,
-    rawQueryString: "",
+    rawQueryString,
     headers: {
       host: "test.execute-api.eu-west-2.amazonaws.com",
       ...(authorization === undefined ? {} : { authorization }),
@@ -81,6 +82,7 @@ describe("delivery app handler against LocalStack S3 + staged records", () => {
   let handler: ReturnType<typeof handle>;
   let authorization: string;
   let s3: S3Client;
+  let index: DynamoDBStagedIndexStore;
 
   beforeAll(async () => {
     container = await new GenericContainer("localstack/localstack:3.8.1")
@@ -144,7 +146,7 @@ describe("delivery app handler against LocalStack S3 + staged records", () => {
       .sign(privateKey)}`;
 
     await putProfile(dynamo, PROFILES_TABLE, PROFILE);
-    const index = new DynamoDBStagedIndexStore({ client: dynamo, tableName: FILE_RECORDS_TABLE });
+    index = new DynamoDBStagedIndexStore({ client: dynamo, tableName: FILE_RECORDS_TABLE });
     await index.upsert({
       profileId: "p1",
       itemId: ITEM_ID,
@@ -191,6 +193,85 @@ describe("delivery app handler against LocalStack S3 + staged records", () => {
     const downloaded = await fetch(entry.s3PresignedUrl);
     expect(downloaded.status).toBe(200);
     expect(new Uint8Array(await downloaded.arrayBuffer())).toEqual(PDF_BYTES);
+  }, 60_000);
+
+  it("serves a re-uploaded record that sorts below the cursor when the reader starts again from the head", async () => {
+    const belowKey = "staging/v1/p1/notes/below.pdf";
+    const aboveKey = "staging/v1/p1/notes/above.pdf";
+    const below = {
+      profileId: "p1",
+      itemId: "item-0-a",
+      s3Key: belowKey,
+      relativePath: "notes",
+      name: "below.pdf",
+      source: "onedrive",
+      mimeType: "application/pdf",
+      status: "staged" as const,
+      createdAt: "2026-09-01T00:00:00.000Z",
+      eTag: '"{GUID},21"',
+    };
+    const above = {
+      ...below,
+      itemId: "item-0-b",
+      s3Key: aboveKey,
+      name: "above.pdf",
+    };
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: belowKey,
+        Body: PDF_BYTES,
+        ContentType: "application/pdf",
+      }),
+    );
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: aboveKey,
+        Body: PDF_BYTES,
+        ContentType: "application/pdf",
+      }),
+    );
+    await index.upsert(below);
+    await index.upsert(above);
+
+    type FeedBody = {
+      files: { itemId: string; eTag?: string; s3PresignedUrl: string }[];
+      nextToken: string | null;
+    };
+    const readPage = async (rawQuery: string): Promise<FeedBody> => {
+      const response = await handler(apiGatewayEvent("GET", "/files", authorization, rawQuery));
+      expect(response.statusCode).toBe(200);
+      return JSON.parse(response.body) as FeedBody;
+    };
+
+    const firstPage = await readPage("limit=2");
+    expect(firstPage.files.map((file) => file.itemId)).toEqual(["item-0-a", "item-0-b"]);
+    expect(firstPage.files[0]?.eTag).toBe('"{GUID},21"');
+    const cursor = firstPage.nextToken ?? "";
+
+    // Re-upload: the itemId is unchanged, the version and the bytes are not.
+    const reuploadedBytes = new TextEncoder().encode("%PDF-1.7\nre-uploaded\n%%EOF");
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: belowKey,
+        Body: reuploadedBytes,
+        ContentType: "application/pdf",
+      }),
+    );
+    await index.upsert({ ...below, eTag: '"{GUID},22"' });
+
+    const afterCursor = await readPage(`limit=2&nextToken=${encodeURIComponent(cursor)}`);
+    expect(afterCursor.files.map((file) => file.itemId)).toEqual([ITEM_ID]);
+
+    // A reader that starts again from the head (the plugin's cursor is cleared
+    // once a drain finishes) is served the changed record with its new version.
+    const fromHead = await readPage("limit=2");
+    expect(fromHead.files.map((file) => file.itemId)).toEqual(["item-0-a", "item-0-b"]);
+    expect(fromHead.files[0]?.eTag).toBe('"{GUID},22"');
+    const downloaded = await fetch(fromHead.files[0]?.s3PresignedUrl ?? "");
+    expect(new Uint8Array(await downloaded.arrayBuffer())).toEqual(reuploadedBytes);
   }, 60_000);
 });
 

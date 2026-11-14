@@ -13,6 +13,14 @@ export const stagedRecordSchema = z.object({
   name: z.string().min(1),
   source: z.string().min(1),
   mimeType: z.string().min(1),
+  /**
+   * The source driveItem's `eTag` — the version a reader reconciles on. OPTIONAL
+   * because two producers cannot always supply it: rows staged before the field
+   * existed, and a delta page that omitted the top-level property. An absent
+   * version means "unknown", never "unchanged": a reader must download and
+   * byte-compare rather than skip.
+   */
+  eTag: z.string().min(1).optional(),
   status: z.literal("staged"),
   createdAt: z.string().min(1),
   /** Epoch seconds; DDB TTL aligns the row with the S3 expire-staged-pdfs lifecycle. */
