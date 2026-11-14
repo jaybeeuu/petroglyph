@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import type { App, PluginManifest } from "obsidian";
 import type { FeedEntry } from "./feed.js";
+import { SYNC_RECHECK_DELAY_MS } from "./main.js";
 import type { PetroglyphPlugin } from "./main.js";
+
+// Hoisted so the `obsidian` mock factory can use it: importing `main.js` for its
+// recheck delay evaluates that factory before any ordinary module-scope binding.
+const Notice = vi.hoisted(() => vi.fn());
 
 /* eslint-disable @typescript-eslint/no-extraneous-class, @typescript-eslint/no-useless-constructor, @typescript-eslint/no-unused-vars, @typescript-eslint/explicit-function-return-type */
 vi.mock("obsidian", () => ({
@@ -21,8 +26,6 @@ vi.mock("obsidian", () => ({
   normalizePath: (path: string) => path,
 }));
 /* eslint-enable @typescript-eslint/no-extraneous-class, @typescript-eslint/no-useless-constructor, @typescript-eslint/no-unused-vars, @typescript-eslint/explicit-function-return-type */
-
-const Notice = vi.fn();
 
 function makeTestJwt(exp: number): string {
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
@@ -1251,6 +1254,153 @@ describe("syncNow", () => {
 
     expect(recorder.files).toHaveLength(1);
     expect(vault.adapter.writeBinary).not.toHaveBeenCalled();
+    expect(Notice).not.toHaveBeenCalled();
+  });
+
+  it("spaces its rechecks 2500ms apart", async () => {
+    // The spacing is part of the acceptance spec, so its value is pinned here;
+    // the clock steps below read the constant, which only proves the wait uses it.
+    expect(SYNC_RECHECK_DELAY_MS).toBe(2500);
+
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const recorder = stubSyncFetch(queuedTrigger(), () =>
+      Promise.resolve(jsonResponse(emptyFeed())),
+    );
+
+    const sync = plugin.syncNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(recorder.files).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(SYNC_RECHECK_DELAY_MS - 1);
+    expect(recorder.files).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(recorder.files).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(SYNC_WAIT_CAP_MS);
+    await sync;
+    expect(recorder.files).toHaveLength(3);
+  });
+
+  it("drains nothing and reports nothing when the plugin unloads during the trigger", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const files: string[] = [];
+    let answerTrigger: (response: Response) => void = () => undefined;
+    global.fetch = vi.fn((url: string) => {
+      if (url.endsWith("/onedrive/sync-trigger")) {
+        return new Promise<Response>((resolve) => {
+          answerTrigger = resolve;
+        });
+      }
+      files.push(url);
+      return Promise.resolve(jsonResponse(emptyFeed()));
+    }) as unknown as typeof fetch;
+
+    const sync = plugin.syncNow();
+    await vi.advanceTimersByTimeAsync(0);
+
+    plugin.onunload();
+    answerTrigger(queuedTrigger());
+    await vi.advanceTimersByTimeAsync(SYNC_WAIT_CAP_MS);
+    await sync;
+
+    expect(files).toEqual([]);
+    expect(Notice).not.toHaveBeenCalled();
+  });
+
+  it("does not report a sync that lands while the plugin unloads during the first drain", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    const files: string[] = [];
+    let answerDrain: (response: Response) => void = () => undefined;
+    global.fetch = vi.fn((url: string) => {
+      if (url.endsWith("/onedrive/sync-trigger")) return Promise.resolve(queuedTrigger());
+      if (url.includes("/files")) {
+        files.push(url);
+        return new Promise<Response>((resolve) => {
+          answerDrain = resolve;
+        });
+      }
+      return Promise.resolve(bytesResponse());
+    }) as unknown as typeof fetch;
+
+    const sync = plugin.syncNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(files).toHaveLength(1);
+
+    plugin.onunload();
+    answerDrain(
+      jsonResponse({
+        files: [makeFeedEntry({ itemId: "item-1", name: "one.pdf" })],
+        nextToken: null,
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(SYNC_WAIT_CAP_MS);
+    await sync;
+
+    // The drain that was already in flight finishes, but nothing is reported
+    // and no further page is requested.
+    expect(files).toHaveLength(1);
+    expect(Notice).not.toHaveBeenCalled();
+  });
+
+  it("ignores a second click while the first sync is still waiting", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    let drains = 0;
+    const recorder = stubSyncFetch(queuedTrigger(), (url) => {
+      if (!url.includes("/files")) return Promise.resolve(bytesResponse());
+      drains += 1;
+      return Promise.resolve(jsonResponse(emptyFeed()));
+    });
+
+    const first = plugin.syncNow();
+    const second = plugin.syncNow();
+    await vi.advanceTimersByTimeAsync(SYNC_WAIT_CAP_MS);
+    await Promise.all([first, second]);
+
+    // The second click makes no drain of its own.
+    expect(drains).toBe(3);
+    expect(recorder.files).toHaveLength(3);
+    expect(Notice).toHaveBeenCalledTimes(1);
+    expect(Notice).toHaveBeenCalledWith("Sync requested - new files will arrive on the next poll");
+  });
+
+  it("writes and reports nothing after unload when the button was double-clicked", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    let drains = 0;
+    // The walk lands a file after the two empty drains of a single sync.
+    const recorder = stubSyncFetch(queuedTrigger(), (url) => {
+      if (!url.includes("/files")) return Promise.resolve(bytesResponse());
+      drains += 1;
+      return Promise.resolve(
+        jsonResponse(
+          drains <= 2
+            ? emptyFeed()
+            : { files: [makeFeedEntry({ itemId: "item-1", name: "one.pdf" })], nextToken: null },
+        ),
+      );
+    });
+
+    const first = plugin.syncNow();
+    const second = plugin.syncNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(recorder.files).toHaveLength(1);
+
+    plugin.onunload();
+    await vi.advanceTimersByTimeAsync(SYNC_WAIT_CAP_MS);
+    await Promise.all([first, second]);
+
+    expect(recorder.files).toHaveLength(1);
+    expect(vault.adapter.writeBinary).not.toHaveBeenCalled();
+    expect(Notice).not.toHaveBeenCalled();
   });
 
   it("shows one notice and still drains when the trigger fails", async () => {

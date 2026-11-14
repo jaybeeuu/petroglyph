@@ -62,8 +62,9 @@ export const SYNC_RECHECK_DELAY_MS = 2500;
 
 /**
  * How many rechecks a manual sync makes after a first drain that staged nothing.
- * Together with `SYNC_RECHECK_DELAY_MS` this is about 5s of waiting; the hard cap
- * is 10s, so raising one number must lower the other.
+ * Together with `SYNC_RECHECK_DELAY_MS` this is about 5s of waiting; the target
+ * wait is 10s, so raising one number must lower the other. Nothing enforces that
+ * target: a slow drain pushes the whole wait past it.
  */
 export const SYNC_RECHECK_ATTEMPTS = 2;
 
@@ -118,6 +119,15 @@ function waitForDelay(ms: number, signal: AbortSignal): Promise<boolean> {
     }, ms);
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+/**
+ * True when `onunload()` aborted the manual sync that owns `controller`. A call
+ * keeps the check fresh: reading the flag inline would let the compiler hold the
+ * earlier answer across an await.
+ */
+function syncAborted(controller: AbortController): boolean {
+  return controller.signal.aborted;
 }
 
 /** The companion note body written beside a synced PDF. */
@@ -177,32 +187,49 @@ export class PetroglyphPlugin extends Plugin {
    * yet: when the first drain staged nothing, the feed is drained again a couple
    * of times before the user is told to wait for the next poll. A drain that
    * failed is reported as a failure and not retried here — its cursor did not
-   * advance, so the next poll retries those files.
+   * advance, so the next poll retries those files. A caller that arrives while
+   * one of these syncs is still running is ignored.
    */
   async syncNow(): Promise<void> {
     if (this._data.jwt === undefined || !this._data.oneDriveConnected) {
       new Notice("Not connected. Cannot sync.");
       return;
     }
-    if ((await this.triggerSyncWalk()) === "stop") {
+    // One manual sync at a time. The settings button has no debounce, so a
+    // double click is the normal case, and the second click is ignored rather
+    // than cancelling the sync the first click started. The slot is taken before
+    // the first await, so two clicks in one tick cannot both pass the guard.
+    if (this._syncAbort !== null) return;
+    const controller = new AbortController();
+    this._syncAbort = controller;
+
+    const trigger = await this.triggerSyncWalk();
+    if (syncAborted(controller)) {
+      // `onunload()` ran while the trigger was in flight: drain nothing.
+      this.endSync(controller);
+      return;
+    }
+    if (trigger === "stop") {
+      this.endSync(controller);
       await this._log.flush();
       return;
     }
 
     const profileId = this.resolveProfileId();
-    const controller = new AbortController();
-    this._syncAbort = controller;
-
     let drain: FeedDrain | null = await this.drainFilesFeed(profileId);
+    if (syncAborted(controller)) {
+      this.endSync(controller);
+      return;
+    }
     if (drain.ok && drain.synced === 0) {
       drain = await this.recheckFilesFeed(profileId, drain, controller.signal);
     }
-    if (this._syncAbort === controller) {
-      this._syncAbort = null;
-    }
+    this.endSync(controller);
 
-    await this._log.flush();
+    // An aborted sync writes nothing and reports nothing: no log flush, no
+    // notice. Only the recheck wait resolves to null.
     if (drain === null) return;
+    await this._log.flush();
     if (drain.ok) {
       new Notice(drain.synced === 0 ? SYNC_REQUESTED_NOTICE : syncCompleteNotice(drain.synced));
       return;
@@ -212,6 +239,11 @@ export class PetroglyphPlugin extends Plugin {
       return;
     }
     new Notice(FEED_FAILURE_NOTICES[drain.reason]);
+  }
+
+  /** Releases the manual-sync slot, unless `onunload()` already cleared it. */
+  private endSync(controller: AbortController): void {
+    if (this._syncAbort === controller) this._syncAbort = null;
   }
 
   /**
