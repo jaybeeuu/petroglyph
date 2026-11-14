@@ -13,6 +13,8 @@ node_modules/
 
 # Build output
 dist/
+# Staged Obsidian plugin folder written by `pnpm --filter @petroglyph/plugin package`
+packages/plugin/release/
 packages/*/src/generated/
 
 # TypeScript incremental build info

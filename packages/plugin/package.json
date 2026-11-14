@@ -1,11 +1,12 @@
 {
   "name": "@petroglyph/plugin",
-  "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node esbuild.config.mjs",
     "dev": "node esbuild.config.mjs --dev",
+    "package": "node esbuild.config.mjs --release",
+    "install:vault": "node scripts/install.mjs",
     "lint": "eslint .",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
