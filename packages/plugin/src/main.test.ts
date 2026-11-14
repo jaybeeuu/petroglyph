@@ -206,7 +206,7 @@ function queuedTrigger(): Response {
  * goes to `answer`. The recorder holds the `/files` URLs the plugin requested,
  * so a test can count the drains.
  */
-function stubSyncFetch(
+function stubTriggerFetch(
   trigger: Response,
   answer: (url: string) => Promise<Response>,
 ): { files: string[] } {
@@ -1128,7 +1128,7 @@ describe("syncNow", () => {
 
   it("asks the server to walk OneDrive before it reads the files feed", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
-    stubSyncFetch(queuedTrigger(), () => Promise.resolve(jsonResponse(emptyFeed())));
+    stubTriggerFetch(queuedTrigger(), () => Promise.resolve(jsonResponse(emptyFeed())));
 
     await runSync(plugin);
 
@@ -1146,7 +1146,7 @@ describe("syncNow", () => {
   it("shows the server message and does not drain when the connection needs reconnecting", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
     const message = "This OneDrive connection can no longer be used. Reconnect OneDrive.";
-    const recorder = stubSyncFetch(
+    const recorder = stubTriggerFetch(
       statusResponse(409, { error: { code: "reconnect_required", message } }),
       () => Promise.resolve(jsonResponse(emptyFeed())),
     );
@@ -1160,7 +1160,7 @@ describe("syncNow", () => {
   it("shows the server message and does not drain when no connection is stored", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
     const message = "No OneDrive connection is stored for this user.";
-    const recorder = stubSyncFetch(
+    const recorder = stubTriggerFetch(
       statusResponse(409, { error: { code: "no_connection", message } }),
       () => Promise.resolve(jsonResponse(emptyFeed())),
     );
@@ -1174,7 +1174,7 @@ describe("syncNow", () => {
   it("shows the not-connected notice and does not drain when the trigger answers 401", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
     // The shared JWT middleware still answers this flat body, with no `code`.
-    const recorder = stubSyncFetch(statusResponse(401, { error: "UNAUTHORIZED" }), () =>
+    const recorder = stubTriggerFetch(statusResponse(401, { error: "UNAUTHORIZED" }), () =>
       Promise.resolve(jsonResponse(emptyFeed())),
     );
 
@@ -1190,7 +1190,7 @@ describe("syncNow", () => {
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
     let drains = 0;
-    const recorder = stubSyncFetch(queuedTrigger(), (url) => {
+    const recorder = stubTriggerFetch(queuedTrigger(), (url) => {
       if (!url.includes("/files")) return Promise.resolve(bytesResponse());
       drains += 1;
       return Promise.resolve(
@@ -1221,7 +1221,7 @@ describe("syncNow", () => {
 
   it("reports that files will arrive on the next poll when the rechecks stay empty", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
-    const recorder = stubSyncFetch(queuedTrigger(), () =>
+    const recorder = stubTriggerFetch(queuedTrigger(), () =>
       Promise.resolve(jsonResponse(emptyFeed())),
     );
 
@@ -1238,7 +1238,7 @@ describe("syncNow", () => {
     const vault = makeVaultStub();
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
-    const recorder = stubSyncFetch(queuedTrigger(), (url) => {
+    const recorder = stubTriggerFetch(queuedTrigger(), (url) => {
       if (!url.includes("/files")) return Promise.resolve(bytesResponse());
       return Promise.resolve(jsonResponse(emptyFeed()));
     });
@@ -1258,7 +1258,7 @@ describe("syncNow", () => {
 
   it("spaces its rechecks 2500ms apart", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
-    const recorder = stubSyncFetch(queuedTrigger(), () =>
+    const recorder = stubTriggerFetch(queuedTrigger(), () =>
       Promise.resolve(jsonResponse(emptyFeed())),
     );
 
@@ -1355,7 +1355,7 @@ describe("syncNow", () => {
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
     let drains = 0;
-    stubSyncFetch(queuedTrigger(), (url) => {
+    stubTriggerFetch(queuedTrigger(), (url) => {
       if (!url.includes("/files")) return Promise.resolve(bytesResponse());
       drains += 1;
       return Promise.resolve(
@@ -1392,7 +1392,7 @@ describe("syncNow", () => {
     };
     // @ts-expect-error — minimal stub
     plugin.app = { vault: { adapter: logAdapter } };
-    stubSyncFetch(queuedTrigger(), () => Promise.resolve(jsonResponse(emptyFeed())));
+    stubTriggerFetch(queuedTrigger(), () => Promise.resolve(jsonResponse(emptyFeed())));
 
     const sync = plugin.syncNow();
     await vi.advanceTimersByTimeAsync(SYNC_WAIT_CAP_MS);
@@ -1407,7 +1407,7 @@ describe("syncNow", () => {
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
     let drains = 0;
-    const recorder = stubSyncFetch(queuedTrigger(), (url) => {
+    const recorder = stubTriggerFetch(queuedTrigger(), (url) => {
       if (!url.includes("/files")) return Promise.resolve(bytesResponse());
       drains += 1;
       return Promise.resolve(jsonResponse(emptyFeed()));
@@ -1432,7 +1432,7 @@ describe("syncNow", () => {
     plugin.app = { vault };
     let drains = 0;
     // The walk lands a file after the two empty drains of a single sync.
-    const recorder = stubSyncFetch(queuedTrigger(), (url) => {
+    const recorder = stubTriggerFetch(queuedTrigger(), (url) => {
       if (!url.includes("/files")) return Promise.resolve(bytesResponse());
       drains += 1;
       return Promise.resolve(
@@ -1479,7 +1479,7 @@ describe("syncNow", () => {
 
   it("shows one notice when the trigger answers a 409 the plugin cannot act on", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
-    const recorder = stubSyncFetch(
+    const recorder = stubTriggerFetch(
       statusResponse(409, { error: { code: "conflict", message: "The walk is already running." } }),
       () => Promise.resolve(jsonResponse(emptyFeed())),
     );
@@ -1497,7 +1497,7 @@ describe("syncNow", () => {
   it("frees the manual-sync slot when the drain throws", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
     plugin.saveData = vi.fn(() => Promise.reject(new Error("disk full")));
-    const recorder = stubSyncFetch(queuedTrigger(), () =>
+    const recorder = stubTriggerFetch(queuedTrigger(), () =>
       Promise.resolve(jsonResponse(emptyFeed())),
     );
 
@@ -1530,7 +1530,7 @@ describe("syncNow", () => {
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
-    stubSyncFetch(queuedTrigger(), () => Promise.resolve(failureResponse(500)));
+    stubTriggerFetch(queuedTrigger(), () => Promise.resolve(failureResponse(500)));
 
     await plugin.syncNow();
 
@@ -1543,7 +1543,7 @@ describe("syncNow", () => {
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
-    stubSyncFetch(queuedTrigger(), () =>
+    stubTriggerFetch(queuedTrigger(), () =>
       Promise.resolve(jsonResponse({ files: [{ itemId: "item-1" }], nextToken: null })),
     );
 
@@ -1557,7 +1557,7 @@ describe("syncNow", () => {
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
-    stubSyncFetch(queuedTrigger(), () => Promise.reject(new Error("offline")));
+    stubTriggerFetch(queuedTrigger(), () => Promise.reject(new Error("offline")));
 
     await plugin.syncNow();
 
@@ -2136,7 +2136,7 @@ describe("failed downloads", () => {
 
   it("reports how many files failed to download", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
-    stubSyncFetch(queuedTrigger(), (url) => {
+    stubTriggerFetch(queuedTrigger(), (url) => {
       if (url.includes("/files")) {
         return Promise.resolve(
           jsonResponse({
@@ -2166,7 +2166,7 @@ describe("failed downloads", () => {
 
   it("reports a failed sync when every download fails", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
-    stubSyncFetch(queuedTrigger(), (url) => {
+    stubTriggerFetch(queuedTrigger(), (url) => {
       if (url.includes("/files")) {
         return Promise.resolve(
           jsonResponse({
@@ -2190,7 +2190,7 @@ describe("failed downloads", () => {
 
   it("counts a vault write error as a failed file", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
-    stubSyncFetch(queuedTrigger(), (url) =>
+    stubTriggerFetch(queuedTrigger(), (url) =>
       Promise.resolve(
         url.includes("/files")
           ? jsonResponse({ files: [makeFeedEntry({})], nextToken: null })
@@ -2209,7 +2209,7 @@ describe("failed downloads", () => {
 
   it("reports completion with the count when every file syncs", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
-    stubSyncFetch(queuedTrigger(), (url) =>
+    stubTriggerFetch(queuedTrigger(), (url) =>
       Promise.resolve(
         url.includes("/files")
           ? jsonResponse({ files: [makeFeedEntry({})], nextToken: null })
