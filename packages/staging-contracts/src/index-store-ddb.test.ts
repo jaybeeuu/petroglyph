@@ -65,6 +65,29 @@ describe("DynamoDBStagedIndexStore", () => {
     });
   });
 
+  it("reads back a record stored before the version field existed", async () => {
+    // A row written by a producer that never knew the field must not break the
+    // read: the version is optional, so the feed keeps serving the item.
+    const stored = {
+      profileId: "p1",
+      itemId: "item-1",
+      s3Key: "staging/v1/p1/notes/a.pdf",
+      relativePath: "notes",
+      name: "a.pdf",
+      source: "onedrive",
+      mimeType: "application/pdf",
+      status: "staged",
+      createdAt: "2026-09-01T00:00:00.000Z",
+    };
+    const send = vi.fn().mockResolvedValueOnce({ Item: stored });
+    const store = new DynamoDBStagedIndexStore({
+      ...options,
+      client: { send } as unknown as DynamoDBDocumentClient,
+    });
+
+    await expect(store.get("p1", "item-1")).resolves.toEqual(stored);
+  });
+
   it("removes a record idempotently", async () => {
     const send = vi.fn().mockResolvedValue({});
     const store = new DynamoDBStagedIndexStore({

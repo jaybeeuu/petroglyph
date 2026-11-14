@@ -20,6 +20,12 @@ export const fileStagedDataSchema = z
     relativePath: z.string().min(1),
     s3Key: z.string().min(1),
     mimeType: z.string().min(1),
+    /**
+     * The landed driveItem's version, carried from the delta page. OPTIONAL: the
+     * delta `$select` asks for it and the adapter sends it when present, but a
+     * page may omit it, and a reader must treat absence as "unknown version".
+     */
+    eTag: z.string().min(1).optional(),
   })
   .strict();
 
