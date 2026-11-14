@@ -10,24 +10,211 @@ paths:
       summary: Complete the GitHub authorisation flow
       tags:
         - auth
+      responses:
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "502":
+          description: Bad Gateway
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
   /auth/refresh:
     post:
       operationId: postAuthRefresh
       summary: Refresh the access token
       tags:
         - auth
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jwt:
+                    type: string
+                    minLength: 1
+                  refreshToken:
+                    type: string
+                    minLength: 1
+                required:
+                  - jwt
+                  - refreshToken
+                additionalProperties: false
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
   /auth/url:
     get:
       operationId: getAuthUrl
       summary: Start the GitHub authorisation flow
       tags:
         - auth
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    minLength: 1
+                required:
+                  - url
+                additionalProperties: false
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
   /files:
     get:
       operationId: listFiles
       summary: List the delivered files for the active profile
       tags:
         - files
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        itemId:
+                          type: string
+                          minLength: 1
+                        name:
+                          type: string
+                          minLength: 1
+                        relativePath:
+                          type: string
+                        mimeType:
+                          type: string
+                          minLength: 1
+                        s3PresignedUrl:
+                          type: string
+                          minLength: 1
+                        createdAt:
+                          type: string
+                          minLength: 1
+                      required:
+                        - itemId
+                        - name
+                        - relativePath
+                        - mimeType
+                        - s3PresignedUrl
+                        - createdAt
+                      additionalProperties: false
+                  nextToken:
+                    anyOf:
+                      - type: string
+                      - type: "null"
+                required:
+                  - files
+                  - nextToken
+                additionalProperties: false
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
   /files/changes:
     get:
       operationId: getFilesChanges
@@ -50,30 +237,231 @@ paths:
             type: integer
             exclusiveMinimum: 0
             maximum: 100
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        fileId:
+                          type: string
+                          minLength: 1
+                        s3PresignedUrl:
+                          type: string
+                          minLength: 1
+                        filename:
+                          type: string
+                          minLength: 1
+                        createdAt:
+                          type: string
+                          minLength: 1
+                        pageCount:
+                          type: integer
+                          exclusiveMinimum: 0
+                          maximum: 9007199254740991
+                      required:
+                        - fileId
+                        - s3PresignedUrl
+                        - filename
+                        - createdAt
+                      additionalProperties: false
+                  nextToken:
+                    anyOf:
+                      - type: string
+                      - type: "null"
+                required:
+                  - files
+                  - nextToken
+                additionalProperties: false
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
   /files/{itemId}:
     get:
       operationId: getFile
       summary: Read one delivered file
       tags:
         - files
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  itemId:
+                    type: string
+                    minLength: 1
+                  name:
+                    type: string
+                    minLength: 1
+                  relativePath:
+                    type: string
+                  mimeType:
+                    type: string
+                    minLength: 1
+                  s3PresignedUrl:
+                    type: string
+                    minLength: 1
+                  createdAt:
+                    type: string
+                    minLength: 1
+                required:
+                  - itemId
+                  - name
+                  - relativePath
+                  - mimeType
+                  - s3PresignedUrl
+                  - createdAt
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
   /health:
     get:
       operationId: getHealth
       summary: Report service health
       tags:
         - health
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                required:
+                  - status
+                additionalProperties: false
   /onedrive/auth-url:
     get:
       operationId: getOnedriveAuthUrl
       summary: Start the OneDrive authorisation flow
       tags:
         - onedrive
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    minLength: 1
+                required:
+                  - url
+                additionalProperties: false
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
   /onedrive/connect:
     get:
       operationId: bridgeOnedriveCallback
       summary: Bridge the OneDrive OAuth callback into the app
       tags:
         - onedrive
+      responses:
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
     post:
       operationId: connectOnedrive
       summary: Connect an OneDrive account
@@ -95,24 +483,187 @@ paths:
               required:
                 - code
                 - state
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: connected
+                required:
+                  - status
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "502":
+          description: Bad Gateway
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
   /onedrive/lifecycle:
     post:
       operationId: postOnedriveLifecycle
       summary: Receive OneDrive lifecycle notifications
       tags:
         - onedrive
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: string
   /onedrive/sync-trigger:
     post:
       operationId: postOnedriveSyncTrigger
       summary: Enqueue a OneDrive delta walk for the caller's connection (Sync Now)
       tags:
         - onedrive
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: queued
+                required:
+                  - status
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        minLength: 1
+                      message:
+                        type: string
+                        minLength: 1
+                      details:
+                        type: array
+                        items: {}
+                    required:
+                      - code
+                      - message
+                    additionalProperties: false
+                required:
+                  - error
+                additionalProperties: false
   /profiles:
     get:
       operationId: listProfiles
       summary: List sync profiles
       tags:
         - profiles
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    profileId:
+                      type: string
+                      minLength: 1
+                    userId:
+                      type: string
+                      minLength: 1
+                    name:
+                      type: string
+                      minLength: 1
+                    sourceFolderPath:
+                      type: string
+                      minLength: 1
+                    destinationVaultPath:
+                      type: string
+                      minLength: 1
+                    pollingIntervalMinutes:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 9007199254740991
+                    enabled:
+                      type: boolean
+                    active:
+                      type: boolean
+                    initialSyncEnabled:
+                      type: boolean
+                    createdAt:
+                      type: string
+                      minLength: 1
+                    updatedAt:
+                      type: string
+                      minLength: 1
+                  required:
+                    - profileId
+                    - userId
+                    - name
+                    - sourceFolderPath
+                    - destinationVaultPath
+                    - pollingIntervalMinutes
+                    - enabled
+                    - active
+                    - initialSyncEnabled
+                    - createdAt
+                    - updatedAt
+                  additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
     post:
       operationId: createProfile
       summary: Create a sync profile
@@ -144,12 +695,152 @@ paths:
                 - name
                 - sourceFolderPath
                 - destinationVaultPath
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profileId:
+                    type: string
+                    minLength: 1
+                  userId:
+                    type: string
+                    minLength: 1
+                  name:
+                    type: string
+                    minLength: 1
+                  sourceFolderPath:
+                    type: string
+                    minLength: 1
+                  destinationVaultPath:
+                    type: string
+                    minLength: 1
+                  pollingIntervalMinutes:
+                    type: integer
+                    exclusiveMinimum: 0
+                    maximum: 9007199254740991
+                  enabled:
+                    type: boolean
+                  active:
+                    type: boolean
+                  initialSyncEnabled:
+                    type: boolean
+                  createdAt:
+                    type: string
+                    minLength: 1
+                  updatedAt:
+                    type: string
+                    minLength: 1
+                required:
+                  - profileId
+                  - userId
+                  - name
+                  - sourceFolderPath
+                  - destinationVaultPath
+                  - pollingIntervalMinutes
+                  - enabled
+                  - active
+                  - initialSyncEnabled
+                  - createdAt
+                  - updatedAt
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
   /profiles/{id}:
     get:
       operationId: getProfile
       summary: Read one sync profile
       tags:
         - profiles
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profileId:
+                    type: string
+                    minLength: 1
+                  userId:
+                    type: string
+                    minLength: 1
+                  name:
+                    type: string
+                    minLength: 1
+                  sourceFolderPath:
+                    type: string
+                    minLength: 1
+                  destinationVaultPath:
+                    type: string
+                    minLength: 1
+                  pollingIntervalMinutes:
+                    type: integer
+                    exclusiveMinimum: 0
+                    maximum: 9007199254740991
+                  enabled:
+                    type: boolean
+                  active:
+                    type: boolean
+                  initialSyncEnabled:
+                    type: boolean
+                  createdAt:
+                    type: string
+                    minLength: 1
+                  updatedAt:
+                    type: string
+                    minLength: 1
+                required:
+                  - profileId
+                  - userId
+                  - name
+                  - sourceFolderPath
+                  - destinationVaultPath
+                  - pollingIntervalMinutes
+                  - enabled
+                  - active
+                  - initialSyncEnabled
+                  - createdAt
+                  - updatedAt
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
     put:
       operationId: putProfile
       summary: Replace one sync profile
@@ -189,17 +880,185 @@ paths:
                 active:
                   type: boolean
               additionalProperties: false
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profileId:
+                    type: string
+                    minLength: 1
+                  userId:
+                    type: string
+                    minLength: 1
+                  name:
+                    type: string
+                    minLength: 1
+                  sourceFolderPath:
+                    type: string
+                    minLength: 1
+                  destinationVaultPath:
+                    type: string
+                    minLength: 1
+                  pollingIntervalMinutes:
+                    type: integer
+                    exclusiveMinimum: 0
+                    maximum: 9007199254740991
+                  enabled:
+                    type: boolean
+                  active:
+                    type: boolean
+                  initialSyncEnabled:
+                    type: boolean
+                  createdAt:
+                    type: string
+                    minLength: 1
+                  updatedAt:
+                    type: string
+                    minLength: 1
+                  deactivatedProfileIds:
+                    type: array
+                    items:
+                      type: string
+                required:
+                  - profileId
+                  - userId
+                  - name
+                  - sourceFolderPath
+                  - destinationVaultPath
+                  - pollingIntervalMinutes
+                  - enabled
+                  - active
+                  - initialSyncEnabled
+                  - createdAt
+                  - updatedAt
+                  - deactivatedProfileIds
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
     delete:
       operationId: deleteProfile
       summary: Delete one sync profile
       tags:
         - profiles
+      responses:
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
   /status:
     get:
       operationId: getStatus
       summary: Report the user's sync status
       tags:
         - status
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  github:
+                    type: object
+                    properties:
+                      connected:
+                        type: boolean
+                      username:
+                        type: string
+                    required:
+                      - connected
+                    additionalProperties: false
+                  oneDrive:
+                    type: object
+                    properties:
+                      connected:
+                        type: boolean
+                    required:
+                      - connected
+                    additionalProperties: false
+                  oneDriveStatus:
+                    type: string
+                    enum:
+                      - connected
+                      - disconnected
+                      - never_connected
+                      - reconnect_required
+                required:
+                  - github
+                  - oneDrive
+                  - oneDriveStatus
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
   /sync/jobs/{jobId}:
     get:
       operationId: getSyncJob
@@ -207,6 +1066,50 @@ paths:
       tags:
         - sync
       deprecated: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    minLength: 1
+                  fileCount:
+                    type: integer
+                    minimum: 0
+                    maximum: 9007199254740991
+                  error:
+                    type: string
+                required:
+                  - status
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
   /sync/reset:
     post:
       operationId: resetSync
@@ -228,6 +1131,31 @@ paths:
                     - full
               required:
                 - scope
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resetToken:
+                    type: boolean
+                required:
+                  - resetToken
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
   /sync/run:
     post:
       operationId: runSync
@@ -235,3 +1163,41 @@ paths:
       tags:
         - sync
       deprecated: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId:
+                    type: string
+                    minLength: 1
+                required:
+                  - jobId
+                additionalProperties: false
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                required:
+                  - error
+                additionalProperties: false

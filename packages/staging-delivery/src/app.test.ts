@@ -132,6 +132,22 @@ function buildApp(options: {
 }
 
 describe("GET /files feed", () => {
+  it("answers 500 instead of a page that violates the contract the operation declares", async () => {
+    const index = new MemoryIndex();
+    // The feed entry schema requires a non-empty name, so this page is one the
+    // registry forbids; in `report` mode it fails the run instead of shipping.
+    index.put({ ...stagedRecord, name: "" });
+    const { app } = buildApp({
+      profiles: [profile()],
+      index,
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    const res = await app.request("/files");
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ error: { code: "response_contract_mismatch" } });
+  });
+
   it("returns an empty feed when the user has no active profile (M8 read-back)", async () => {
     const { app } = buildApp({
       profiles: [profile({ active: false })],

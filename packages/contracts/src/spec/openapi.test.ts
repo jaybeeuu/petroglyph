@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { z as zod } from "zod";
 import type { Operation } from "../operation.js";
+import { operations } from "../operations/index.js";
+import { openApiInfo } from "./info.js";
 import { buildOpenApiDocument } from "./openapi.js";
 import { renderOpenApiYaml } from "./yaml.js";
 
@@ -141,5 +143,91 @@ describe("request schemas in the document", () => {
 
     expect(document.paths["/widgets"]?.get?.parameters).toBeUndefined();
     expect(document.paths["/widgets"]?.get?.requestBody).toBeUndefined();
+  });
+});
+
+describe("response schemas in the document", () => {
+  const readWidget: Operation = {
+    id: "readWidget",
+    method: "get",
+    path: "/widgets/{widgetId}",
+    summary: "Read one widget",
+    tags: ["widgets"],
+    responses: {
+      200: zod.object({ widgetId: zod.string().min(1) }),
+      404: zod.object({ error: zod.string() }),
+    },
+  };
+
+  it("emits every declared status with its schema and a description", () => {
+    const document = buildOpenApiDocument({ readWidget }, widgetInfo);
+
+    expect(document.paths["/widgets/{widgetId}"]?.get?.responses).toStrictEqual({
+      "200": {
+        description: "OK",
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              properties: { widgetId: { type: "string", minLength: 1 } },
+              required: ["widgetId"],
+              additionalProperties: false,
+            },
+          },
+        },
+      },
+      "404": {
+        description: "Not Found",
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              properties: { error: { type: "string" } },
+              required: ["error"],
+              additionalProperties: false,
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("describes a response schema by what the handler sends, not by what a caller may send", () => {
+    const countingWidget: Operation = {
+      id: "countWidgets",
+      method: "get",
+      path: "/widgets",
+      summary: "Count widgets",
+      tags: ["widgets"],
+      responses: { 200: zod.object({ count: zod.number().default(0) }) },
+    };
+    const document = buildOpenApiDocument({ countingWidget }, widgetInfo);
+    const schema =
+      document.paths["/widgets"]?.get?.responses?.["200"]?.content?.["application/json"]?.schema;
+
+    // A default is always applied on the way out, so the field is required in a response.
+    expect(schema?.["required"]).toStrictEqual(["count"]);
+  });
+
+  it("emits no responses for an operation that declares none", () => {
+    const document = buildOpenApiDocument(widgetOperations, widgetInfo);
+
+    expect(document.paths["/widgets"]?.get?.responses).toBeUndefined();
+  });
+});
+
+describe("the document generated from the registry", () => {
+  it("gives every operation a response schema", () => {
+    const document = buildOpenApiDocument(operations, openApiInfo);
+    const withoutSchema = Object.values(document.paths).flatMap((pathItem) =>
+      Object.values(pathItem).flatMap((operationObject) => {
+        const responses = Object.entries(operationObject.responses ?? {});
+        const described =
+          responses.length > 0 && responses.every(([, response]) => response.content !== undefined);
+        return described ? [] : [operationObject.operationId];
+      }),
+    );
+
+    expect(withoutSchema).toStrictEqual([]);
   });
 });

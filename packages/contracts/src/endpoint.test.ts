@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { z } from "zod";
-import { defineEndpoint, toHonoPath, type EndpointHandler } from "./endpoint.js";
+import {
+  defineEndpoint,
+  toHonoPath,
+  type EndpointHandler,
+  type EndpointOptions,
+} from "./endpoint.js";
 import { defineOperation, type Operation } from "./operation.js";
 
 const updateWidget = defineOperation({
@@ -31,9 +36,10 @@ type WidgetEnv = { Variables: { userId: string } };
 function createWidgetApp<OperationDefinition extends Operation>(
   operation: OperationDefinition,
   handler: EndpointHandler<OperationDefinition, WidgetEnv>,
+  options?: EndpointOptions,
 ): Hono<WidgetEnv> {
   const app = new Hono<WidgetEnv>();
-  const [first, ...rest] = defineEndpoint(operation, handler);
+  const [first, ...rest] = defineEndpoint(operation, handler, options);
   if (first === undefined) {
     throw new Error("defineEndpoint returned no handlers");
   }
@@ -168,6 +174,86 @@ describe("defineEndpoint", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toStrictEqual({ error: "Invalid request" });
+  });
+});
+
+const readWidget = defineOperation({
+  id: "readWidget",
+  method: "get",
+  path: "/widgets",
+  summary: "Read a widget",
+  tags: ["widgets"],
+  responses: {
+    200: z.object({ status: z.literal("ok") }),
+    404: z.object({ error: z.string() }),
+  },
+});
+
+/** A body the handler writes but the operation's schema forbids. */
+const DRIFTED_WIDGET = { status: "broken" } as unknown as { status: "ok" };
+
+/** What `report` mode answers in place of a response that violates its schema. */
+const mismatchBodySchema = z.object({
+  error: z.object({
+    code: z.string(),
+    message: z.string(),
+    details: z.array(z.object({ path: z.array(z.string()) })),
+  }),
+});
+
+describe("response validation", () => {
+  it("sends a body that matches its schema", async () => {
+    const app = createWidgetApp(readWidget, (_input, c) => c.json({ status: "ok" }));
+    const response = await app.request("/widgets");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toStrictEqual({ status: "ok" });
+  });
+
+  it("reports a body that violates its schema instead of sending it", async () => {
+    const app = createWidgetApp(readWidget, (_input, c) => c.json(DRIFTED_WIDGET));
+    const response = await app.request("/widgets");
+    const mismatch = mismatchBodySchema.parse(await response.json());
+
+    expect(response.status).toBe(500);
+    expect(mismatch.error.code).toBe("response_contract_mismatch");
+    expect(mismatch.error.message).toContain("readWidget");
+    expect(mismatch.error.details[0]?.path).toStrictEqual(["status"]);
+  });
+
+  it("sends the drifted body unchanged in production, and logs the mismatch", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const app = createWidgetApp(readWidget, (_input, c) => c.json(DRIFTED_WIDGET), {
+        responseValidation: "log",
+      });
+      const response = await app.request("/widgets");
+      expect(response.status).toBe(200);
+      expect(await response.json()).toStrictEqual({ status: "broken" });
+      expect(logged).toHaveBeenCalledWith(expect.any(String), {
+        operationId: "readWidget",
+        status: 200,
+        issues: [expect.objectContaining({ path: ["status"] })],
+      });
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("leaves a status the operation declares no schema for alone", async () => {
+    const listWidgetsOnly = defineOperation({
+      id: "listWidgetsOnly",
+      method: "get",
+      path: "/widgets",
+      summary: "List widgets",
+      tags: ["widgets"],
+      responses: { 200: z.object({ widgets: z.array(z.string()) }) },
+    });
+    const app = createWidgetApp(listWidgetsOnly, (_input, c) =>
+      c.json({ error: "Widget not found" }, 404),
+    );
+    const response = await app.request("/widgets");
+    expect(response.status).toBe(404);
+    expect(await response.json()).toStrictEqual({ error: "Widget not found" });
   });
 });
 

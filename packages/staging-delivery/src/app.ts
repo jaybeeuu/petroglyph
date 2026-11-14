@@ -1,3 +1,6 @@
+import type { Operation } from "@petroglyph/contracts";
+import { defineEndpoint, toHonoPath, type EndpointHandler } from "@petroglyph/contracts/hono";
+import { getFile, listFiles } from "@petroglyph/contracts/operations";
 import type { SyncProfile } from "@petroglyph/core";
 import type { StagedIndexStore, StagedObjectStore } from "@petroglyph/staging-contracts";
 import { Hono } from "hono";
@@ -41,6 +44,28 @@ interface FeedScope {
 }
 
 const INVALID_CURSOR = { error: "Invalid files cursor" };
+
+type FilesRouterEnv = { Variables: FilesRouterVariables };
+
+/**
+ * Registers one operation's handler chain on the router. Binding the route to the
+ * registry entry is what puts the response the handler writes under the schema the
+ * operation declares; `defineEndpoint` returns a chain whose length varies with the
+ * request schemas, so its first middleware is named for Hono's handler-tuple
+ * overloads. Auth is not part of this chain: the delivery app applies it to
+ * `/files/*` before this router is mounted, so it still runs first.
+ */
+function mount<OperationDefinition extends Operation>(
+  app: Hono<FilesRouterEnv>,
+  operation: OperationDefinition,
+  handler: EndpointHandler<OperationDefinition, FilesRouterEnv>,
+): void {
+  const [first, ...rest] = defineEndpoint(operation, handler);
+  if (first === undefined) {
+    throw new Error(`Operation "${operation.id}" produced no handlers`);
+  }
+  app.on(operation.method.toUpperCase(), toHonoPath(operation.path), first, ...rest);
+}
 
 function parseFeedQuery(query: { [key: string]: string }): FeedQueryResult {
   const parsed = feedQuerySchema.safeParse(query);
@@ -110,7 +135,7 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
 }> {
   const app = new Hono<{ Variables: FilesRouterVariables }>();
 
-  app.get("/files", async (c) => {
+  mount(app, listFiles, async (_input, c) => {
     const query = parseFeedQuery(c.req.query());
     if (!query.ok) {
       return c.json({ error: describeFeedQueryError(query.error) }, 400);
@@ -137,7 +162,12 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
     return c.json({ files: result.files, nextToken: result.nextToken });
   });
 
-  app.get("/files/:itemId", async (c) => {
+  mount(app, getFile, async (_input, c) => {
+    const itemId = c.req.param("itemId");
+    if (itemId === undefined) {
+      return c.json({ error: "File not found" }, 404);
+    }
+
     const activeProfile = activeEnabledProfile(await deps.listProfiles(c.get("userId")));
     if (activeProfile === null) {
       return c.json({ error: "File not found" }, 404);
@@ -147,7 +177,7 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
       index: deps.index,
       objectStore: deps.objectStore,
       profileIds: [activeProfile.profileId],
-      itemId: c.req.param("itemId"),
+      itemId,
       ...presignTtlOptions(deps.presignTtlSeconds),
     });
     if (entry === null) {

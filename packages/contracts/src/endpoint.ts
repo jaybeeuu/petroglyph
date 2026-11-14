@@ -2,6 +2,11 @@ import { zValidator } from "@hono/zod-validator";
 import type { Context, Env, MiddlewareHandler } from "hono";
 import type { z } from "zod";
 import type { EndpointInput, Operation, RequestRejection, RequestSchemas } from "./operation.js";
+import {
+  responseValidationMode,
+  validateResponse,
+  type ResponseValidationMode,
+} from "./response-validation.js";
 
 /** OpenAPI spells a path parameter `{id}`; Hono spells it `:id`. */
 export function toHonoPath(path: string): string {
@@ -18,6 +23,15 @@ export type EndpointHandler<OperationDefinition extends Operation, HonoEnv exten
   c: Context<HonoEnv>,
 ) => Response | Promise<Response>;
 
+/** How one endpoint is built, where the shared policy is not what a caller wants. */
+export interface EndpointOptions {
+  /**
+   * Overrides the shared `responseValidationMode` policy, which is what an
+   * endpoint uses when this is absent. Tests set it to exercise production.
+   */
+  readonly responseValidation?: ResponseValidationMode;
+}
+
 /** The validated-data target each request schema maps onto. */
 type RequestTargetName = "param" | "query" | "json";
 
@@ -30,7 +44,9 @@ const DEFAULT_REJECTION: RequestRejection = { error: "Invalid request" };
  * Binds an operation to its handler. The returned middleware validates every
  * declared request target with the operation's zod schema, answers 400 with the
  * operation's rejection body when one fails, and then calls the handler with the
- * parsed request.
+ * parsed request. The response the handler returns is then held to the schema the
+ * operation declares for that status, under `responseValidationMode`'s policy —
+ * see `response-validation.ts` for what each mode answers.
  *
  * The result is a handler chain, not a single handler, because each target needs
  * its own validator. Register it by naming the first middleware, so Hono's
@@ -40,9 +56,11 @@ const DEFAULT_REJECTION: RequestRejection = { error: "Invalid request" };
 export function defineEndpoint<OperationDefinition extends Operation, HonoEnv extends Env>(
   operation: OperationDefinition,
   handler: EndpointHandler<OperationDefinition, HonoEnv>,
+  options: EndpointOptions = {},
 ): MiddlewareHandler<HonoEnv>[] {
   const request: RequestSchemas | undefined = operation.request;
   const rejection = request?.rejection ?? DEFAULT_REJECTION;
+  const responseValidation = options.responseValidation ?? responseValidationMode();
   const endpoint: MiddlewareHandler<HonoEnv>[] = [];
 
   if (request?.params !== undefined) {
@@ -57,7 +75,8 @@ export function defineEndpoint<OperationDefinition extends Operation, HonoEnv ex
 
   endpoint.push(async (c) => {
     const input = readInput(c, request);
-    return handler(input as EndpointInput<OperationDefinition["request"]>, c);
+    const response = await handler(input as EndpointInput<OperationDefinition["request"]>, c);
+    return validateResponse(operation, response, responseValidation);
   });
 
   return endpoint;

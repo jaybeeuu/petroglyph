@@ -17,4 +17,5 @@ export const resetSync = defineOperation({
     body: resetSyncBodySchema,
     rejection: { error: "Invalid reset scope" },
   },
+  responses: { 200: z.object({ resetToken: z.boolean() }) },
 });

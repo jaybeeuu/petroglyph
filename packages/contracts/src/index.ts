@@ -6,8 +6,15 @@ export {
   type RequestRejection,
   type RequestSchemas,
   type RequestTarget,
+  type ResponseSchemas,
   type SchemaOutput,
 } from "./operation.js";
+export {
+  responseValidationMode,
+  validateResponse,
+  type ResponseValidationEnvironment,
+  type ResponseValidationMode,
+} from "./response-validation.js";
 export {
   createDeltaTriggerSend,
   deltaTriggerDedupeId,
@@ -16,6 +23,12 @@ export {
   type DeltaTriggerSend,
 } from "./delta-trigger.js";
 export { defineRegistry, operationKey } from "./registry.js";
+export {
+  isUnauthenticated,
+  UNAUTHENTICATED_ROUTES,
+  withUnauthorized,
+  type UnauthenticatedRoute,
+} from "./authentication.js";
 export { operationList, operations, type OperationId } from "./operations/index.js";
 export {
   collectRegistrySurface,
@@ -34,6 +47,8 @@ export {
   type OpenApiParameter,
   type OpenApiPathItem,
   type OpenApiRequestBody,
+  type OpenApiResponse,
+  type OpenApiResponses,
 } from "./spec/openapi.js";
 export { openApiInfo } from "./spec/info.js";
 export { renderOpenApiYaml } from "./spec/yaml.js";

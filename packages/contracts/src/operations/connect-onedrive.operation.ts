@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { defineOperation } from "../operation.js";
+import { flatErrorSchema } from "../responses/error.js";
 
 /** The Microsoft OAuth code and state the connect flow hands back. */
 export const connectOnedriveBodySchema = z.object({
@@ -16,5 +17,10 @@ export const connectOnedrive = defineOperation({
   request: {
     body: connectOnedriveBodySchema,
     rejection: { error: "Missing required fields: code and state" },
+  },
+  responses: {
+    200: z.object({ status: z.literal("connected") }),
+    401: flatErrorSchema,
+    502: flatErrorSchema,
   },
 });

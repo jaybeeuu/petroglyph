@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { defineOperation } from "../operation.js";
+import { flatErrorSchema } from "../responses/error.js";
 
 /** Reading `limit` from a query string means coercing it; a bound keeps it a page. */
 export const MAX_FILE_CHANGES_PAGE_SIZE = 100;
@@ -16,6 +17,15 @@ export const filesChangesQuerySchema = z.object({
     .default(DEFAULT_FILE_CHANGES_PAGE_SIZE),
 });
 
+/** One delivered file in a page of changes. */
+const fileChangeSchema = z.object({
+  fileId: z.string().min(1),
+  s3PresignedUrl: z.string().min(1),
+  filename: z.string().min(1),
+  createdAt: z.string().min(1),
+  pageCount: z.number().int().positive().optional(),
+});
+
 export const getFilesChanges = defineOperation({
   id: "getFilesChanges",
   method: "get",
@@ -26,5 +36,9 @@ export const getFilesChanges = defineOperation({
   request: {
     query: filesChangesQuerySchema,
     rejection: { error: "Invalid files changes query" },
+  },
+  responses: {
+    200: z.object({ files: z.array(fileChangeSchema), nextToken: z.string().nullable() }),
+    400: flatErrorSchema,
   },
 });

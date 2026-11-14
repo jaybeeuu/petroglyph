@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { HttpMethod, Operation, RequestSchemas } from "../operation.js";
+import type { HttpMethod, Operation, RequestSchemas, ResponseSchemas } from "../operation.js";
 
 /** What every OpenAPI 3.1 document must carry to describe this surface. */
 export interface OpenApiInfo {
@@ -25,6 +25,16 @@ export interface OpenApiRequestBody {
   readonly content: { readonly "application/json": { readonly schema: JsonSchema } };
 }
 
+/** One status an operation answers with, described by its response schema. */
+export interface OpenApiResponse {
+  /** OpenAPI requires a description; the standard reason phrase serves. */
+  readonly description: string;
+  readonly content?: { readonly "application/json": { readonly schema: JsonSchema } };
+}
+
+/** Every status an operation answers with a body, keyed by status code. */
+export type OpenApiResponses = { readonly [status: string]: OpenApiResponse };
+
 /** The fields of an OpenAPI operation object that the registry supplies. */
 export interface OpenApiOperationObject {
   readonly operationId: string;
@@ -33,6 +43,7 @@ export interface OpenApiOperationObject {
   readonly deprecated?: boolean;
   readonly parameters?: readonly OpenApiParameter[];
   readonly requestBody?: OpenApiRequestBody;
+  readonly responses?: OpenApiResponses;
 }
 
 /** One path, keyed by the methods served on it. */
@@ -46,13 +57,15 @@ export interface OpenApiDocument {
 }
 
 /**
- * One zod schema as JSON Schema. `io: "input"` because a request schema
- * describes what a client may send, which is the input side of a transform or a
- * default. The `$schema` dialect marker is dropped: OpenAPI 3.1 fixes the
- * dialect for the whole document, so repeating it per schema is noise.
+ * One zod schema as JSON Schema. A request schema is read `io: "input"` because
+ * it describes what a client may send, which is the input side of a transform or
+ * a default; a response schema is read `io: "output"` because it describes what
+ * the server sends, the output side of the same. The `$schema` dialect marker is
+ * dropped: OpenAPI 3.1 fixes the dialect for the whole document, so repeating it
+ * per schema is noise.
  */
-function toJsonSchema(schema: z.ZodType): JsonSchema {
-  const document = z.toJSONSchema(schema, { io: "input", target: "draft-2020-12" });
+function toJsonSchema(schema: z.ZodType, io: "input" | "output"): JsonSchema {
+  const document = z.toJSONSchema(schema, { io, target: "draft-2020-12" });
   return Object.fromEntries(Object.entries(document).filter(([keyword]) => keyword !== "$schema"));
 }
 
@@ -61,7 +74,7 @@ function parametersFor(
   schema: z.ZodType,
   location: OpenApiParameter["in"],
 ): readonly OpenApiParameter[] {
-  const jsonSchema = toJsonSchema(schema);
+  const jsonSchema = toJsonSchema(schema, "input");
   const properties = (jsonSchema["properties"] ?? {}) as { readonly [name: string]: JsonSchema };
   const required = new Set((jsonSchema["required"] ?? []) as readonly string[]);
   return Object.entries(properties).map(([name, property]) => ({
@@ -87,9 +100,44 @@ function requestFields(request: RequestSchemas | undefined): {
       ? undefined
       : {
           required: true as const,
-          content: { "application/json": { schema: toJsonSchema(request.body) } },
+          content: { "application/json": { schema: toJsonSchema(request.body, "input") } },
         };
   return { parameters, ...(requestBody === undefined ? {} : { requestBody }) };
+}
+
+/** The reason phrase OpenAPI requires of every declared status. */
+const RESPONSE_DESCRIPTIONS: { readonly [status: number]: string } = {
+  200: "OK",
+  201: "Created",
+  202: "Accepted",
+  400: "Bad Request",
+  401: "Unauthorized",
+  404: "Not Found",
+  409: "Conflict",
+  500: "Internal Server Error",
+  502: "Bad Gateway",
+};
+
+/** Every status the operation answers with a body, described by its schema. */
+function responsesFor(responses: ResponseSchemas | undefined): OpenApiResponses | undefined {
+  if (responses === undefined) {
+    return undefined;
+  }
+  const described: [status: string, response: OpenApiResponse][] = [];
+  for (const status of Object.keys(responses)) {
+    const schema = responses[Number(status)];
+    if (schema === undefined) {
+      continue;
+    }
+    described.push([
+      status,
+      {
+        description: RESPONSE_DESCRIPTIONS[Number(status)] ?? `Response ${status}`,
+        content: { "application/json": { schema: toJsonSchema(schema, "output") } },
+      },
+    ]);
+  }
+  return Object.fromEntries(described);
 }
 
 /**
@@ -105,6 +153,7 @@ export function buildOpenApiDocument(
   for (const operation of Object.values(operations)) {
     const pathItem = paths.get(operation.path) ?? {};
     const { parameters, requestBody } = requestFields(operation.request);
+    const responses = responsesFor(operation.responses);
     pathItem[operation.method] = {
       operationId: operation.id,
       summary: operation.summary,
@@ -112,6 +161,7 @@ export function buildOpenApiDocument(
       ...(operation.deprecated === true ? { deprecated: true } : {}),
       ...(parameters.length > 0 ? { parameters } : {}),
       ...(requestBody === undefined ? {} : { requestBody }),
+      ...(responses === undefined ? {} : { responses }),
     };
     paths.set(operation.path, pathItem);
   }
