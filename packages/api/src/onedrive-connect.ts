@@ -1,4 +1,4 @@
-import { markConnected, registerGraphSubscription } from "./onedrive-lifecycle.js";
+import { markConnected } from "./onedrive-lifecycle.js";
 import { z } from "zod";
 import { DeleteCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { defineEndpoint } from "@petroglyph/contracts/hono";
@@ -228,7 +228,6 @@ export const connectOnedriveEndpoint = defineEndpoint(
       expiresInSeconds: tokens.expires_in,
     });
     console.info("[onedrive-connect] Seeded the connection token vault", { userId });
-    await registerGraphSubscription(tokens.access_token, userId);
     await markConnected(userId);
     console.info("[onedrive-connect] User record updated", { userId });
 

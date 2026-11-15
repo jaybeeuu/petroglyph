@@ -219,7 +219,7 @@ sequenceDiagram
     Note over CloudAPI: validate & delete state token<br/>(retrieve PKCE verifier from DynamoDB)
     CloudAPI->>Microsoft: token exchange (code + verifier)
     Microsoft-->>CloudAPI: access token + refresh token
-    Note over CloudAPI: store OneDrive tokens in DynamoDB<br/>register Graph subscription (non-blocking)<br/>mark the connection connected<br/>stamp an existing profile only
+    Note over CloudAPI: store OneDrive tokens in DynamoDB<br/>mark the connection connected<br/>stamp an existing profile only
     CloudAPI-->>Plugin: { status: 'connected' }
 ```
 
@@ -233,7 +233,7 @@ sequenceDiagram
 8. Cloud API validates the state token against DynamoDB (`type='onedrive_state'`, TTL check) → 401 if invalid or expired. The state record is deleted immediately after lookup (one-time-use), and the PKCE `verifier` is read from it.
 9. Cloud API completes the PKCE token exchange with Microsoft using the code, retrieved verifier, and client secret (loaded from SSM), receiving an **access token** (TTL ~1 hour) and a **refresh token** (TTL up to 90 days with `offline_access`). Returns 502 if the exchange fails.
 10. `access_token`, `refresh_token`, and `expirySeconds` are written to **both** token stores: the connection-keyed `token_vaults` record (`userId` + `provider=onedrive`), which the Delivery 1 adapter resolves the grant from, and the legacy `refresh_tokens` record (`tokenHash=userId`) that the still-live pre-Delivery-3 readers (`onedriveMiddleware`, sync-worker, processor) use. Writing only the legacy record would leave a new consent invisible to the data path; the legacy write disappears with the old copies at Delivery 3.
-11. Cloud API attempts to register a **Microsoft Graph change notification subscription** for the user's OneDrive. The requested `expirationDateTime` is capped to Graph's maximum allowed window so registration does not fail due to an out-of-range expiry. Failure is still non-blocking — a warning is logged and the request continues.
+11. Connect registers **no** Microsoft Graph change notification subscription. A subscription belongs to one active profile root and is created and deleted with that profile, so its lifecycle is the reconciler's job, not the connect step's. `GRAPH_NOTIFICATION_URL` and `GRAPH_LIFECYCLE_URL` stay configured for that registration.
 12. Cloud API marks the connection **connected** on the user record, and connect writes **no sync profile row at all** — not even a flag on an existing one. Choosing which OneDrive folder maps to which vault path is the user's own profile action, so a fresh connect leaves the profile list empty and `/status` reports `connected_no_profile`. Connection state lives on the connection (the `token_vaults` row and the `users` row); a profile never carries it.
 13. Returns `{ status: 'connected' }` to the plugin.
 
