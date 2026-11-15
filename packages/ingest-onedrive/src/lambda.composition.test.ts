@@ -47,6 +47,7 @@ vi.mock("@aws-sdk/client-s3", async (importOriginal) => {
 vi.stubGlobal("fetch", mockFetch);
 
 import { buildDeltaRunner } from "./lambda.js";
+import { DEFAULT_PAGE_BUDGET } from "./delta/delta-walk.js";
 
 /**
  * The real adapter shell reads every table from the environment; these are the
@@ -64,6 +65,9 @@ const STAGED_BUCKET = "petroglyph-staged-pdfs-staging";
 const DELTA_TRIGGER_QUEUE_URL =
   "https://sqs.eu-west-2.amazonaws.com/000000000000/petroglyph-delta-trigger-staging.fifo";
 const CONNECTION = { userId: "user-1", provider: "onedrive" };
+const DONE_PAGE = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=done";
+const deltaPageLink = (pageNumber: number): string =>
+  `https://graph.microsoft.com/v1.0/me/drive/root/delta?token=page-${pageNumber}`;
 const PDF_BYTES = new TextEncoder().encode("%PDF-1.7\n1 0 obj");
 
 interface DynamoCommand {
@@ -249,22 +253,51 @@ describe("adapter lambda composition (buildDeltaRunner)", () => {
     await expect(buildDeltaRunner()(CONNECTION)).rejects.toThrow(name);
   });
 
-  it("enqueues one continuation bell on the delta-trigger queue when the page budget defers the walk", async () => {
+  it("walks a multi-page catch-up in one invocation and enqueues no continuation", async () => {
     wireDynamo([makeProfile()]);
-    const nextPage = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=page-2";
+    const secondPage = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=page-2";
     mockFetch.mockImplementation((url: string) => {
       if (url.includes("/content")) {
         return Promise.resolve(new Response(PDF_BYTES, { status: 200 }));
       }
       const body = url.includes("token=page-2")
-        ? { value: [], "@odata.deltaLink": "https://graph.example/delta?token=done" }
-        : { value: [fileItem("file-1", "notes")], "@odata.nextLink": nextPage };
+        ? { value: [fileItem("file-2", "notes")], "@odata.deltaLink": DONE_PAGE }
+        : { value: [fileItem("file-1", "notes")], "@odata.nextLink": secondPage };
       return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
     });
 
     const result = await buildDeltaRunner()(CONNECTION);
 
-    expect(result).toMatchObject({ outcome: "completed", landed: 1, pagesCompleted: 1 });
+    // Both pages fit the default budgets, so the bell ends the catch-up itself
+    // instead of enqueueing a bell that walks the rest of its own drive.
+    expect(result).toMatchObject({ outcome: "completed", landed: 2, pagesCompleted: 2 });
+    expect(mockSqsSend).not.toHaveBeenCalled();
+  });
+  it("enqueues one continuation bell on the delta-trigger queue when the page budget defers the walk", async () => {
+    wireDynamo([makeProfile()]);
+    // One page more than the budget allows, one file a page: the walk must stop
+    // at the page boundary and hand the rest of the drive to one continuation.
+    const pages = DEFAULT_PAGE_BUDGET + 1;
+    mockFetch.mockImplementation((url: string) => {
+      if (url.includes("/content")) {
+        return Promise.resolve(new Response(PDF_BYTES, { status: 200 }));
+      }
+      const pageNumber = Number(/token=page-(\d+)/.exec(url)?.[1] ?? "1");
+      const items = [fileItem(`file-${pageNumber}`, "notes")];
+      const body =
+        pageNumber === pages
+          ? { value: items, "@odata.deltaLink": DONE_PAGE }
+          : { value: items, "@odata.nextLink": deltaPageLink(pageNumber + 1) };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    });
+
+    const result = await buildDeltaRunner()(CONNECTION);
+
+    expect(result).toMatchObject({
+      outcome: "completed",
+      landed: DEFAULT_PAGE_BUDGET,
+      pagesCompleted: DEFAULT_PAGE_BUDGET,
+    });
     expect(mockSqsSend).toHaveBeenCalledTimes(1);
     const sent = mockSqsSend.mock.calls[0]?.[0] as {
       input: {

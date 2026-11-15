@@ -227,12 +227,23 @@ export interface DeltaWalkOptions {
   initialUrl: string;
   /**
    * Maximum delta pages fetched in one invocation; defaults to
-   * DEFAULT_PAGE_BUDGET. The adapter Lambda times out at 300 s and a first walk
-   * over a whole drive is far more work than that, so the walk stops at a page
-   * boundary, reports `deferred`, and hands the caller a resume link. One page
-   * can carry up to 200 items, so this bounds walk requests, not landed items.
+   * DEFAULT_PAGE_BUDGET. The walk stops at a page boundary, reports `deferred`,
+   * and hands the caller a resume link. One page can carry up to 200 items, so
+   * this bounds walk requests, not landed items.
    */
   pageBudget?: number;
+  /**
+   * Milliseconds one invocation may spend walking, measured from the walk's
+   * start; defaults to DEFAULT_TIME_BUDGET_MS. Checked at each page boundary
+   * because landing a page is not interruptible: the walk enters a page knowing
+   * the elapsed time so far, and the last page gets whatever is left.
+   */
+  timeBudgetMs?: number;
+  /**
+   * Clock behind the time budget; defaults to Date.now. Injected so a test can
+   * spend the budget deterministically instead of sleeping.
+   */
+  now?: () => number;
   /**
    * Land and emit one page's changes. Awaited before the next page is
    * requested, and the walk keeps nothing once it returns, so peak memory is
@@ -244,13 +255,35 @@ export interface DeltaWalkOptions {
 }
 
 /**
- * One page per invocation. A page of delta items still has to be fetched, gated
- * and landed inside the 300 s adapter timeout, and that landing work — not the
- * page request — is what made the first whole-drive walk outlive the timeout.
- * A budget of one page means an invocation never queues a second page's work
- * behind an unlanded first one, and the continuation bell carries the walk on.
+ * Pages one invocation may walk: 20, four times the five pages a production
+ * drive needs (about 1k items at up to 200 a page). Measured walk cost per
+ * page — fetch, parse, classify, dedupe, hand over — is 1.3 ms median over 20
+ * runs of a 1000-item drive (6.45 ms for the whole 5-page walk), against 25 s
+ * a page in the 2026-11-14 production logs and 84 s for the slowest recorded
+ * page (73 files, docs/ops.md). Landing is five orders of magnitude dearer
+ * than the walk, so a page count alone cannot express a time budget and cannot
+ * stop an invocation in time; it is the clock-independent backstop that
+ * guarantees termination whatever the pages cost.
+ *
+ * The cap binds only when pages average under 9 s (180 s / 20), which is when
+ * walking more of them is the right thing to do; a dearer page is stopped by
+ * DEFAULT_TIME_BUDGET_MS first.
  */
-export const DEFAULT_PAGE_BUDGET = 1;
+export const DEFAULT_PAGE_BUDGET = 20;
+
+/**
+ * Milliseconds one invocation may spend walking: 180 s of the adapter's 300 s
+ * timeout. Chosen from the production numbers: a 5-page walk of the 1k-item
+ * production drive costs about 125 s at the 24-29 s a page measured on
+ * 2026-11-14, and 180 s leaves 55 s of slack over that.
+ *
+ * The check runs at a page boundary, so an invocation overruns the budget by at
+ * most the page in flight; the 120 s between the budget and the timeout exceeds
+ * the slowest page recorded (84 s), which is the reserve that page draws on. A
+ * page dearer than 120 s still runs out the timeout, and that is a redelivery,
+ * not a stall (docs/ops.md, "Delta catch-up progress and a stalled walk").
+ */
+export const DEFAULT_TIME_BUDGET_MS = 180_000;
 
 /**
  * Strips up to the drive root: "/drive/root:/notes/sub" → "notes/sub".
@@ -297,11 +330,12 @@ type Page =
  * the state ONLY on successful completion; 410/syncStateNotFound clears the
  * token and re-enumerates from scratch (outcome reset, didReset true).
  *
- * The walk gives up the drive after `pageBudget` pages and reports `deferred`
- * with a `resumeLink` instead of paging on: a first walk over a whole drive is
- * more work than one Lambda invocation has, and running into the timeout
- * advances nothing. The caller lands the page it was given, persists the
- * resume link, and bells a continuation.
+ * The walk gives up the drive once it has spent `pageBudget` pages or
+ * `timeBudgetMs` milliseconds and reports `deferred` with a `resumeLink`
+ * instead of paging on: a first walk over a whole drive is more work than one
+ * Lambda invocation has, and running into the timeout advances nothing. The
+ * caller lands the page it was given, persists the resume link, and bells a
+ * continuation.
  *
  * Each page is handed to `handlePage` before the next one is requested, and the
  * walk retains nothing across that call, so peak memory follows the page size
@@ -323,6 +357,9 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
   );
 
   const pageBudget = options.pageBudget ?? DEFAULT_PAGE_BUDGET;
+  const timeBudgetMs = options.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS;
+  const now = options.now ?? Date.now;
+  const startedAt = now();
 
   let outcome: DeltaWalkOutcome = "continued";
   let didReset = false;
@@ -435,10 +472,12 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
       return failed(pageFailure("no-links", page.status, page.body));
     }
 
-    if (pagesCompleted >= pageBudget) {
+    if (pagesCompleted >= pageBudget || now() - startedAt >= timeBudgetMs) {
       // Stop at the page boundary and hand the walk to the caller. Continuing
       // would run a whole-drive first walk past the Lambda timeout, which is
-      // how the change token stopped advancing in production.
+      // how the change token stopped advancing in production. The clock is read
+      // here, after the page was landed, so the page in flight is always one the
+      // budget has already paid for.
       return {
         outcome: "deferred",
         unresolvedPathCount,
