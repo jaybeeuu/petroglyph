@@ -7,8 +7,9 @@ import { defineOperation } from "../operation.js";
  *
  * `oneDriveStatus` reports the connection, and the connection is the token
  * vault row's `reconnectRequired` plus the user record's `oneDriveStatus`. No
- * profile attribute sets it: the only profile fact the handler reads is whether
- * the user has one at all.
+ * profile row is read: whether the user has a profile at all is the user
+ * record's own `hasProfile` mark, written by `POST /profiles` and cleared with
+ * the last profile.
  *
  * - `connected`: a live connection with a profile.
  * - `connected_no_profile`: a live connection with no profile yet. The user
@@ -17,8 +18,6 @@ import { defineOperation } from "../operation.js";
  * - `never_connected`: no live connection on the vault row or the user record.
  * - `reconnect_required`: the stored grant or the user record says the
  *   connection died.
- * - `disconnected`: reserved for a deliberate disconnect; handlers normalise a
- *   lost connection to `reconnect_required`.
  */
 const statusResponseSchema = z.object({
   github: z.object({ connected: z.boolean(), username: z.string().optional() }),
@@ -26,7 +25,6 @@ const statusResponseSchema = z.object({
   oneDriveStatus: z.enum([
     "connected",
     "connected_no_profile",
-    "disconnected",
     "never_connected",
     "reconnect_required",
   ]),

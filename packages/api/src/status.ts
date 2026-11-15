@@ -1,15 +1,15 @@
-import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { defineEndpoint } from "@petroglyph/contracts/hono";
 import { getStatus } from "@petroglyph/contracts/operations";
 import type { TokenRecord } from "@petroglyph/core";
 import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
 import { ONEDRIVE_PROVIDER, readConnection } from "./token-vault.js";
+import { usersTableName } from "./user-record.js";
 
 export type OneDriveStatus =
   | "connected"
   | "connected_no_profile"
-  | "disconnected"
   | "never_connected"
   | "reconnect_required";
 
@@ -19,16 +19,9 @@ export interface StatusResponse {
   oneDriveStatus: OneDriveStatus;
 }
 
-function syncProfilesTable(): string {
-  return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
-}
-
-function usersTable(): string {
-  return process.env["USERS_TABLE"] ?? "petroglyph-users-default";
-}
-
 interface UserStatusRecord {
   oneDriveStatus?: string;
+  hasProfile?: boolean;
 }
 
 function parseUserStatus(item: unknown): UserStatusRecord {
@@ -37,9 +30,14 @@ function parseUserStatus(item: unknown): UserStatusRecord {
   }
 
   const value = item as { [key: string]: unknown };
-  return typeof value["oneDriveStatus"] === "string"
-    ? { oneDriveStatus: value["oneDriveStatus"] }
-    : {};
+  const oneDriveStatus =
+    typeof value["oneDriveStatus"] === "string" ? value["oneDriveStatus"] : undefined;
+  const hasProfile = typeof value["hasProfile"] === "boolean" ? value["hasProfile"] : undefined;
+
+  return {
+    ...(oneDriveStatus !== undefined && { oneDriveStatus }),
+    ...(hasProfile !== undefined && { hasProfile }),
+  };
 }
 
 /**
@@ -55,43 +53,20 @@ async function fetchConnection(userId: string): Promise<TokenRecord | null> {
   }
 }
 
-/**
- * Whether the user has created a profile yet. Presence is the only profile fact
- * `/status` reads: it selects the no-profile sub-state and never the connection
- * state, so a stale attribute on a profile cannot change the answer.
- */
-async function hasProfile(userId: string): Promise<boolean> {
-  try {
-    const result = await docClient().send(
-      new QueryCommand({
-        TableName: syncProfilesTable(),
-        KeyConditionExpression: "userId = :userId",
-        ExpressionAttributeValues: { ":userId": userId },
-        Select: "COUNT",
-        Limit: 1,
-      }),
-    );
-    return (result.Count ?? 0) > 0;
-  } catch (err) {
-    // Unknown, so do not invent a profile for the user to create: report the
-    // connection alone and let the profiles section speak for itself.
-    console.error("[status] Failed to count SyncProfiles in DynamoDB", err);
-    return true;
-  }
-}
-
 async function fetchUserStatus(userId: string): Promise<UserStatusRecord> {
   try {
     const result = await docClient().send(
       new GetCommand({
-        TableName: usersTable(),
+        TableName: usersTableName(),
         Key: { userId },
       }),
     );
     return parseUserStatus(result.Item);
   } catch (err) {
     console.error("[status] Failed to fetch user record from DynamoDB", err);
-    return {};
+    // Unknown, so report presence: a failed read must never tell a user to
+    // create a profile they may already have.
+    return { hasProfile: true };
   }
 }
 
@@ -99,20 +74,18 @@ export const getStatusEndpoint = defineEndpoint(getStatus, async (_input, c: App
   const username = c.get("username");
   const userId = c.get("userId");
 
-  const [connection, userStatus, profileExists] = await Promise.all([
+  const [connection, userStatus] = await Promise.all([
     fetchConnection(userId),
     fetchUserStatus(userId),
-    hasProfile(userId),
   ]);
 
   // The connection is the only authority: the vault row holds the grant and
-  // whether it died, and the user record holds the lifecycle mark. A profile
-  // contributes presence and nothing else, so no profile attribute can flip a
-  // connected user to reconnect_required or the reverse.
+  // whether it died, and the user record holds the lifecycle mark. Profile
+  // presence is the user record's own mark, so no profile row is read and no
+  // profile attribute can flip a connected user to reconnect_required or the
+  // reverse.
   const reconnectRequired =
-    connection?.reconnectRequired === true ||
-    userStatus.oneDriveStatus === "reconnect_required" ||
-    userStatus.oneDriveStatus === "disconnected";
+    connection?.reconnectRequired === true || userStatus.oneDriveStatus === "reconnect_required";
   const hasConnection = connection !== null || userStatus.oneDriveStatus === "connected";
 
   // A live connection with no profile is its own state, so the plugin prompts
@@ -121,7 +94,7 @@ export const getStatusEndpoint = defineEndpoint(getStatus, async (_input, c: App
     ? "reconnect_required"
     : !hasConnection
       ? "never_connected"
-      : profileExists
+      : userStatus.hasProfile === true
         ? "connected"
         : "connected_no_profile";
 
