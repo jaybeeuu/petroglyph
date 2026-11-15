@@ -7,6 +7,7 @@ import {
 } from "@petroglyph/contracts/operations";
 import type { EndpointInput } from "@petroglyph/contracts";
 import {
+  clearStagedSweepPending,
   getProfile,
   listProfiles,
   normalizeSourceFolderPath,
@@ -112,13 +113,15 @@ export const getProfileEndpoint = defineEndpoint(
 /**
  * PUT /profiles/:id. `resetProfile` runs when the source folder really changed,
  * and again when a request that names the source folder meets a profile whose
- * previous reset never finished — that stored marker is the only retry the
- * reset gets, so it must not be dismissed as "not a change". Both cases store
- * the profile carrying the marker first: the marker is what keeps the reset
- * owed, so a delete that fails below still leaves a walk that re-enumerates and
- * a repeated request that carries the sweep on. The request never walks the
- * drive — the reset discards staged state and bells the adapter, which keeps
- * the response short whatever the folder holds.
+ * previous sweep never finished — the sweep marker is the only retry the reset
+ * gets, so it must not be dismissed as "not a change". The two obligations the
+ * reset discharges have one marker each: this endpoint clears the sweep marker
+ * when `resetProfile` reports "completed", and the walk clears the delta marker
+ * of its own accord. Both are stored here before the sweep starts: a marker is
+ * what keeps its obligation owed, so a delete that fails below still leaves a
+ * walk that re-enumerates and a repeated request that carries the sweep on. The
+ * request never walks the drive — the reset discards staged state and bells the
+ * adapter, which keeps the response short whatever the folder holds.
  */
 export function createPutProfileEndpoint(
   resetProfile: ProfilePathReset,
@@ -138,30 +141,23 @@ export function createPutProfileEndpoint(
       );
     }
     const sourceFolderChanged = hasSourceFolderChanged(existing, updates);
-    const resetOwed =
+    // The sweep marker, never the walk marker: a sweep that finished must not
+    // run again, and one that did not must always run again, whatever the walk
+    // has done to its own marker in between.
+    const sweepOwed =
       sourceFolderChanged ||
-      (updates.sourceFolderPath !== undefined && existing.deltaResetPending === true);
+      (updates.sourceFolderPath !== undefined && existing.stagedSweepPending === true);
     const updated = mergeProfile(existing, updates);
-    const stored: SyncProfile = resetOwed ? { ...updated, deltaResetPending: true } : updated;
+    const stored: SyncProfile = {
+      ...updated,
+      ...(sourceFolderChanged && { deltaResetPending: true }),
+      ...(sweepOwed && { stagedSweepPending: true }),
+    };
     await putProfile(docClient(), syncProfilesTableName(), stored);
-    if (resetOwed) {
-      const outcome = await resetProfile({ userId, profileId });
-      if (outcome === "incomplete") {
-        // The sweep is capped so one invocation cannot outrun the lambda's
-        // timeout. Records are still staged, so reporting success would be a
-        // lie; the stored marker makes the repeat finish the job.
-        return c.json(
-          {
-            error: {
-              code: "reset_incomplete",
-              message:
-                "The staged state for the previous source folder is only partly discarded. Repeat the request to finish.",
-            },
-          },
-          503,
-        );
-      }
-    }
+    // Deactivated before the sweep, not after it. A request that activates this
+    // profile AND changes its folder answers 503 when the sweep is cut short,
+    // and returning before this loop would leave two profiles active until the
+    // user repeats the request.
     const deactivatedProfileIds: string[] = [];
     if (updates.active === true) {
       const profiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
@@ -175,12 +171,36 @@ export function createPutProfileEndpoint(
         deactivatedProfileIds.push(other.profileId);
       }
     }
+    if (sweepOwed) {
+      const outcome = await resetProfile({ userId, profileId });
+      if (outcome === "incomplete") {
+        // The sweep is capped so one invocation cannot outrun the lambda's
+        // timeout. Records are still staged, so reporting success would be a
+        // lie; the stored markers keep both obligations owed, and the repeat
+        // carries the sweep on however many walks ran in the meantime.
+        return c.json(
+          {
+            error: {
+              code: "reset_incomplete",
+              message:
+                "The staged state for the previous source folder is only partly discarded. Repeat the request to finish.",
+            },
+          },
+          503,
+        );
+      }
+      await clearStagedSweepPending(docClient(), syncProfilesTableName(), userId, profileId);
+    }
     if (sourceFolderChanged && existing.active) {
       console.warn(
         `[profiles-crud] Profile ${profileId} is active and sourceFolderPath changed; Graph subscription update not yet implemented`,
       );
     }
-    return c.json({ ...stored, deactivatedProfileIds });
+    return c.json({
+      ...stored,
+      ...(sweepOwed && { stagedSweepPending: false }),
+      deactivatedProfileIds,
+    });
   });
 }
 

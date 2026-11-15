@@ -7,6 +7,7 @@ export {
   putProfile,
   deleteProfile,
   clearDeltaResetPending,
+  clearStagedSweepPending,
 } from "./sync-profile-db.js";
 export { fileRecordSchema, fileRecordStatusEnum } from "./file-record.js";
 export type {

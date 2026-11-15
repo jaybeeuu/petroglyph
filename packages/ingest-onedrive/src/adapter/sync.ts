@@ -106,11 +106,13 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
   let deleted = 0;
   let skipped = 0;
 
-  // A profile's source folder changed: the staged state is already gone, and
-  // the stored token covers only what changed since it was written. Both
-  // obligations are discharged BEFORE the first page, so a walk that fails
-  // below leaves an empty token and the retry still enumerates the whole drive
-  // instead of resuming from a point that never saw the new folder.
+  // A profile's source folder changed: the stored token covers only what
+  // changed since it was written. The walk's obligation is discharged BEFORE
+  // the first page, so a walk that fails below leaves an empty token and the
+  // retry still enumerates the whole drive instead of resuming from a point that
+  // never saw the new folder. The other obligation of a folder change — the
+  // sweep of the profile's staged records — belongs to the API's reset, so it is
+  // neither read nor cleared here.
   //
   // Token first, marker second, and never the other way round. The marker is
   // the only signal that a full re-enumerate is owed, so consuming it before

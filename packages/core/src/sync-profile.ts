@@ -17,6 +17,13 @@ export const syncProfileSchema = z.object({
    * drive. Server-owned — the update body is strict, so a client cannot set it.
    */
   deltaResetPending: z.boolean().optional(),
+  /**
+   * Set by the write path while the sweep of this profile's staged records and
+   * objects is unfinished, cleared only by a reset that discarded every one of
+   * them. The walk ignores it: re-enumerating the drive is a separate
+   * obligation with its own marker above. Server-owned.
+   */
+  stagedSweepPending: z.boolean().optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
 });

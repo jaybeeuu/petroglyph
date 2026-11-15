@@ -87,7 +87,9 @@ export async function deleteProfile(
 /**
  * Clears the reset marker on every profile the walk is about to re-enumerate.
  * One update per profile, so a profile edited between the read and this write
- * keeps its other fields — the walk owns only this flag.
+ * keeps its other fields — the walk owns only this flag. The marker the sweep
+ * of the staged state leaves behind is NOT touched here: that obligation is the
+ * API's, and a walk that took it off would let a half-finished sweep vanish.
  */
 export async function clearDeltaResetPending(
   client: DynamoDBDocumentClient,
@@ -105,4 +107,26 @@ export async function clearDeltaResetPending(
       }),
     );
   }
+}
+
+/**
+ * Clears the sweep marker once a reset discarded every staged record and object
+ * the profile had. Only a reset that reports "completed" calls this: a sweep cut
+ * short by its budget is still owed, and a later request is the only thing that
+ * can finish it.
+ */
+export async function clearStagedSweepPending(
+  client: DynamoDBDocumentClient,
+  tableName: string,
+  userId: string,
+  profileId: string,
+): Promise<void> {
+  await client.send(
+    new UpdateCommand({
+      TableName: tableName,
+      Key: { userId, profileId },
+      UpdateExpression: "SET stagedSweepPending = :pending",
+      ExpressionAttributeValues: { ":pending": false },
+    }),
+  );
 }

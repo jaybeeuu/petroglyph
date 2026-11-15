@@ -18,7 +18,7 @@ import {
   QueryCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { deltaTriggerSchema, type DeltaTrigger } from "@petroglyph/contracts";
-import type { SyncProfile } from "@petroglyph/core";
+import { clearDeltaResetPending, type SyncProfile } from "@petroglyph/core";
 import { DynamoDBStagedIndexStore, S3StagedObjectStore } from "@petroglyph/staging-contracts";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
@@ -413,10 +413,52 @@ describe("PUT /profiles/:id against LocalStack staged records, S3 and FIFO SQS",
     expect(await stagedItemIds()).toEqual(["item-3"]);
     expect(await objectExists(`staging/v1/${PROFILE_ID}/${STORED_PATH}/item-1.pdf`)).toBe(false);
     expect(await objectExists(`staging/v1/${PROFILE_ID}/${STORED_PATH}/item-3.pdf`)).toBe(true);
-    expect(await storedProfile()).toMatchObject({ deltaResetPending: true });
+    expect(await storedProfile()).toMatchObject({
+      deltaResetPending: true,
+      stagedSweepPending: true,
+    });
     expect(await storedChangeToken()).toMatchObject({ deltaLink: STORED_DELTA_LINK });
     expect(await drainBells()).toEqual([]);
 
+    const second = await putProfile({ sourceFolderPath: `${STORED_PATH}/Notebooks` }, deps);
+
+    expect(second.status).toBe(200);
+    expect(await stagedItemIds()).toEqual([]);
+    expect(await objectExists(`staging/v1/${PROFILE_ID}/${STORED_PATH}/item-3.pdf`)).toBe(false);
+    expect(await storedChangeToken()).toBeUndefined();
+    // The finished sweep takes its own marker off, so the same request repeated
+    // has nothing left to do. A re-run would clear the token and bell again,
+    // which is what the empty drain below would catch.
+    expect(await storedProfile()).toMatchObject({ stagedSweepPending: false });
+    expect(await drainBells()).toEqual([{ userId: USER_ID, provider: "onedrive" }]);
+
+    const third = await putProfile({ sourceFolderPath: `${STORED_PATH}/Notebooks` }, deps);
+
+    expect(third.status).toBe(200);
+    expect(await drainBells()).toEqual([]);
+  }, 30_000);
+
+  it("a walk that takes its own marker off before the sweep finishes does not hide the records still staged", async () => {
+    await dynamo.send(new PutCommand({ TableName: PROFILES_TABLE, Item: makeProfile() }));
+    await stageFile("item-1");
+    await stageFile("item-2");
+    await stageFile("item-3");
+    await storeChangeToken(STORED_DELTA_LINK);
+    // Two records per attempt, as in the test above: the first request stores
+    // the new path, discards two records and reports the third still owed.
+    const deps = createResetDeps({ recordBudget: 2 });
+
+    const first = await putProfile({ sourceFolderPath: `${STORED_PATH}/Notebooks` }, deps);
+    expect(first.status).toBe(503);
+    expect(await stagedItemIds()).toEqual(["item-3"]);
+
+    // Before the user repeats the request, the catch-up schedule or Sync Now
+    // reaches the adapter. The walk discharges its own obligation and nothing
+    // else: the sweep that never finished is not the walk's to dismiss.
+    await clearDeltaResetPending(dynamo, PROFILES_TABLE, USER_ID, [PROFILE_ID]);
+
+    // The repeat carries the path the profile already holds, so it is "not a
+    // change"; only the stored sweep marker can say the sweep is still owed.
     const second = await putProfile({ sourceFolderPath: `${STORED_PATH}/Notebooks` }, deps);
 
     expect(second.status).toBe(200);

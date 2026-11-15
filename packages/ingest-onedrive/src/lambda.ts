@@ -159,9 +159,12 @@ export function buildDeltaRunner(): (connection: {
       await listProfiles(docClient(), requiredEnv("SYNC_PROFILES_TABLE"), connection.userId)
     ).filter((profile) => profile.enabled && profile.active);
     // A write path that changed a profile's source folder staged no work for
-    // the walk: it discarded the staged state, cleared the token and left this
-    // marker. Take it on here, before the walk, so the drive is enumerated
-    // again from the beginning.
+    // the walk: it cleared this marker's obligation to be paid here. Take it on
+    // before the walk, so the drive is enumerated again from the beginning.
+    // This is the walk marker only. The other marker a folder change sets,
+    // stagedSweepPending, belongs to the API's own sweep of staged records and
+    // is cleared by that reset alone — a walk that took it off would let a
+    // half-finished sweep forget that records are still being served.
     const resetProfileIds = profiles
       .filter((profile) => profile.deltaResetPending === true)
       .map((profile) => profile.profileId);

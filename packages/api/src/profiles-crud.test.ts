@@ -7,6 +7,7 @@ const mockGetProfile = vi.hoisted(() => vi.fn());
 const mockListProfiles = vi.hoisted(() => vi.fn());
 const mockPutProfile = vi.hoisted(() => vi.fn());
 const mockDeleteProfile = vi.hoisted(() => vi.fn());
+const mockClearStagedSweepPending = vi.hoisted(() => vi.fn());
 const mockDbSend = vi.hoisted(() => vi.fn());
 
 vi.mock("@petroglyph/core", async (importOriginal) => {
@@ -18,6 +19,7 @@ vi.mock("@petroglyph/core", async (importOriginal) => {
     listProfiles: mockListProfiles,
     putProfile: mockPutProfile,
     deleteProfile: mockDeleteProfile,
+    clearStagedSweepPending: mockClearStagedSweepPending,
   };
 });
 
@@ -70,6 +72,7 @@ describe("profiles CRUD handlers", () => {
     mockListProfiles.mockReset();
     mockPutProfile.mockReset();
     mockDeleteProfile.mockReset();
+    mockClearStagedSweepPending.mockReset();
     mockDbSend.mockReset();
     mockResetProfile.mockReset();
     mockResetProfile.mockResolvedValue("completed");
@@ -198,21 +201,32 @@ describe("profiles CRUD handlers", () => {
       expect(response.status).toBe(200);
       expect(mockResetProfile).toHaveBeenCalledOnce();
       expect(mockResetProfile).toHaveBeenCalledWith({ userId: "user-42", profileId: "profile-1" });
-      // Stored with the profile, so the next walk knows it owes a full
-      // re-enumerate even if the reset above only half happened.
+      // Both markers are stored with the profile: one obligation each, so a
+      // sweep that only half happened and a walk that is still owed are told
+      // apart by whoever reads them.
       expect(mockPutProfile.mock.calls[0]?.[2]).toMatchObject({
         sourceFolderPath: "onyx/NoteAir5C/Notebooks",
         deltaResetPending: true,
+        stagedSweepPending: true,
       });
+      // A finished sweep is the only thing that takes the sweep marker off.
+      expect(mockClearStagedSweepPending).toHaveBeenCalledWith(
+        expect.anything(),
+        "petroglyph-sync-profiles-test",
+        "user-42",
+        "profile-1",
+      );
     });
 
-    it("re-runs the reset when a request names the source folder and the previous reset never finished", async () => {
+    it("re-runs the reset when a request names the source folder and the previous sweep never finished", async () => {
       // The earlier attempt already stored the new path, so this request is
-      // "not a change". The marker is what says the sweep is still owed, and a
-      // repeated request is the only thing that can carry it on.
+      // "not a change". The walk marker is already off — a catch-up walk took
+      // it — and the sweep marker alone says the sweep is still owed, because
+      // a repeated request is the only thing that can carry it on.
       const existing = makeProfile({
         sourceFolderPath: "onyx/NoteAir5C/Notebooks",
-        deltaResetPending: true,
+        deltaResetPending: false,
+        stagedSweepPending: true,
       });
       mockGetProfile.mockResolvedValue(existing);
       mockPutProfile.mockResolvedValue(undefined);
@@ -223,7 +237,7 @@ describe("profiles CRUD handlers", () => {
 
       expect(response.status).toBe(200);
       expect(mockResetProfile).toHaveBeenCalledOnce();
-      expect(mockPutProfile.mock.calls[0]?.[2]).toMatchObject({ deltaResetPending: true });
+      expect(mockPutProfile.mock.calls[0]?.[2]).toMatchObject({ stagedSweepPending: true });
     });
 
     it("does not re-run a finished reset when a rename repeats the stored source folder", async () => {
@@ -239,9 +253,10 @@ describe("profiles CRUD handlers", () => {
       expect(response.status).toBe(200);
       expect(mockResetProfile).not.toHaveBeenCalled();
       expect(mockPutProfile.mock.calls[0]?.[2]).not.toHaveProperty("deltaResetPending");
+      expect(mockPutProfile.mock.calls[0]?.[2]).not.toHaveProperty("stagedSweepPending");
     });
 
-    it("answers 503 when the sweep was cut short by its budget, leaving the marker set", async () => {
+    it("answers 503 when the sweep was cut short by its budget, leaving the sweep marker set", async () => {
       const existing = makeProfile({ sourceFolderPath: "onyx/NoteAir5C" });
       mockGetProfile.mockResolvedValue(existing);
       mockPutProfile.mockResolvedValue(undefined);
@@ -251,11 +266,16 @@ describe("profiles CRUD handlers", () => {
         sourceFolderPath: "onyx/NoteAir5C/Notebooks",
       });
 
-      // Staged records remain, so 200 would be a lie; the stored marker is what
-      // makes the repeat finish the job.
+      // Staged records remain, so 200 would be a lie; the stored markers are
+      // what make the repeat finish the job.
       expect(response.status).toBe(503);
       expect(await response.json()).toMatchObject({ error: { code: "reset_incomplete" } });
-      expect(mockPutProfile.mock.calls[0]?.[2]).toMatchObject({ deltaResetPending: true });
+      expect(mockPutProfile.mock.calls[0]?.[2]).toMatchObject({
+        deltaResetPending: true,
+        stagedSweepPending: true,
+      });
+      // Not cleared: the sweep left records behind, so it is still owed.
+      expect(mockClearStagedSweepPending).not.toHaveBeenCalled();
     });
 
     it("does not reset when the incoming path normalises to the stored one", async () => {
@@ -270,6 +290,28 @@ describe("profiles CRUD handlers", () => {
       expect(response.status).toBe(200);
       expect(mockResetProfile).not.toHaveBeenCalled();
       expect(mockPutProfile.mock.calls[0]?.[2]).not.toHaveProperty("deltaResetPending");
+    });
+
+    it("deactivates the other profile before answering 503, so a narrowed folder never leaves two profiles active", async () => {
+      const target = makeProfile({ profileId: "profile-1", active: false });
+      const previouslyActive = makeProfile({ profileId: "profile-2", active: true });
+      mockGetProfile.mockResolvedValue(target);
+      mockListProfiles.mockResolvedValue([target, previouslyActive]);
+      mockPutProfile.mockResolvedValue(undefined);
+      mockResetProfile.mockResolvedValue("incomplete");
+
+      const response = await request("PUT", "/profiles/profile-1", {
+        active: true,
+        sourceFolderPath: "/elsewhere",
+      });
+
+      expect(response.status).toBe(503);
+      // One profile stays active whatever the sweep managed, so the repeat is a
+      // retry of the sweep and never a repair of the active profile.
+      expect(mockPutProfile.mock.calls.map((call) => call[2] as SyncProfile)).toEqual([
+        expect.objectContaining({ profileId: "profile-1", active: true }),
+        expect.objectContaining({ profileId: "profile-2", active: false }),
+      ]);
     });
 
     it("does not reset when the request omits the source folder path", async () => {

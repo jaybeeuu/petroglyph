@@ -290,7 +290,9 @@ describe("adapter lambda composition (buildDeltaRunner)", () => {
 
   it("re-enumerates from the drive root and clears the marker when a profile's source folder changed", async () => {
     const staleDeltaLink = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=stale";
-    wireDynamo([makeProfile({ deltaResetPending: true })], {
+    // The profile carries both markers, as it does when the API's sweep was cut
+    // short: one obligation per marker, and only one of them is the walk's.
+    wireDynamo([makeProfile({ deltaResetPending: true, stagedSweepPending: true })], {
       deltaLink: staleDeltaLink,
       updatedAt: "2026-09-29T00:00:00.000Z",
     });
@@ -305,15 +307,17 @@ describe("adapter lambda composition (buildDeltaRunner)", () => {
       "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,eTag,parentReference,file,folder,deleted",
     );
     expect(fetchedUrls()).not.toContain(staleDeltaLink);
-    // The marker is the walk's to consume: left set, every later walk would
-    // re-enumerate the whole drive.
-    const markerCleared = mockDocSend.mock.calls.some(
-      (call) =>
-        call[0] instanceof UpdateCommand &&
-        call[0].input.TableName === TABLES.syncProfiles &&
-        call[0].input.ExpressionAttributeValues?.[":pending"] === false,
-    );
-    expect(markerCleared).toBe(true);
+    // The walk marker is the walk's to consume: left set, every later walk would
+    // re-enumerate the whole drive. The sweep marker is not touched, because a
+    // sweep that did not finish is still owed and no walk can tell.
+    const profileUpdateExpressions: (string | undefined)[] = [];
+    for (const call of mockDocSend.mock.calls) {
+      const command: unknown = call[0];
+      if (command instanceof UpdateCommand && command.input.TableName === TABLES.syncProfiles) {
+        profileUpdateExpressions.push(command.input.UpdateExpression);
+      }
+    }
+    expect(profileUpdateExpressions).toEqual(["SET deltaResetPending = :pending"]);
   });
 
   it("resumes from the stored token when no profile owes a reset", async () => {
