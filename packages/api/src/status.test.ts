@@ -21,15 +21,6 @@ interface StatusBody {
   oneDriveStatus: string;
 }
 
-interface ProfileRow {
-  profileId: string;
-  oneDriveConnected?: boolean;
-}
-
-function makeProfile(overrides: Partial<ProfileRow> = {}): ProfileRow {
-  return { profileId: "profile-1", ...overrides };
-}
-
 function makeConnectionRow(overrides: { reconnectRequired?: boolean } = {}): object {
   return {
     userId: "user-42",
@@ -72,10 +63,8 @@ describe("GET /status", () => {
 
   function mockStatusReads(options?: {
     connectionItem?: object;
-    profiles?: ProfileRow[];
     userItem?: object;
     rejectConnection?: boolean;
-    rejectProfiles?: boolean;
     rejectUser?: boolean;
   }): void {
     mockSend.mockImplementation((command: { input: { TableName: string } }) => {
@@ -89,11 +78,9 @@ describe("GET /status", () => {
       }
 
       if (tableName === SYNC_PROFILES_TABLE) {
-        if (options?.rejectProfiles === true) {
-          return Promise.reject(new Error("SyncProfiles unavailable"));
-        }
-        const profiles = options?.profiles ?? [];
-        return Promise.resolve({ Items: profiles, Count: profiles.length });
+        // A profile row always exists here, so any handler that consulted the
+        // table would answer `connected`. `/status` must ignore it.
+        return Promise.resolve({ Items: [{ profileId: "profile-1" }], Count: 1 });
       }
 
       if (tableName === USERS_TABLE) {
@@ -174,7 +161,10 @@ describe("GET /status", () => {
     });
 
     it("reports connected for a live connection with a profile", async () => {
-      mockStatusReads({ connectionItem: makeConnectionRow(), profiles: [makeProfile()] });
+      mockStatusReads({
+        connectionItem: makeConnectionRow(),
+        userItem: { userId: "user-42", hasProfile: true },
+      });
 
       const body = await getStatus();
 
@@ -185,7 +175,6 @@ describe("GET /status", () => {
     it("reports reconnect_required when the vault row requires a reconnect", async () => {
       mockStatusReads({
         connectionItem: makeConnectionRow({ reconnectRequired: true }),
-        profiles: [makeProfile()],
       });
 
       const body = await getStatus();
@@ -203,22 +192,10 @@ describe("GET /status", () => {
       expect(body.oneDriveStatus).toBe("reconnect_required");
     });
 
-    it("normalizes a stored disconnected user record to reconnect_required", async () => {
-      mockStatusReads({
-        connectionItem: makeConnectionRow(),
-        userItem: { userId: "user-42", oneDriveStatus: "disconnected" },
-      });
-
-      const body = await getStatus();
-
-      expect(body.oneDrive.connected).toBe(false);
-      expect(body.oneDriveStatus).toBe("reconnect_required");
-    });
-
     it("reports never_connected for a profile with no connection behind it", async () => {
       // The regression this design removes: a profile row used to decide the
       // connection state, so a profile outlived the grant and read connected.
-      mockStatusReads({ profiles: [makeProfile({ oneDriveConnected: true })] });
+      mockStatusReads({ userItem: { userId: "user-42", hasProfile: true } });
 
       const body = await getStatus();
 
@@ -226,54 +203,58 @@ describe("GET /status", () => {
       expect(body.oneDriveStatus).toBe("never_connected");
     });
 
-    it("keeps the status when a profile is edited", async () => {
-      mockStatusReads({
-        connectionItem: makeConnectionRow(),
-        profiles: [makeProfile({ oneDriveConnected: true })],
-      });
-      const before = await getStatus();
+    it("reads no sync_profiles row", async () => {
+      mockStatusReads({ connectionItem: makeConnectionRow() });
 
-      // A profile edit changes its attributes only; the connection is untouched.
-      mockStatusReads({
-        connectionItem: makeConnectionRow(),
-        profiles: [makeProfile({ oneDriveConnected: false })],
-      });
-      const after = await getStatus();
+      await getStatus();
 
-      expect(after).toEqual(before);
-      expect(after.oneDriveStatus).toBe("connected");
+      const tables = mockSend.mock.calls.map(
+        (call) => (call[0] as { input: { TableName: string } }).input.TableName,
+      );
+      expect(tables).not.toContain(SYNC_PROFILES_TABLE);
     });
 
-    it("keeps the status when a profile is added", async () => {
-      mockStatusReads({ connectionItem: makeConnectionRow(), profiles: [makeProfile()] });
+    it("keeps the connection when the first profile is created", async () => {
+      mockStatusReads({
+        connectionItem: makeConnectionRow(),
+        userItem: { userId: "user-42", oneDriveStatus: "connected" },
+      });
       const before = await getStatus();
 
       mockStatusReads({
         connectionItem: makeConnectionRow(),
-        profiles: [makeProfile(), makeProfile({ profileId: "profile-2" })],
+        userItem: { userId: "user-42", oneDriveStatus: "connected", hasProfile: true },
       });
       const after = await getStatus();
 
-      expect(after).toEqual(before);
+      expect(before.oneDriveStatus).toBe("connected_no_profile");
       expect(after.oneDriveStatus).toBe("connected");
+      expect(after.oneDrive.connected).toBe(before.oneDrive.connected);
+      expect(after.oneDrive.connected).toBe(true);
     });
 
-    it("keeps the status when a profile is deleted", async () => {
+    it("keeps the connection when the last profile is deleted", async () => {
       mockStatusReads({
         connectionItem: makeConnectionRow(),
-        profiles: [makeProfile(), makeProfile({ profileId: "profile-2" })],
+        userItem: { userId: "user-42", oneDriveStatus: "connected", hasProfile: true },
       });
       const before = await getStatus();
 
-      mockStatusReads({ connectionItem: makeConnectionRow(), profiles: [makeProfile()] });
+      mockStatusReads({
+        connectionItem: makeConnectionRow(),
+        userItem: { userId: "user-42", oneDriveStatus: "connected", hasProfile: false },
+      });
       const after = await getStatus();
 
-      expect(after).toEqual(before);
-      expect(after.oneDriveStatus).toBe("connected");
+      expect(before.oneDriveStatus).toBe("connected");
+      expect(after.oneDriveStatus).toBe("connected_no_profile");
+      expect(after.oneDrive.connected).toBe(before.oneDrive.connected);
+      expect(after.oneDrive.connected).toBe(true);
     });
 
-    it("stays connected when the profile lookup fails", async () => {
-      mockStatusReads({ connectionItem: makeConnectionRow(), rejectProfiles: true });
+    it("reports connected when the user record read fails", async () => {
+      // An unknown presence mark must not tell a user to create a profile.
+      mockStatusReads({ connectionItem: makeConnectionRow(), rejectUser: true });
 
       const body = await getStatus();
 

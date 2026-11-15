@@ -4,6 +4,7 @@ import type { SyncProfile } from "@petroglyph/core";
 
 const mockListProfiles = vi.hoisted(() => vi.fn<() => Promise<SyncProfile[]>>());
 const mockPutProfile = vi.hoisted(() => vi.fn<() => Promise<void>>());
+const mockDbSend = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<unknown>>());
 
 vi.mock("@petroglyph/core", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -16,13 +17,23 @@ vi.mock("@petroglyph/core", async (importOriginal) => {
 });
 
 vi.mock("./db.js", () => ({
-  docClient: () => ({}),
+  docClient: () => ({ send: mockDbSend }),
 }));
 
 import { createApp } from "./app.js";
 import { resetKeyCache } from "./jwt.js";
 
 const app = createApp();
+
+/** The attribute values of every write sent to `tableName`, in call order. */
+function dbWritesTo(tableName: string): unknown[] {
+  return mockDbSend.mock.calls
+    .map(
+      (call) => call[0] as { input?: { TableName?: string; ExpressionAttributeValues?: unknown } },
+    )
+    .filter((command) => command.input?.TableName === tableName)
+    .map((command) => command.input?.ExpressionAttributeValues);
+}
 
 describe("/profiles", () => {
   let privateKey: CryptoKey;
@@ -38,9 +49,12 @@ describe("/profiles", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
     vi.stubEnv("SYNC_PROFILES_TABLE", "test-sync-profiles");
+    vi.stubEnv("USERS_TABLE", "test-users");
     resetKeyCache();
     mockListProfiles.mockResolvedValue([]);
     mockPutProfile.mockResolvedValue(undefined);
+    mockDbSend.mockReset();
+    mockDbSend.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -315,6 +329,25 @@ describe("/profiles", () => {
         "test-sync-profiles",
         expect.objectContaining({ userId: "user-42", name: "My Profile" }),
       );
+    });
+
+    it("marks the user record as having a profile", async () => {
+      const token = await makeValidToken("user-42");
+
+      await app.request("/profiles", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "My Profile",
+          sourceFolderPath: "/source",
+          destinationVaultPath: "/vault",
+        }),
+      });
+
+      expect(dbWritesTo("test-users")).toEqual([{ ":hasProfile": true }]);
     });
   });
 });

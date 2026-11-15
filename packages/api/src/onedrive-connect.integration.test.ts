@@ -202,21 +202,29 @@ describe("POST /onedrive/connect against LocalStack DynamoDB", () => {
       }),
     );
 
-    // The profile the user created themselves: connect must not touch it.
-    const profile = {
-      userId: "user-43",
-      profileId: "b6f1c0de-0000-4000-8000-000000000001",
-      name: "legal",
-      sourceFolderPath: "legal",
-      destinationVaultPath: "inbox/legal",
-      pollingIntervalMinutes: 5,
-      enabled: true,
-      active: true,
-      initialSyncEnabled: true,
-      createdAt: "2026-11-15T00:00:00.000Z",
-      updatedAt: "2026-11-15T00:00:00.000Z",
-    };
-    await vault.send(new PutCommand({ TableName: SYNC_PROFILES_TABLE, Item: profile }));
+    // The profile the user created themselves: connect must not touch it. Login
+    // writes the user record and `POST /profiles` writes the profile, so the
+    // user record's presence mark is set the way the product sets it.
+    await vault.send(
+      new PutCommand({
+        TableName: USERS_TABLE,
+        Item: { userId: "user-43", username: "octocat", createdAt: "2026-11-15T00:00:00.000Z" },
+      }),
+    );
+    const created = await createApp().request("/profiles", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${await makeToken("user-43")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "legal",
+        sourceFolderPath: "/legal",
+        destinationVaultPath: "inbox/legal",
+      }),
+    });
+    expect(created.status).toBe(201);
+    const profile = (await created.json()) as { profileId: string };
 
     const response = await createApp().request("/onedrive/connect", {
       method: "POST",

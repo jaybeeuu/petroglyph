@@ -139,14 +139,14 @@ The plugin periodically calls `GET /status` to determine the current connection 
 }
 ```
 
-| Field                | Type    | Description                                                                                                                                                                                                                                          |
-| -------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                                                                                         |
-| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                                                                                            |
-| `oneDrive.connected` | boolean | `true` when the connection is live, whether or not a profile exists yet. `false` for a dead grant, a never-connected user, or a DynamoDB error.                                                                                                      |
-| `oneDriveStatus`     | string  | `connected` (live connection with a profile), `connected_no_profile` (live connection, no profile yet), `never_connected`, `reconnect_required` (dead grant), or `disconnected` (reserved; a lost connection is normalised to `reconnect_required`). |
+| Field                | Type    | Description                                                                                                                                                                     |
+| -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                    |
+| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                       |
+| `oneDrive.connected` | boolean | `true` when the connection is live, whether or not a profile exists yet. `false` for a dead grant, a never-connected user, or a DynamoDB error.                                 |
+| `oneDriveStatus`     | string  | `connected` (live connection with a profile), `connected_no_profile` (live connection, no profile yet), `never_connected`, or `reconnect_required` (dead grant or user record). |
 
-The connection state comes from two rows and nothing else: the `token_vaults` row's `reconnectRequired` and the `users` row's `oneDriveStatus`. A `sync_profiles` row contributes presence only — the handler asks whether any exists and never reads its attributes — so editing, adding or deleting a profile cannot flip a connected user to `reconnect_required`.
+The connection state comes from the `token_vaults` row's `reconnectRequired` and the `users` row's `oneDriveStatus`. Whether the user has a profile at all is the `users` row's own `hasProfile` mark, which `POST /profiles` sets and deleting the last profile clears, so `/status` reads no `sync_profiles` row anywhere and editing a profile cannot flip a connected user to `reconnect_required`.
 
 Unauthenticated requests (missing or invalid JWT) return `401 { "error": "UNAUTHORIZED" }` from the auth middleware before the handler is reached.
 
@@ -362,13 +362,14 @@ On deletion, `activeProfileId` is cleared locally _before_ `loadProfiles()` is c
 
 ### `users`
 
-| Attribute                  | Type        | Description                                        |
-| -------------------------- | ----------- | -------------------------------------------------- |
-| `userId`                   | String (PK) | GitHub user ID                                     |
-| `githubUsername`           | String      | GitHub login name                                  |
-| `oneDriveStatus`           | String      | `connected` \| `disconnected` \| `never_connected` |
-| `oneDriveDisconnectReason` | String?     | `expired` \| `revoked` \| `error`                  |
-| `createdAt`                | String      | ISO 8601                                           |
+| Attribute                  | Type        | Description                                                                                                                  |
+| -------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `userId`                   | String (PK) | GitHub user ID                                                                                                               |
+| `githubUsername`           | String      | GitHub login name                                                                                                            |
+| `oneDriveStatus`           | String      | `connected` \| `reconnect_required` \| `never_connected`                                                                     |
+| `hasProfile`               | Boolean     | `true` while the user has at least one `sync_profiles` row; `POST /profiles` sets it and deleting the last profile clears it |
+| `oneDriveDisconnectReason` | String?     | `expired` \| `revoked` \| `error`                                                                                            |
+| `createdAt`                | String      | ISO 8601                                                                                                                     |
 
 ### `refresh_tokens`
 

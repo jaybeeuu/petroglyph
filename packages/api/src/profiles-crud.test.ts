@@ -57,6 +57,16 @@ function profileWrites(): { profileId: string; attributes: string[] }[] {
   }));
 }
 
+/** The attribute values of every write sent to `tableName`, in call order. */
+function dbWritesTo(tableName: string): unknown[] {
+  return mockDbSend.mock.calls
+    .map(
+      (call) => call[0] as { input?: { TableName?: string; ExpressionAttributeValues?: unknown } },
+    )
+    .filter((command) => command.input?.TableName === tableName)
+    .map((command) => command.input?.ExpressionAttributeValues);
+}
+
 describe("profiles CRUD handlers", () => {
   let privateKey: CryptoKey;
   let publicKeyPem: string;
@@ -71,6 +81,7 @@ describe("profiles CRUD handlers", () => {
     vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
     vi.stubEnv("SYNC_PROFILES_TABLE", "petroglyph-sync-profiles-test");
     vi.stubEnv("FILE_RECORDS_TABLE", "petroglyph-file-records-test");
+    vi.stubEnv("USERS_TABLE", "petroglyph-users-test");
     mockGetProfile.mockReset();
     mockListProfiles.mockReset();
     mockPutProfile.mockReset();
@@ -390,6 +401,30 @@ describe("profiles CRUD handlers", () => {
 
       expect(response.status).toBe(204);
       expect(mockUpdateProfile).not.toHaveBeenCalled();
+    });
+
+    it("clears the user's profile mark when the last profile is deleted", async () => {
+      mockGetProfile.mockResolvedValue(makeProfile({ active: true }));
+      mockDeleteProfile.mockResolvedValue(undefined);
+      mockDbSend.mockResolvedValue({ Items: [] });
+      mockListProfiles.mockResolvedValue([]);
+
+      const response = await request("DELETE", "/profiles/profile-1");
+
+      expect(response.status).toBe(204);
+      expect(dbWritesTo("petroglyph-users-test")).toEqual([{ ":hasProfile": false }]);
+    });
+
+    it("keeps the user's profile mark when other profiles remain", async () => {
+      mockGetProfile.mockResolvedValue(makeProfile({ active: false }));
+      mockDeleteProfile.mockResolvedValue(undefined);
+      mockDbSend.mockResolvedValue({ Items: [] });
+      mockListProfiles.mockResolvedValue([makeProfile({ profileId: "profile-2", active: true })]);
+
+      const response = await request("DELETE", "/profiles/profile-1");
+
+      expect(response.status).toBe(204);
+      expect(dbWritesTo("petroglyph-users-test")).toEqual([{ ":hasProfile": true }]);
     });
 
     it("deletes file_records for the profile", async () => {
