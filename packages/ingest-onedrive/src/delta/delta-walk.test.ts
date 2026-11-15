@@ -105,6 +105,27 @@ function page(items: unknown[], links?: { nextLink?: string; deltaLink?: string 
   }
   return jsonResponse(body);
 }
+const TERMINAL_LINK = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=done";
+const nextLinkFor = (pageNumber: number): string =>
+  `https://graph.microsoft.com/v1.0/me/drive/root/delta?token=page-${pageNumber}`;
+/**
+ * A scripted delta chain of `pages` pages of 200 files: the shape a full
+ * enumerate of a real drive arrives in. Every page but the last carries a
+ * nextLink, the last carries the terminal deltaLink.
+ */
+function driveChain(pages: number): { client: GraphClient; paths: string[] } {
+  const responses: (() => Response)[] = [];
+  for (let pageIndex = 0; pageIndex < pages; pageIndex += 1) {
+    const items = Array.from({ length: 200 }, (_, offset) =>
+      fileItem({ id: `i${pageIndex * 200 + offset}`, name: `f${pageIndex * 200 + offset}.pdf` }),
+    );
+    const isLast = pageIndex === pages - 1;
+    responses.push(() =>
+      page(items, isLast ? { deltaLink: TERMINAL_LINK } : { nextLink: nextLinkFor(pageIndex + 1) }),
+    );
+  }
+  return scriptedClient(responses);
+}
 
 // Shapes captured from a real personal-drive delta (probe, 2026-09-25): items
 // inside the drive carry driveType/driveId/id/path/siteId; the drive root is a
@@ -1064,6 +1085,74 @@ describe("walkDelta", () => {
     expect(result.events.map((event) => event.itemId)).toEqual(["i1"]);
     // The walker never advances the token past unlanded changes, so it writes nothing.
     expect(store.writes).toBe(0);
+  });
+  it("walks a production-sized drive of 1000 items over 5 pages in one invocation, with no continuation", async () => {
+    const store = memStateStore(null);
+    // Five pages of 200 is the whole production drive: one bell, not a chain.
+    const { client, paths } = driveChain(5);
+    const result = await walk({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [makeProfile()],
+      initialUrl: INITIAL_URL,
+    });
+    // Both budgets are the defaults here, so this is the whole catch-up:
+    // every page is fetched and handled, and the walk hands back no resume link.
+    expect(paths).toHaveLength(5);
+    expect(result.events).toHaveLength(1000);
+    expect(result.outcome).toBe("continued");
+    expect(result.pagesCompleted).toBe(5);
+    expect(result.resumeLink).toBeUndefined();
+    expect(result.deltaLink).toBe(TERMINAL_LINK);
+  });
+  it("stops at the first page boundary past its time budget and returns the link it stopped on", async () => {
+    const store = memStateStore(null);
+    const { client, paths } = driveChain(10);
+    // A page costs 24-29 s in production and the budget is 180 s, so the eighth
+    // page is the first that lands the walk past it.
+    let elapsedMs = 0;
+    const now = (): number => {
+      const at = elapsedMs;
+      elapsedMs += 25_000;
+      return at;
+    };
+    const result = await walk({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [makeProfile()],
+      initialUrl: INITIAL_URL,
+      pageBudget: 10,
+      timeBudgetMs: 180_000,
+      now,
+    });
+    expect(paths).toHaveLength(8);
+    expect(result.outcome).toBe("deferred");
+    expect(result.pagesCompleted).toBe(8);
+    expect(result.resumeLink).toBe(nextLinkFor(8));
+    expect(result.deltaLink).toBeUndefined();
+    // The pages it did walk are landed; only the cursor moves on.
+    expect(result.events).toHaveLength(1600);
+    expect(store.writes).toBe(0);
+  });
+  it("stops at the page budget when the clock never advances, so a huge drive still ends", async () => {
+    const store = memStateStore(null);
+    // Fifty pages is ten times the production drive: far past the time budget at
+    // a real page cost, and past the page cap even if a page were free.
+    const { client, paths } = driveChain(50);
+    const result = await walk({
+      connection: { userId: "github|12345", provider: "onedrive" },
+      client,
+      store,
+      profiles: [makeProfile()],
+      initialUrl: INITIAL_URL,
+      now: () => 0,
+    });
+    expect(paths).toHaveLength(20);
+    expect(result.outcome).toBe("deferred");
+    expect(result.pagesCompleted).toBe(20);
+    expect(result.resumeLink).toBe(nextLinkFor(20));
   });
   it("keeps only the last occurrence of an item repeated within one page", async () => {
     const store = memStateStore(null);
