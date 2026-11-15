@@ -1,5 +1,6 @@
 import type { EventLogWriter } from "@petroglyph/events";
 import { detectType, type StagedObjectStore } from "@petroglyph/staging-contracts";
+import { consoleLogger, type Logger } from "../log.js";
 import type { GraphClient } from "../tokens/graph-client.js";
 import type { FileChangeEvent } from "../delta/delta-walk.js";
 import { fetchItemContent } from "./fetch.js";
@@ -21,7 +22,7 @@ export interface ProcessChangeDeps {
   eventLog: EventLogWriter;
   /** CE id — reused on redelivery so the event log dedupes source+id. */
   emissionId: string;
-  log?: (message: string) => void;
+  log?: Logger;
 }
 
 /**
@@ -41,12 +42,15 @@ export interface ProcessChangeDeps {
  * - A suppressed emit (the event log already holds source+id) returns
  *   "deduped": the write did not happen, so callers must not count it as
  *   landed/deleted.
+ *
+ * The three lines below report a change that did not land: worth counting, so
+ * they log at WARN, and none of them is a failure — the next walk re-evaluates.
  */
 export async function processChange(
   change: FileChangeEvent,
   deps: ProcessChangeDeps,
 ): Promise<ProcessChangeOutcome> {
-  const log = deps.log ?? console.error;
+  const log = deps.log ?? consoleLogger;
 
   if (change.kind === "deleted") {
     const written = await emitFileDeleted(deps.eventLog, {
@@ -60,7 +64,7 @@ export async function processChange(
   if (name === undefined) {
     // No name, no staging key and no event name — nothing landable this walk.
     // Absence is handled, never substituted (petroglyph-j1gn.24).
-    log(`[land] item ${change.itemId} has no name; skipping`);
+    log.warn(`[land] item ${change.itemId} has no name; skipping`);
     return "skipped";
   }
 
@@ -70,13 +74,13 @@ export async function processChange(
 
   const fetched = await fetchItemContent(deps.graph, change.itemId);
   if (fetched.kind === "not-found") {
-    log(`[land] item ${change.itemId} vanished before fetch; next walk re-evaluates`);
+    log.warn(`[land] item ${change.itemId} vanished before fetch; next walk re-evaluates`);
     return "fetch-404";
   }
 
   const detected = detectType(fetched.bytes);
   if (detected === null) {
-    log(
+    log.warn(
       `[land] lie telemetry — claim ${change.mimeType ?? "none"}, extension ${change.name}, detected null (${change.itemId})`,
     );
     return "gate-rejected";

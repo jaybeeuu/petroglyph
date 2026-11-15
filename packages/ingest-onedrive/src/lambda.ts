@@ -15,6 +15,7 @@ import { DynamoDBTokenStore } from "./tokens/token-store-ddb.js";
 import { OAuthTokenClient } from "./tokens/token-client.js";
 import { MicrosoftGraphClient } from "./tokens/graph-client.js";
 import { DynamoDBDeltaStateStore } from "./delta/delta-state-store-ddb.js";
+import { consoleLogger, type Logger } from "./log.js";
 import { runDeltaSync, type DeltaSyncResult } from "./adapter/sync.js";
 
 /**
@@ -27,9 +28,9 @@ import { runDeltaSync, type DeltaSyncResult } from "./adapter/sync.js";
  */
 export function createAdapterHandler(deps: {
   runDelta: (connection: { userId: string; provider: string }) => Promise<DeltaSyncResult>;
-  log?: (message: string) => void;
+  log?: Logger;
 }): (event: SQSEvent) => Promise<SQSBatchResponse> {
-  const log = deps.log ?? console.error;
+  const log = deps.log ?? consoleLogger;
   return async (event) => {
     const batchItemFailures: SQSBatchResponse["batchItemFailures"] = [];
     for (const message of event.Records) {
@@ -37,24 +38,26 @@ export function createAdapterHandler(deps: {
       try {
         body = JSON.parse(message.body);
       } catch {
-        log(`[adapter] invalid delta trigger (${message.body.slice(0, 120)}...): invalid JSON`);
+        log.error(
+          `[adapter] invalid delta trigger (${message.body.slice(0, 120)}...): invalid JSON`,
+        );
         continue;
       }
       const parsed = deltaTriggerSchema.safeParse(body);
       if (!parsed.success) {
-        log(
+        log.error(
           `[adapter] invalid delta trigger (${message.body.slice(0, 120)}...): ${parsed.error.message}`,
         );
         continue;
       }
       try {
         const result = await deps.runDelta(parsed.data);
-        log(describeProgress(parsed.data, result));
+        logProgress(log, parsed.data, result);
         if (result.outcome === "failed") {
           batchItemFailures.push({ itemIdentifier: message.messageId });
         }
       } catch (error) {
-        log(`[adapter] delta run failed: ${String(error)}`);
+        log.error(`[adapter] delta run failed: ${String(error)}`);
         batchItemFailures.push({ itemIdentifier: message.messageId });
       }
     }
@@ -64,18 +67,37 @@ export function createAdapterHandler(deps: {
 
 /**
  * The per-bell progress line. A deferred walk, a failed walk and a walk that
- * reached the terminal change token all report the same two numbers, because
- * they are the only per-invocation progress signal the adapter has: without
- * them a catch-up that stops advancing looks exactly like a healthy one. The
- * counts carry no token, resume link or secret — `pagesRemaining` is null when
- * pages remain, since Graph's delta reports no total.
+ * reached the terminal change token all report the same numbers, because they
+ * are the only per-invocation progress signal the adapter has: without them a
+ * catch-up that stops advancing looks exactly like a healthy one. The counts
+ * carry no token, resume link or secret — `pagesRemaining` is null when pages
+ * remain, since Graph's delta reports no total.
+ *
+ * The level is the whole point of the line: a walk that reaches the terminal
+ * token is the success case (INFO), a walk that stopped with pages left is
+ * expected (WARN — count it, do not page on it), and only a failed walk earns
+ * ERROR. Anything reading ERROR therefore means something broke.
  */
+function logProgress(log: Logger, trigger: DeltaTrigger, result: DeltaSyncResult): void {
+  const message = describeProgress(trigger, result);
+  if (result.outcome === "failed") {
+    log.error(message);
+    return;
+  }
+  if (result.pagesRemaining === null) {
+    log.warn(message);
+    return;
+  }
+  log.info(message);
+}
+
 function describeProgress(trigger: DeltaTrigger, result: DeltaSyncResult): string {
   const remaining =
     result.pagesRemaining === null ? "more remain" : `${result.pagesRemaining} remaining`;
   return (
     `[adapter] delta run for ${trigger.userId}/${trigger.provider} ${result.outcome}: ` +
-    `${result.pagesCompleted} page(s) completed, ${remaining}`
+    `${result.pagesCompleted} page(s) completed, ${remaining}, ` +
+    `${result.landed} landed, ${result.deleted} deleted, ${result.skipped} skipped`
   );
 }
 

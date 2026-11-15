@@ -3,6 +3,7 @@ import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { tokenRecordSchema } from "@petroglyph/core";
 import type { TokenRecord, TokenStore } from "@petroglyph/core";
 import { z } from "zod";
+import { consoleLogger, type Logger } from "../log.js";
 
 export { tokenRecordSchema };
 
@@ -26,8 +27,8 @@ type StoredTokenRecord = TokenRecord & { userId: string; provider: string };
 export interface DynamoDBTokenStoreOptions {
   client: DynamoDBDocumentClient;
   tableName: string;
-  /** Where a vault row skipped by the sweep is reported; defaults to console.error. */
-  log?: (message: string) => void;
+  /** Where a vault row skipped by the sweep is reported; defaults to a WARN line. */
+  log?: Logger;
 }
 
 const CAS_FAILURE_NAME = "ConditionalCheckFailedException";
@@ -49,12 +50,12 @@ function isConditionalCheckFailure(error: unknown): boolean {
 export class DynamoDBTokenStore implements TokenStore {
   readonly #client: DynamoDBDocumentClient;
   readonly #tableName: string;
-  readonly #log: (message: string) => void;
+  readonly #log: Logger;
 
   constructor(options: DynamoDBTokenStoreOptions) {
     this.#client = options.client;
     this.#tableName = options.tableName;
-    this.#log = options.log ?? console.error;
+    this.#log = options.log ?? consoleLogger;
   }
 
   async read(userId: string, provider: string): Promise<TokenRecord | null> {
@@ -95,7 +96,7 @@ export class DynamoDBTokenStore implements TokenStore {
       for (const item of result.Items ?? []) {
         const connection = storedConnectionSchema.safeParse(item);
         if (!connection.success) {
-          this.#log(
+          this.#log.warn(
             `[ingest-onedrive] skipping malformed connection in token vault: ${describeConnection(item)}`,
           );
           continue;

@@ -1,7 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBTokenStore } from "./token-store-ddb.js";
+import type { Logger } from "../log.js";
 import type { TokenRecord } from "@petroglyph/core";
+
+/** The three levels as separate spies, so a test asserts the level, not just the text. */
+function createLoggerStub(): Logger & {
+  info: ReturnType<typeof vi.fn<(message: string) => void>>;
+  warn: ReturnType<typeof vi.fn<(message: string) => void>>;
+  error: ReturnType<typeof vi.fn<(message: string) => void>>;
+} {
+  return {
+    info: vi.fn<(message: string) => void>(),
+    warn: vi.fn<(message: string) => void>(),
+    error: vi.fn<(message: string) => void>(),
+  };
+}
 
 const record: TokenRecord = {
   accessToken: "access-1",
@@ -160,7 +174,7 @@ describe("DynamoDBTokenStore", () => {
         ],
       });
       const client = { send } as unknown as DynamoDBDocumentClient;
-      const store = new DynamoDBTokenStore({ ...options, client, log: vi.fn() });
+      const store = new DynamoDBTokenStore({ ...options, client, log: createLoggerStub() });
 
       const connections = await store.list();
 
@@ -174,12 +188,13 @@ describe("DynamoDBTokenStore", () => {
         Items: [{ userId: "github|2", provider: "onedrive", reconnectRequired: null }],
       });
       const client = { send } as unknown as DynamoDBDocumentClient;
-      const log = vi.fn();
+      const log = createLoggerStub();
       const store = new DynamoDBTokenStore({ ...options, client, log });
 
       await store.list();
 
-      expect(log).toHaveBeenCalledWith(expect.stringContaining("github|2:onedrive"));
+      expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("github|2:onedrive"));
+      expect(log.error).not.toHaveBeenCalled();
     });
 
     it("skips a row with no identity at all", async () => {
@@ -190,13 +205,13 @@ describe("DynamoDBTokenStore", () => {
         ],
       });
       const client = { send } as unknown as DynamoDBDocumentClient;
-      const log = vi.fn();
+      const log = createLoggerStub();
       const store = new DynamoDBTokenStore({ ...options, client, log });
 
       const connections = await store.list();
 
       expect(connections.map((connection) => connection.userId)).toEqual(["github|1"]);
-      expect(log).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledTimes(1);
     });
 
     it("is empty when the table holds no connection", async () => {

@@ -1,7 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SQSEvent } from "aws-lambda";
 import type { DeltaSyncResult } from "./adapter/sync.js";
+import type { Logger } from "./log.js";
 import { createAdapterHandler } from "./lambda.js";
+
+/** The three levels as separate spies, so a test asserts the level, not just the text. */
+function createLoggerStub(): Logger & {
+  info: ReturnType<typeof vi.fn<(message: string) => void>>;
+  warn: ReturnType<typeof vi.fn<(message: string) => void>>;
+  error: ReturnType<typeof vi.fn<(message: string) => void>>;
+} {
+  return {
+    info: vi.fn<(message: string) => void>(),
+    warn: vi.fn<(message: string) => void>(),
+    error: vi.fn<(message: string) => void>(),
+  };
+}
 
 function sqsEvent(bodies: string[]): SQSEvent {
   return {
@@ -53,10 +67,10 @@ const deferred: DeltaSyncResult = {
 };
 
 describe("adapter lambda handler (delta-trigger SQS)", () => {
-  it("runs the delta sync for each valid trigger and reports no failures", async () => {
+  it("logs a walk that reached the terminal token at INFO, with pages and items, and no ERROR", async () => {
     const runDelta = vi.fn().mockResolvedValue(completed);
-    const logged: string[] = [];
-    const handler = createAdapterHandler({ runDelta, log: (message) => logged.push(message) });
+    const log = createLoggerStub();
+    const handler = createAdapterHandler({ runDelta, log });
 
     const response = await handler(sqsEvent([JSON.stringify(trigger), JSON.stringify(trigger)]));
 
@@ -64,37 +78,42 @@ describe("adapter lambda handler (delta-trigger SQS)", () => {
     expect(runDelta).toHaveBeenCalledWith(trigger);
     expect(response.batchItemFailures).toEqual([]);
     // A walk that reached the terminal change token reports a real remaining
-    // count: none.
-    expect(logged).toEqual([
-      "[adapter] delta run for u1/onedrive completed: 1 page(s) completed, 0 remaining",
-      "[adapter] delta run for u1/onedrive completed: 1 page(s) completed, 0 remaining",
-    ]);
+    // count (none) and what it landed, so a healthy run is one INFO line.
+    expect(log.info).toHaveBeenCalledTimes(2);
+    expect(log.info).toHaveBeenCalledWith(
+      "[adapter] delta run for u1/onedrive completed: 1 page(s) completed, 0 remaining, 1 landed, 0 deleted, 0 skipped",
+    );
+    expect(log.error).not.toHaveBeenCalled();
+    expect(log.warn).not.toHaveBeenCalled();
   });
 
-  it("reports the pages completed and says pages remain when the walk defers to a continuation", async () => {
+  it("logs a deferred walk at WARN, naming the pages completed and that pages remain", async () => {
     const runDelta = vi.fn().mockResolvedValue(deferred);
-    const logged: string[] = [];
-    const handler = createAdapterHandler({ runDelta, log: (message) => logged.push(message) });
+    const log = createLoggerStub();
+    const handler = createAdapterHandler({ runDelta, log });
 
     const response = await handler(sqsEvent([JSON.stringify(trigger)]));
 
     expect(response.batchItemFailures).toEqual([]);
-    expect(logged).toEqual([
-      "[adapter] delta run for u1/onedrive completed: 1 page(s) completed, more remain",
-    ]);
+    expect(log.warn).toHaveBeenCalledWith(
+      "[adapter] delta run for u1/onedrive completed: 1 page(s) completed, more remain, 1 landed, 0 deleted, 0 skipped",
+    );
+    expect(log.error).not.toHaveBeenCalled();
   });
 
-  it("reports the pages completed when the walk fails, so a stalled catch-up is visible", async () => {
+  it("logs a failed walk at ERROR with its pages and items, so a stalled catch-up stays loud", async () => {
     const runDelta = vi.fn().mockResolvedValue({ ...failed, pagesCompleted: 2 });
-    const logged: string[] = [];
-    const handler = createAdapterHandler({ runDelta, log: (message) => logged.push(message) });
+    const log = createLoggerStub();
+    const handler = createAdapterHandler({ runDelta, log });
 
     const response = await handler(sqsEvent([JSON.stringify(trigger)]));
 
     expect(response.batchItemFailures).toEqual([{ itemIdentifier: "msg-0" }]);
-    expect(logged).toEqual([
-      "[adapter] delta run for u1/onedrive failed: 2 page(s) completed, more remain",
-    ]);
+    expect(log.error).toHaveBeenCalledWith(
+      "[adapter] delta run for u1/onedrive failed: 2 page(s) completed, more remain, 0 landed, 0 deleted, 0 skipped",
+    );
+    expect(log.info).not.toHaveBeenCalled();
+    expect(log.warn).not.toHaveBeenCalled();
   });
 
   it("fails the message when the walk fails so SQS redelivers it", async () => {
@@ -106,24 +125,26 @@ describe("adapter lambda handler (delta-trigger SQS)", () => {
     expect(response.batchItemFailures).toEqual([{ itemIdentifier: "msg-0" }]);
   });
 
-  it("fails the message when the run throws (transient error) and keeps the batch going", async () => {
+  it("fails the message and logs ERROR when the run throws (transient error), keeping the batch going", async () => {
     const runDelta = vi
       .fn()
       .mockRejectedValueOnce(new Error("graph 500"))
       .mockResolvedValueOnce(completed);
-    const handler = createAdapterHandler({ runDelta });
+    const log = createLoggerStub();
+    const handler = createAdapterHandler({ runDelta, log });
 
     const response = await handler(
       sqsEvent([JSON.stringify(trigger), JSON.stringify({ userId: "u2", provider: "onedrive" })]),
     );
 
     expect(response.batchItemFailures).toEqual([{ itemIdentifier: "msg-0" }]);
+    expect(log.error).toHaveBeenCalledWith("[adapter] delta run failed: Error: graph 500");
   });
 
   it("skips a malformed trigger with a loud log and never retries the poison message", async () => {
     const runDelta = vi.fn().mockResolvedValue(completed);
-    const logged: string[] = [];
-    const handler = createAdapterHandler({ runDelta, log: (message) => logged.push(message) });
+    const log = createLoggerStub();
+    const handler = createAdapterHandler({ runDelta, log });
 
     const response = await handler(
       sqsEvent(["not-json", JSON.stringify({ userId: "u1" }), JSON.stringify(trigger)]),
@@ -131,8 +152,11 @@ describe("adapter lambda handler (delta-trigger SQS)", () => {
 
     expect(runDelta).toHaveBeenCalledTimes(1);
     expect(response.batchItemFailures).toEqual([]);
-    // two poison rows (unparseable JSON + missing provider) both logged loudly
-    const poison = logged.filter((entry) => entry.includes("invalid delta trigger"));
+    // Two poison rows (unparseable JSON + missing provider) both logged loudly,
+    // and never at a level an operator filters out.
+    const poison = log.error.mock.calls.filter(([entry]) =>
+      entry.includes("invalid delta trigger"),
+    );
     expect(poison).toHaveLength(2);
   });
 });

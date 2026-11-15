@@ -8,6 +8,7 @@ import {
   walkDelta,
 } from "../delta/delta-walk.js";
 import type { GraphClient } from "../tokens/graph-client.js";
+import { consoleLogger, type Logger } from "../log.js";
 import { processChange } from "../land/process-change.js";
 
 export interface DeltaSyncResult {
@@ -53,7 +54,7 @@ export interface RunDeltaSyncOptions {
    * stored resume link silently goes stale.
    */
   requestContinuation: (continuation: DeltaContinuation) => Promise<void>;
-  log?: (message: string) => void;
+  log?: Logger;
 }
 
 /**
@@ -70,10 +71,11 @@ export interface RunDeltaSyncOptions {
  * A walk that spends its page budget is not a failure: the page it did fetch is
  * already landed, the resume point becomes the stored token, and a continuation
  * bell carries the walk on. That keeps one invocation well inside the Lambda
- * timeout, which a first walk over a whole drive never was.
+ * timeout, which a first walk over a whole drive never was — and it is why a
+ * deferred walk logs at WARN: worth counting, not worth paging on.
  */
 export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaSyncResult> {
-  const log = options.log ?? console.error;
+  const log = options.log ?? consoleLogger;
   const connection = options.connection;
 
   if (options.profiles.length === 0) {
@@ -131,7 +133,7 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
     // indistinguishable from one that never started, and a bare count leaves
     // the operator needing a manual Graph probe. The line carries no token,
     // resume link or presigned URL — item ids only.
-    log(
+    log.error(
       `[adapter] delta walk failed for ${connection.userId}/${connection.provider} ` +
         `after ${walk.pagesCompleted} page(s): ${describeFailure(walk.failure)}`,
     );
@@ -155,7 +157,7 @@ export async function runDeltaSync(options: RunDeltaSyncOptions): Promise<DeltaS
       updatedAt: new Date().toISOString(),
     });
     await options.requestContinuation({ connection, resumeLink: walk.resumeLink });
-    log(
+    log.warn(
       `[adapter] delta walk deferred for ${connection.userId}/${connection.provider}: ` +
         `${walk.pagesCompleted} page(s) completed, more remain — continuation enqueued`,
     );
@@ -212,16 +214,16 @@ function describeFailure(failure: DeltaWalkFailure | undefined): string {
  * A deleted item carries no version, so its id deliberately falls back to the
  * 3-part profile:item:kind. A file change with no eTag is unexpected (the
  * delta `$select` requests the top-level `eTag`), so it falls back too — and
- * logs, because the absence means the page contract is wrong and the second
+ * warns, because the absence means the page contract is wrong and the second
  * update would be silently suppressed as a duplicate.
  */
-function emissionIdFor(change: FileChangeEvent, log: (message: string) => void): string {
+function emissionIdFor(change: FileChangeEvent, log: Logger): string {
   const id = `${change.profileId}:${change.itemId}:${change.kind}`;
   if (change.kind !== "file") {
     return id;
   }
   if (change.eTag === undefined) {
-    log(
+    log.warn(
       `[adapter] item ${change.itemId} has no eTag; emission id ${id} is unversioned and a later update will be suppressed as a duplicate`,
     );
     return id;

@@ -1,8 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StagedObjectStore } from "@petroglyph/staging-contracts";
 import { processChange, type ProcessChangeDeps } from "./process-change.js";
+import type { Logger } from "../log.js";
 import type { GraphClient } from "../tokens/graph-client.js";
 import type { FileChangeEvent } from "../delta/delta-walk.js";
+
+/** The three levels as separate spies, so a test asserts the level, not just the text. */
+function createLoggerStub(): Logger & {
+  info: ReturnType<typeof vi.fn<(message: string) => void>>;
+  warn: ReturnType<typeof vi.fn<(message: string) => void>>;
+  error: ReturnType<typeof vi.fn<(message: string) => void>>;
+} {
+  return {
+    info: vi.fn<(message: string) => void>(),
+    warn: vi.fn<(message: string) => void>(),
+    error: vi.fn<(message: string) => void>(),
+  };
+}
 
 const PDF_BYTES = new TextEncoder().encode("%PDF-1.7\n1 0 obj");
 const HTML_BYTES = new TextEncoder().encode("<!DOCTYPE html><html><body>fake</body></html>");
@@ -42,7 +56,11 @@ interface Harness {
   request: ReturnType<typeof vi.fn>;
   put: ReturnType<typeof vi.fn>;
   putIfAbsent: ReturnType<typeof vi.fn>;
-  log: ReturnType<typeof vi.fn>;
+  log: Logger & {
+    info: ReturnType<typeof vi.fn>;
+    warn: ReturnType<typeof vi.fn>;
+    error: ReturnType<typeof vi.fn>;
+  };
   run: (change: FileChangeEvent, emissionId?: string) => Promise<string>;
 }
 
@@ -56,7 +74,7 @@ function makeHarness(
   const store = { put } as unknown as StagedObjectStore;
   const putIfAbsent = vi.fn<(document: unknown) => Promise<boolean>>().mockResolvedValue(true);
   const eventLog = { putIfAbsent };
-  const log = vi.fn<(message: string) => void>();
+  const log = createLoggerStub();
   const deps: ProcessChangeDeps = {
     graph,
     store,
@@ -145,7 +163,9 @@ describe("processChange", () => {
     expect(harness.request).not.toHaveBeenCalled();
     expect(harness.put).not.toHaveBeenCalled();
     expect(harness.putIfAbsent).not.toHaveBeenCalled();
-    expect(harness.log).toHaveBeenCalledTimes(1);
+    // A change that did not land is countable, but it is not a failure.
+    expect(harness.log.warn).toHaveBeenCalledTimes(1);
+    expect(harness.log.error).not.toHaveBeenCalled();
   });
 
   it("gate+land: mimeType in the event equals the detected type, never the vendor claim", async () => {
@@ -165,7 +185,7 @@ describe("processChange", () => {
     expect(document.data.s3Key).toBe("staging/v1/p1/notes/a.pdf");
   });
 
-  it("lie telemetry: claim pdf but bytes are not a PDF -> no put, no event, triple logged", async () => {
+  it("lie telemetry: claim pdf but bytes are not a PDF -> no put, no event, triple warned", async () => {
     const harness = makeHarness(() => bytesResponse(HTML_BYTES));
 
     const outcome = await harness.run(created);
@@ -173,8 +193,8 @@ describe("processChange", () => {
     expect(outcome).toBe("gate-rejected");
     expect(harness.put).not.toHaveBeenCalled();
     expect(harness.putIfAbsent).not.toHaveBeenCalled();
-    expect(harness.log).toHaveBeenCalledTimes(1);
-    const triple = harness.log.mock.calls[0]?.[0] as string;
+    expect(harness.log.warn).toHaveBeenCalledTimes(1);
+    const triple = harness.log.warn.mock.calls[0]?.[0] as string;
     expect(triple).toContain("application/pdf"); // claim
     expect(triple).toContain("a.pdf"); // extension
     expect(triple).toContain("null"); // detected
@@ -260,7 +280,7 @@ describe("processChange", () => {
     });
   });
 
-  it("fetch 404: no land, no event, logged (the next walk re-evaluates)", async () => {
+  it("fetch 404: no land, no event, warned (the next walk re-evaluates)", async () => {
     const harness = makeHarness(() => bytesResponse(new Uint8Array(0), 404));
 
     const outcome = await harness.run(created);
@@ -268,7 +288,7 @@ describe("processChange", () => {
     expect(outcome).toBe("fetch-404");
     expect(harness.put).not.toHaveBeenCalled();
     expect(harness.putIfAbsent).not.toHaveBeenCalled();
-    expect(harness.log).toHaveBeenCalledTimes(1);
+    expect(harness.log.warn).toHaveBeenCalledTimes(1);
   });
 
   it("fetch 5xx surfaces as a failure: no partial event, caller retries the job", async () => {
