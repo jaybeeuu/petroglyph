@@ -6,6 +6,7 @@ import type { SyncProfile } from "@petroglyph/core";
 const mockGetProfile = vi.hoisted(() => vi.fn());
 const mockListProfiles = vi.hoisted(() => vi.fn());
 const mockPutProfile = vi.hoisted(() => vi.fn());
+const mockUpdateProfile = vi.hoisted(() => vi.fn());
 const mockDeleteProfile = vi.hoisted(() => vi.fn());
 const mockDbSend = vi.hoisted(() => vi.fn());
 
@@ -17,6 +18,7 @@ vi.mock("@petroglyph/core", async (importOriginal) => {
     getProfile: mockGetProfile,
     listProfiles: mockListProfiles,
     putProfile: mockPutProfile,
+    updateProfile: mockUpdateProfile,
     deleteProfile: mockDeleteProfile,
   };
 });
@@ -47,6 +49,14 @@ function makeProfile(overrides: Partial<SyncProfile> = {}): SyncProfile {
   };
 }
 
+/** The writes the handler made: the profile each one targeted and the attributes it named. */
+function profileWrites(): { profileId: string; attributes: string[] }[] {
+  return mockUpdateProfile.mock.calls.map((call) => ({
+    profileId: call[3] as string,
+    attributes: Object.keys(call[4] as { [attribute: string]: unknown }),
+  }));
+}
+
 describe("profiles CRUD handlers", () => {
   let privateKey: CryptoKey;
   let publicKeyPem: string;
@@ -64,6 +74,7 @@ describe("profiles CRUD handlers", () => {
     mockGetProfile.mockReset();
     mockListProfiles.mockReset();
     mockPutProfile.mockReset();
+    mockUpdateProfile.mockReset();
     mockDeleteProfile.mockReset();
     mockDbSend.mockReset();
     resetKeyCache();
@@ -140,7 +151,7 @@ describe("profiles CRUD handlers", () => {
     it("merges partial updates and sets updatedAt", async () => {
       const existing = makeProfile({ name: "Old Name" });
       mockGetProfile.mockResolvedValue(existing);
-      mockPutProfile.mockResolvedValue(undefined);
+      mockUpdateProfile.mockResolvedValue(undefined);
 
       const response = await request("PUT", "/profiles/profile-1", { name: "New Name" });
 
@@ -149,13 +160,35 @@ describe("profiles CRUD handlers", () => {
       expect(body.name).toBe("New Name");
       expect(body.sourceFolderPath).toBe(existing.sourceFolderPath);
       expect(body.updatedAt).not.toBe(existing.updatedAt);
-      expect(mockPutProfile).toHaveBeenCalledOnce();
+      expect(mockUpdateProfile).toHaveBeenCalledOnce();
+    });
+
+    it("writes only the attributes the request names", async () => {
+      const existing = makeProfile({ name: "Old Name", active: false });
+      mockGetProfile.mockResolvedValue(existing);
+      mockUpdateProfile.mockResolvedValue(undefined);
+
+      const response = await request("PUT", "/profiles/profile-1", { name: "New Name" });
+
+      expect(response.status).toBe(200);
+      expect(mockUpdateProfile).toHaveBeenCalledWith(
+        expect.anything(),
+        "petroglyph-sync-profiles-test",
+        "user-42",
+        "profile-1",
+        expect.anything(),
+      );
+      expect(profileWrites()).toEqual([
+        { profileId: "profile-1", attributes: ["name", "updatedAt"] },
+      ]);
+      const writtenName = mockUpdateProfile.mock.calls[0]?.[4] as { name?: string };
+      expect(writtenName.name).toBe("New Name");
     });
 
     it("stores a leading-slash source folder path without the leading slash", async () => {
       const existing = makeProfile({ sourceFolderPath: "onyx/NoteAir5C/Notebooks" });
       mockGetProfile.mockResolvedValue(existing);
-      mockPutProfile.mockResolvedValue(undefined);
+      mockUpdateProfile.mockResolvedValue(undefined);
 
       const response = await request("PUT", "/profiles/profile-1", {
         sourceFolderPath: "/onyx/Other/Notebooks",
@@ -164,9 +197,11 @@ describe("profiles CRUD handlers", () => {
       expect(response.status).toBe(200);
       const body = (await response.json()) as SyncProfile;
       expect(body.sourceFolderPath).toBe("onyx/Other/Notebooks");
-      expect(mockPutProfile).toHaveBeenCalledWith(
+      expect(mockUpdateProfile).toHaveBeenCalledWith(
         expect.anything(),
         "petroglyph-sync-profiles-test",
+        "user-42",
+        "profile-1",
         expect.objectContaining({ sourceFolderPath: "onyx/Other/Notebooks" }),
       );
     });
@@ -203,15 +238,12 @@ describe("profiles CRUD handlers", () => {
       const existing = makeProfile({ active: false });
       mockGetProfile.mockResolvedValue(existing);
       mockListProfiles.mockResolvedValue([existing]);
-      mockPutProfile.mockResolvedValue(undefined);
+      mockUpdateProfile.mockResolvedValue(undefined);
 
       const response = await request("PUT", "/profiles/profile-1", { active: true });
 
       expect(response.status).toBe(200);
-      expect(mockPutProfile.mock.calls[0]?.[2]).toMatchObject({
-        profileId: "profile-1",
-        active: true,
-      });
+      expect(mockUpdateProfile.mock.calls[0]?.[4]).toMatchObject({ active: true });
       const body = (await response.json()) as SyncProfile & {
         deactivatedProfileIds: string[];
       };
@@ -224,14 +256,14 @@ describe("profiles CRUD handlers", () => {
       const previouslyActive = makeProfile({ profileId: "profile-2", active: true });
       mockGetProfile.mockResolvedValue(target);
       mockListProfiles.mockResolvedValue([target, previouslyActive]);
-      mockPutProfile.mockResolvedValue(undefined);
+      mockUpdateProfile.mockResolvedValue(undefined);
 
       const response = await request("PUT", "/profiles/profile-1", { active: true });
 
       expect(response.status).toBe(200);
-      expect(mockPutProfile.mock.calls.map((call) => call[2] as SyncProfile)).toEqual([
-        expect.objectContaining({ profileId: "profile-1", active: true }),
-        expect.objectContaining({ profileId: "profile-2", active: false }),
+      expect(profileWrites()).toEqual([
+        { profileId: "profile-1", attributes: ["active", "updatedAt"] },
+        { profileId: "profile-2", attributes: ["active", "updatedAt"] },
       ]);
       const body = (await response.json()) as { deactivatedProfileIds: string[] };
       expect(body.deactivatedProfileIds).toEqual(["profile-2"]);
@@ -243,7 +275,7 @@ describe("profiles CRUD handlers", () => {
       const response = await request("PUT", "/profiles/profile-1", { actve: true });
 
       expect(response.status).toBe(400);
-      expect(mockPutProfile).not.toHaveBeenCalled();
+      expect(mockUpdateProfile).not.toHaveBeenCalled();
     });
 
     it("rejects deactivating the active profile", async () => {
@@ -252,13 +284,13 @@ describe("profiles CRUD handlers", () => {
       const response = await request("PUT", "/profiles/profile-1", { active: false });
 
       expect(response.status).toBe(409);
-      expect(mockPutProfile).not.toHaveBeenCalled();
+      expect(mockUpdateProfile).not.toHaveBeenCalled();
     });
 
     it("accepts partial updates with multiple fields", async () => {
       const existing = makeProfile();
       mockGetProfile.mockResolvedValue(existing);
-      mockPutProfile.mockResolvedValue(undefined);
+      mockUpdateProfile.mockResolvedValue(undefined);
 
       const response = await request("PUT", "/profiles/profile-1", {
         enabled: false,
@@ -320,15 +352,17 @@ describe("profiles CRUD handlers", () => {
       mockDeleteProfile.mockResolvedValue(undefined);
       mockDbSend.mockResolvedValue({ Items: [] });
       mockListProfiles.mockResolvedValue([olderProfile, newerProfile]);
-      mockPutProfile.mockResolvedValue(undefined);
+      mockUpdateProfile.mockResolvedValue(undefined);
 
       const response = await request("DELETE", "/profiles/profile-1");
 
       expect(response.status).toBe(204);
-      expect(mockPutProfile).toHaveBeenCalledOnce();
-      const promoted = mockPutProfile.mock.calls[0]?.[2] as SyncProfile;
-      expect(promoted.profileId).toBe("profile-3");
-      expect(promoted.active).toBe(true);
+      expect(mockUpdateProfile).toHaveBeenCalledOnce();
+      expect(profileWrites()).toEqual([
+        { profileId: "profile-3", attributes: ["active", "updatedAt"] },
+      ]);
+      const promotion = mockUpdateProfile.mock.calls[0]?.[4] as { active?: boolean };
+      expect(promotion.active).toBe(true);
     });
 
     it("does not promote any profile when no other profiles exist", async () => {
@@ -341,7 +375,7 @@ describe("profiles CRUD handlers", () => {
       const response = await request("DELETE", "/profiles/profile-1");
 
       expect(response.status).toBe(204);
-      expect(mockPutProfile).not.toHaveBeenCalled();
+      expect(mockUpdateProfile).not.toHaveBeenCalled();
     });
 
     it("does not promote any profile when deleted profile was not active", async () => {
@@ -355,7 +389,7 @@ describe("profiles CRUD handlers", () => {
       const response = await request("DELETE", "/profiles/profile-1");
 
       expect(response.status).toBe(204);
-      expect(mockPutProfile).not.toHaveBeenCalled();
+      expect(mockUpdateProfile).not.toHaveBeenCalled();
     });
 
     it("deletes file_records for the profile", async () => {

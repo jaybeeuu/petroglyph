@@ -10,7 +10,7 @@ import {
   getProfile,
   listProfiles,
   normalizeSourceFolderPath,
-  putProfile,
+  updateProfile,
   deleteProfile,
 } from "@petroglyph/core";
 import type { SyncProfile } from "@petroglyph/core";
@@ -27,6 +27,25 @@ function fileRecordsTableName(): string {
 
 /** The validated body of a profile update. */
 type PutProfileBody = EndpointInput<(typeof putProfileOperation)["request"]>["body"];
+
+/**
+ * The attributes a profile update writes. Built from the request, never from the
+ * stored profile: `getProfile` parses the row with the domain schema, which
+ * drops every attribute that schema does not model, so a write derived from the
+ * parsed profile would delete them.
+ */
+type ProfileUpdate = Partial<
+  Pick<
+    SyncProfile,
+    | "name"
+    | "sourceFolderPath"
+    | "destinationVaultPath"
+    | "pollingIntervalMinutes"
+    | "enabled"
+    | "initialSyncEnabled"
+    | "active"
+  >
+> & { updatedAt: string };
 
 async function deleteFileRecordsForProfile(profileId: string): Promise<void> {
   let lastEvaluatedKey: { [key: string]: unknown } | undefined;
@@ -54,26 +73,30 @@ async function deleteFileRecordsForProfile(profileId: string): Promise<void> {
   } while (lastEvaluatedKey !== undefined);
 }
 
-function mergeProfile(existing: SyncProfile, updates: PutProfileBody): SyncProfile {
+function profileUpdateFrom(body: PutProfileBody, updatedAt: string): ProfileUpdate {
   return {
-    ...existing,
-    ...(updates.name !== undefined && { name: updates.name }),
-    ...(updates.sourceFolderPath !== undefined && {
-      sourceFolderPath: normalizeSourceFolderPath(updates.sourceFolderPath),
+    ...(body.name !== undefined && { name: body.name }),
+    ...(body.sourceFolderPath !== undefined && {
+      sourceFolderPath: normalizeSourceFolderPath(body.sourceFolderPath),
     }),
-    ...(updates.destinationVaultPath !== undefined && {
-      destinationVaultPath: updates.destinationVaultPath,
+    ...(body.destinationVaultPath !== undefined && {
+      destinationVaultPath: body.destinationVaultPath,
     }),
-    ...(updates.pollingIntervalMinutes !== undefined && {
-      pollingIntervalMinutes: updates.pollingIntervalMinutes,
+    ...(body.pollingIntervalMinutes !== undefined && {
+      pollingIntervalMinutes: body.pollingIntervalMinutes,
     }),
-    ...(updates.enabled !== undefined && { enabled: updates.enabled }),
-    ...(updates.initialSyncEnabled !== undefined && {
-      initialSyncEnabled: updates.initialSyncEnabled,
+    ...(body.enabled !== undefined && { enabled: body.enabled }),
+    ...(body.initialSyncEnabled !== undefined && {
+      initialSyncEnabled: body.initialSyncEnabled,
     }),
-    ...(updates.active !== undefined && { active: updates.active }),
-    updatedAt: new Date().toISOString(),
+    ...(body.active !== undefined && { active: body.active }),
+    updatedAt,
   };
+}
+
+/** The profile as the client sees it after the update is written. */
+function mergeProfile(existing: SyncProfile, update: ProfileUpdate): SyncProfile {
+  return { ...existing, ...update };
 }
 
 export const getProfileEndpoint = defineEndpoint(
@@ -109,15 +132,15 @@ export const putProfileEndpoint = defineEndpoint(
       updates.sourceFolderPath !== undefined &&
       normalizeSourceFolderPath(updates.sourceFolderPath) !==
         normalizeSourceFolderPath(existing.sourceFolderPath);
-    const updated = mergeProfile(existing, updates);
-    await putProfile(docClient(), syncProfilesTableName(), updated);
+    const update = profileUpdateFrom(updates, new Date().toISOString());
+    await updateProfile(docClient(), syncProfilesTableName(), userId, profileId, update);
+    const updated = mergeProfile(existing, update);
     const deactivatedProfileIds: string[] = [];
     if (updates.active === true) {
       const profiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
       for (const other of profiles) {
         if (other.profileId === profileId || !other.active) continue;
-        await putProfile(docClient(), syncProfilesTableName(), {
-          ...other,
+        await updateProfile(docClient(), syncProfilesTableName(), userId, other.profileId, {
           active: false,
           updatedAt: new Date().toISOString(),
         });
@@ -151,8 +174,7 @@ export const deleteProfileEndpoint = defineEndpoint(
         const newest = others.reduce((best: SyncProfile, p: SyncProfile) =>
           p.createdAt > best.createdAt ? p : best,
         );
-        await putProfile(docClient(), syncProfilesTableName(), {
-          ...newest,
+        await updateProfile(docClient(), syncProfilesTableName(), userId, newest.profileId, {
           active: true,
           updatedAt: new Date().toISOString(),
         });
