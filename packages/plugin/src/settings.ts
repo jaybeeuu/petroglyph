@@ -238,7 +238,7 @@ export class PetroglyphSettingTab extends PluginSettingTab {
       containerEl.createEl("p", { text: "No profiles found." });
     } else {
       for (const profile of profiles) {
-        const isActive = profile.id === this.plugin.data.activeProfileId;
+        const isActive = profile.profileId === this.plugin.data.activeProfileId;
         new Setting(containerEl)
           .setName(profile.name + (isActive ? " ✓ (active)" : ""))
           .setDesc(
@@ -246,7 +246,7 @@ export class PetroglyphSettingTab extends PluginSettingTab {
           )
           .addButton((btn) =>
             btn.setButtonText("Set active").onClick(async () => {
-              await this.plugin.setActiveProfile(profile.id);
+              await this.plugin.setActiveProfile(profile.profileId);
               this.display();
             }),
           )
@@ -255,7 +255,7 @@ export class PetroglyphSettingTab extends PluginSettingTab {
               new ProfileModal(
                 this.app,
                 async (name, sourceFolderPath, destinationVaultPath) => {
-                  await this.plugin.editProfile(profile.id, {
+                  await this.plugin.editProfile(profile.profileId, {
                     name,
                     sourceFolderPath,
                     destinationVaultPath,
@@ -273,7 +273,7 @@ export class PetroglyphSettingTab extends PluginSettingTab {
           .addButton((btn) =>
             btn.setButtonText("Delete").onClick(() => {
               new DeleteConfirmModal(this.app, async () => {
-                await this.plugin.deleteProfile(profile.id);
+                await this.plugin.deleteProfile(profile.profileId);
                 this.display();
               }).open();
             }),

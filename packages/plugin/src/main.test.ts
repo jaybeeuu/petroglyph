@@ -2,11 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import type { App, PluginManifest } from "obsidian";
 import type { FeedEntry } from "./feed.js";
+import { readErrorMessage } from "./main.js";
 import type { PetroglyphPlugin } from "./main.js";
 
 // Hoisted so the `obsidian` mock factory can use it: importing `main.js` for its
 // recheck delay evaluates that factory before any ordinary module-scope binding.
-const Notice = vi.hoisted(() => vi.fn());
+const Notice = vi.hoisted(() => vi.fn<(message: string) => void>());
 
 /* eslint-disable @typescript-eslint/no-extraneous-class, @typescript-eslint/no-useless-constructor, @typescript-eslint/no-unused-vars, @typescript-eslint/explicit-function-return-type */
 vi.mock("obsidian", () => ({
@@ -134,22 +135,27 @@ function writtenPaths(vault: VaultStub): string[] {
 function stubSyncFetch(profile: {
   destinationVaultPath?: string;
   files: FeedEntry[];
+  /** The profiles the server lists; defaults to the one active profile under test. */
+  profiles?: {
+    profileId: string;
+    name: string;
+    sourceFolderPath: string;
+    destinationVaultPath: string;
+    active: boolean;
+  }[];
 }): typeof fetch {
+  const profiles = profile.profiles ?? [
+    {
+      profileId: "p1",
+      name: "Proofs",
+      sourceFolderPath: "onyx/proofs",
+      destinationVaultPath: profile.destinationVaultPath ?? "",
+      active: true,
+    },
+  ];
   return vi.fn((url: string) => {
     if (url.includes("/profiles")) {
-      return Promise.resolve({
-        ok: true,
-        json: () =>
-          Promise.resolve([
-            {
-              id: "p1",
-              name: "Proofs",
-              sourceFolderPath: "onyx/proofs",
-              destinationVaultPath: profile.destinationVaultPath ?? "",
-              active: true,
-            },
-          ]),
-      });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(profiles) });
     }
     if (url.includes("/files")) {
       return Promise.resolve({
@@ -188,6 +194,15 @@ function statusResponse(status: number, body: unknown): Response {
     ok: status >= 200 && status < 300,
     status,
     json: () => Promise.resolve(body),
+  } as unknown as Response;
+}
+
+/** A URL that answers with an error status and a body that is not JSON. */
+function unparseableResponse(status: number): Response {
+  return {
+    ok: false,
+    status,
+    json: () => Promise.reject(new SyntaxError("Unexpected token < in JSON")),
   } as unknown as Response;
 }
 
@@ -1908,6 +1923,27 @@ describe("feed sync", () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
+  it("drains under the default profile when the stored active id is empty", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "",
+      feedCursors: { default: "cursor-1" },
+    });
+    const requestedUrls: string[] = [];
+    global.fetch = vi.fn((url) => {
+      requestedUrls.push(String(url));
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ files: [], nextToken: null }),
+      });
+    }) as unknown as typeof fetch;
+
+    await plugin.performSync();
+
+    expect(requestedUrls).toEqual(["https://api.petroglyph.page/files?nextToken=cursor-1"]);
+  });
+
   it("clears the stored cursor once the feed is exhausted", async () => {
     const { plugin } = await makePlugin({
       jwt: "jwt-token",
@@ -1984,6 +2020,37 @@ describe("destination vault path", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("writes under the active profile's destination, not another profile's", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    global.fetch = stubSyncFetch({
+      profiles: [
+        {
+          profileId: "p-inactive",
+          name: "Archive",
+          sourceFolderPath: "onyx/archive",
+          destinationVaultPath: "archive",
+          active: false,
+        },
+        {
+          profileId: "p-active",
+          name: "Proofs",
+          sourceFolderPath: "onyx/proofs",
+          destinationVaultPath: "twiy-proof",
+          active: true,
+        },
+      ],
+      files: [makeFeedEntry({ name: "note.pdf", relativePath: "notes" })],
+    });
+
+    await plugin.loadProfiles();
+    await plugin.performSync();
+
+    expect(writtenPaths(vault)).toEqual(["twiy-proof/notes/note.pdf", "twiy-proof/notes/note.md"]);
   });
 
   it("writes the file and its companion note under the profile's destination", async () => {
@@ -2364,7 +2431,7 @@ describe("loadProfiles", () => {
 
     const mockProfiles = [
       {
-        id: "p1",
+        profileId: "p1",
         name: "Profile 1",
         sourceFolderPath: "/src",
         destinationVaultPath: "/dst",
@@ -2382,6 +2449,38 @@ describe("loadProfiles", () => {
     expect(plugin.data.profiles?.[0]?.name).toBe("Profile 1");
   });
 
+  it("keeps the cursor of every profile the server still lists", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      feedCursors: { p1: "token1", p2: "token2" },
+    });
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve([
+          {
+            profileId: "p1",
+            name: "Profile 1",
+            sourceFolderPath: "/src",
+            destinationVaultPath: "/dst",
+            active: false,
+          },
+          {
+            profileId: "p2",
+            name: "Profile 2",
+            sourceFolderPath: "/src2",
+            destinationVaultPath: "/dst2",
+            active: true,
+          },
+        ]),
+    });
+
+    await plugin.loadProfiles();
+
+    expect(plugin.data.feedCursors).toEqual({ p1: "token1", p2: "token2" });
+  });
+
   it("removes stale change tokens for deleted profile IDs", async () => {
     const { plugin } = await makePlugin({
       jwt: "jwt-token",
@@ -2392,7 +2491,12 @@ describe("loadProfiles", () => {
       ok: true,
       json: () =>
         Promise.resolve([
-          { id: "p1", name: "Profile 1", sourceFolderPath: "/src", destinationVaultPath: "/dst" },
+          {
+            profileId: "p1",
+            name: "Profile 1",
+            sourceFolderPath: "/src",
+            destinationVaultPath: "/dst",
+          },
         ]),
     });
 
@@ -2410,14 +2514,14 @@ describe("loadProfiles", () => {
       json: () =>
         Promise.resolve([
           {
-            id: "p1",
+            profileId: "p1",
             name: "Profile 1",
             sourceFolderPath: "/src",
             destinationVaultPath: "/dst",
             active: false,
           },
           {
-            id: "p2",
+            profileId: "p2",
             name: "Profile 2",
             sourceFolderPath: "/src2",
             destinationVaultPath: "/dst2",
@@ -2439,7 +2543,7 @@ describe("loadProfiles", () => {
       json: () =>
         Promise.resolve([
           {
-            id: "p1",
+            profileId: "p1",
             name: "Profile 1",
             sourceFolderPath: "/src",
             destinationVaultPath: "/dst",
@@ -2460,7 +2564,7 @@ describe("loadProfiles", () => {
       ok: true,
       json: () =>
         Promise.resolve([
-          { id: "p1", name: "P1", sourceFolderPath: "/s", destinationVaultPath: "/d" },
+          { profileId: "p1", name: "P1", sourceFolderPath: "/s", destinationVaultPath: "/d" },
         ]),
     });
 
@@ -2503,6 +2607,39 @@ describe("setActiveProfile", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it("PUTs the id a profile loaded from the server carries", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn((url: string) => {
+      if (url.endsWith("/profiles")) {
+        return Promise.resolve(
+          jsonResponse([
+            {
+              profileId: "p1",
+              name: "Proofs",
+              sourceFolderPath: "onyx/proofs",
+              destinationVaultPath: "twiy-proof",
+              active: false,
+            },
+          ]),
+        );
+      }
+      return Promise.resolve({ ok: true } as unknown as Response);
+    }) as unknown as typeof fetch;
+
+    await plugin.loadProfiles();
+    const loadedProfileId = plugin.data.profiles?.[0]?.profileId ?? "";
+    await plugin.setActiveProfile(loadedProfileId);
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/profiles/p1"),
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ active: true }),
+      }),
+    );
+    expect(plugin.data.activeProfileId).toBe("p1");
+  });
+
   it("calls PUT /profiles/{id} with active: true", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
     global.fetch = vi.fn().mockResolvedValue({ ok: true });
@@ -2539,6 +2676,46 @@ describe("setActiveProfile", () => {
 
     expect(Notice).toHaveBeenCalledWith("Failed to set active profile");
     expect(plugin.data.activeProfileId).toBeUndefined();
+  });
+
+  it("shows the server's message, so a 409 reads differently from a 404", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(statusResponse(404, { error: "Profile not found" }))
+      .mockResolvedValueOnce(
+        statusResponse(409, {
+          error: "Cannot deactivate the active profile; activate another profile instead",
+        }),
+      ) as unknown as typeof fetch;
+
+    await plugin.setActiveProfile("missing");
+    await plugin.setActiveProfile("p1");
+
+    const [notFoundNotice, conflictNotice] = Notice.mock.calls.map((call) => call[0]);
+    expect(notFoundNotice).toContain("Profile not found");
+    expect(conflictNotice).toContain("Cannot deactivate the active profile");
+    expect(conflictNotice).not.toBe(notFoundNotice);
+  });
+
+  it("shows a readable message for a 401 instead of the middleware's code", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue(statusResponse(401, { error: "UNAUTHORIZED" }));
+
+    await plugin.setActiveProfile("p1");
+
+    expect(Notice).toHaveBeenCalledWith(
+      "Failed to set active profile: session expired; sign in again",
+    );
+  });
+
+  it("keeps the generic notice when the body is not JSON", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue(unparseableResponse(404));
+
+    await plugin.setActiveProfile("p1");
+
+    expect(Notice).toHaveBeenCalledWith("Failed to set active profile");
   });
 });
 
@@ -2614,7 +2791,12 @@ describe("createProfile", () => {
   it("calls loadProfiles after successful creation", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
     const mockProfiles = [
-      { id: "p1", name: "My Profile", sourceFolderPath: "/src", destinationVaultPath: "/dst" },
+      {
+        profileId: "p1",
+        name: "My Profile",
+        sourceFolderPath: "/src",
+        destinationVaultPath: "/dst",
+      },
     ];
     global.fetch = vi
       .fn()
@@ -2642,6 +2824,19 @@ describe("createProfile", () => {
 
     expect(Notice).toHaveBeenCalledWith("Failed to create profile");
     expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the server's message when the server rejects the profile", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue(statusResponse(400, { error: "name is required" }));
+
+    await plugin.createProfile({
+      name: "",
+      sourceFolderPath: "/s",
+      destinationVaultPath: "/d",
+    });
+
+    expect(Notice).toHaveBeenCalledWith("Failed to create profile: name is required");
   });
 });
 
@@ -2684,7 +2879,7 @@ describe("editProfile", () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
     const updatedProfiles = [
       {
-        id: "p1",
+        profileId: "p1",
         name: "Updated Name",
         sourceFolderPath: "/new-src",
         destinationVaultPath: "/dst",
@@ -2708,6 +2903,35 @@ describe("editProfile", () => {
 
     expect(Notice).toHaveBeenCalledWith("Failed to edit profile");
     expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the server's message, so a 409 reads differently from a 404", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(statusResponse(404, { error: "Profile not found" }))
+      .mockResolvedValueOnce(
+        statusResponse(409, {
+          error: "Cannot deactivate the active profile; activate another profile instead",
+        }),
+      ) as unknown as typeof fetch;
+
+    await plugin.editProfile("missing", { name: "Renamed" });
+    await plugin.editProfile("p1", { name: "Renamed" });
+
+    const [notFoundNotice, conflictNotice] = Notice.mock.calls.map((call) => call[0]);
+    expect(notFoundNotice).toContain("Profile not found");
+    expect(conflictNotice).toContain("Cannot deactivate the active profile");
+    expect(conflictNotice).not.toBe(notFoundNotice);
+  });
+
+  it("keeps the generic notice when the body is not JSON", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue(unparseableResponse(409));
+
+    await plugin.editProfile("p1", { name: "Fail" });
+
+    expect(Notice).toHaveBeenCalledWith("Failed to edit profile");
   });
 });
 
@@ -2747,8 +2971,8 @@ describe("deleteProfile", () => {
     const { plugin } = await makePlugin({
       jwt: "jwt-token",
       profiles: [
-        { id: "p1", name: "P1", sourceFolderPath: "/s", destinationVaultPath: "/d" },
-        { id: "p2", name: "P2", sourceFolderPath: "/s2", destinationVaultPath: "/d2" },
+        { profileId: "p1", name: "P1", sourceFolderPath: "/s", destinationVaultPath: "/d" },
+        { profileId: "p2", name: "P2", sourceFolderPath: "/s2", destinationVaultPath: "/d2" },
       ],
     });
     global.fetch = vi
@@ -2758,14 +2982,14 @@ describe("deleteProfile", () => {
         ok: true,
         json: () =>
           Promise.resolve([
-            { id: "p2", name: "P2", sourceFolderPath: "/s2", destinationVaultPath: "/d2" },
+            { profileId: "p2", name: "P2", sourceFolderPath: "/s2", destinationVaultPath: "/d2" },
           ]),
       });
 
     await plugin.deleteProfile("p1");
 
     expect(plugin.data.profiles).toHaveLength(1);
-    expect(plugin.data.profiles?.[0]?.id).toBe("p2");
+    expect(plugin.data.profiles?.[0]?.profileId).toBe("p2");
   });
 
   it("clears activeProfileId when the active profile is deleted", async () => {
@@ -2800,6 +3024,69 @@ describe("deleteProfile", () => {
 
     expect(Notice).toHaveBeenCalledWith("Failed to delete profile");
     expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the server's message, so a 409 reads differently from a 404", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(statusResponse(404, { error: "Profile not found" }))
+      .mockResolvedValueOnce(
+        statusResponse(409, { error: "Cannot delete a profile that is still syncing" }),
+      ) as unknown as typeof fetch;
+
+    await plugin.deleteProfile("missing");
+    await plugin.deleteProfile("p1");
+
+    const [notFoundNotice, conflictNotice] = Notice.mock.calls.map((call) => call[0]);
+    expect(notFoundNotice).toContain("Profile not found");
+    expect(conflictNotice).toContain("Cannot delete a profile that is still syncing");
+    expect(conflictNotice).not.toBe(notFoundNotice);
+  });
+
+  it("keeps the generic notice when the body is not JSON", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi.fn().mockResolvedValue(unparseableResponse(404));
+
+    await plugin.deleteProfile("p1");
+
+    expect(Notice).toHaveBeenCalledWith("Failed to delete profile");
+  });
+});
+
+describe("readErrorMessage", () => {
+  it("reads the flat shape the profile routes answer with", () => {
+    expect(readErrorMessage({ error: "Profile not found" })).toBe("Profile not found");
+  });
+
+  it("reads the structured envelope", () => {
+    expect(readErrorMessage({ error: { code: "conflict", message: "Already active" } })).toBe(
+      "Already active",
+    );
+  });
+
+  it("turns the middleware's UNAUTHORIZED code into something a user can act on", () => {
+    expect(readErrorMessage({ error: "UNAUTHORIZED" })).toBe("session expired; sign in again");
+  });
+
+  it("keeps a 401 message that is prose rather than a code", () => {
+    expect(readErrorMessage({ error: "Invalid refresh token" })).toBe("Invalid refresh token");
+  });
+
+  it("returns null for a body of neither shape", () => {
+    const bodies: unknown[] = [
+      undefined,
+      null,
+      "text",
+      [],
+      {},
+      { error: "" },
+      { error: {} },
+      { error: { code: "conflict" } },
+      { error: 42 },
+    ];
+
+    for (const body of bodies) expect(readErrorMessage(body)).toBeNull();
   });
 });
 
