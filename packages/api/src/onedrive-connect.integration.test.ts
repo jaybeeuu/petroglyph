@@ -76,9 +76,6 @@ describe("POST /onedrive/connect against LocalStack DynamoDB", () => {
     vi.stubEnv("MICROSOFT_CLIENT_ID", "client-id");
     vi.stubEnv("MICROSOFT_CLIENT_SECRET", "client-secret");
     vi.stubEnv("MICROSOFT_REDIRECT_URI", "https://api.petroglyph.test/onedrive/connect");
-    // No Graph subscription: this seam runs from the token exchange to the
-    // vault write, and a registered notification URL is what would reach Graph.
-    vi.stubEnv("GRAPH_NOTIFICATION_URL", "");
 
     const keyPair = await generateKeyPair("RS256");
     privateKey = keyPair.privateKey as CryptoKey;
