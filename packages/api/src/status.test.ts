@@ -12,6 +12,37 @@ import { resetKeyCache } from "./jwt.js";
 
 const app = createApp();
 
+const TOKEN_VAULTS_TABLE = "petroglyph-token-vaults-status-test";
+const SYNC_PROFILES_TABLE = "petroglyph-sync-profiles-status-test";
+const USERS_TABLE = "petroglyph-users-status-test";
+
+interface StatusBody {
+  oneDrive: { connected: boolean };
+  oneDriveStatus: string;
+}
+
+interface ProfileRow {
+  profileId: string;
+  oneDriveConnected?: boolean;
+}
+
+function makeProfile(overrides: Partial<ProfileRow> = {}): ProfileRow {
+  return { profileId: "profile-1", ...overrides };
+}
+
+function makeConnectionRow(overrides: { reconnectRequired?: boolean } = {}): object {
+  return {
+    userId: "user-42",
+    provider: "onedrive",
+    accessToken: "access-token",
+    refreshToken: "refresh-token",
+    expirySeconds: 1_900_000_000,
+    updatedAt: "2026-11-15T00:00:00.000Z",
+    reconnectRequired: false,
+    ...overrides,
+  };
+}
+
 describe("GET /status", () => {
   let privateKey: CryptoKey;
   let publicKeyPem: string;
@@ -25,6 +56,11 @@ describe("GET /status", () => {
   beforeEach(() => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
+    vi.stubEnv("TOKEN_VAULTS_TABLE", TOKEN_VAULTS_TABLE);
+    vi.stubEnv("SYNC_PROFILES_TABLE", SYNC_PROFILES_TABLE);
+    vi.stubEnv("USERS_TABLE", USERS_TABLE);
+    mockSend.mockReset();
+    mockSend.mockResolvedValue({});
     resetKeyCache();
   });
 
@@ -35,25 +71,33 @@ describe("GET /status", () => {
   });
 
   function mockStatusReads(options?: {
-    syncProfileItem?: { [key: string]: unknown };
-    userItem?: { [key: string]: unknown };
-    rejectSyncProfile?: boolean;
+    connectionItem?: object;
+    profiles?: ProfileRow[];
+    userItem?: object;
+    rejectConnection?: boolean;
+    rejectProfiles?: boolean;
     rejectUser?: boolean;
   }): void {
     mockSend.mockImplementation((command: { input: { TableName: string } }) => {
       const tableName = command.input.TableName;
 
-      if (tableName === "petroglyph-sync-profiles-default") {
-        if (options?.rejectSyncProfile) {
-          return Promise.reject(new Error("SyncProfile unavailable"));
+      if (tableName === TOKEN_VAULTS_TABLE) {
+        if (options?.rejectConnection === true) {
+          return Promise.reject(new Error("Token vault unavailable"));
         }
-        return Promise.resolve({
-          Items: options?.syncProfileItem === undefined ? [] : [options.syncProfileItem],
-        });
+        return Promise.resolve({ Item: options?.connectionItem });
       }
 
-      if (tableName === "petroglyph-users-default") {
-        if (options?.rejectUser) {
+      if (tableName === SYNC_PROFILES_TABLE) {
+        if (options?.rejectProfiles === true) {
+          return Promise.reject(new Error("SyncProfiles unavailable"));
+        }
+        const profiles = options?.profiles ?? [];
+        return Promise.resolve({ Items: profiles, Count: profiles.length });
+      }
+
+      if (tableName === USERS_TABLE) {
+        if (options?.rejectUser === true) {
           return Promise.reject(new Error("Users table unavailable"));
         }
         return Promise.resolve({ Item: options?.userItem });
@@ -74,301 +118,174 @@ describe("GET /status", () => {
       .sign(privateKey);
   }
 
+  async function getStatus(): Promise<StatusBody> {
+    const token = await makeValidToken();
+
+    const res = await app.request("/status", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(res.status).toBe(200);
+    return (await res.json()) as StatusBody;
+  }
+
   describe("authenticated request", () => {
     it("returns 200 with github connected status and username", async () => {
       mockStatusReads();
-      const token = await makeValidToken("user-42", "octocat");
 
+      const token = await makeValidToken("user-42", "octocat");
       const res = await app.request("/status", {
         headers: { Authorization: `Bearer ${token}` },
       });
 
       expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body).toEqual({
+      expect(await res.json()).toEqual({
         github: { connected: true, username: "octocat" },
         oneDrive: { connected: false },
         oneDriveStatus: "never_connected",
       });
     });
 
-    it("returns connected status when SyncProfile has oneDriveConnected=true", async () => {
-      mockStatusReads({
-        syncProfileItem: {
-          userId: "user-42",
-          profileId: "default",
-          oneDriveConnected: true,
-        },
-      });
-      const token = await makeValidToken("user-42");
-
-      const res = await app.request("/status", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        oneDrive: { connected: boolean };
-        oneDriveStatus: string;
-      };
-      expect(body.oneDrive.connected).toBe(true);
-      expect(body.oneDriveStatus).toBe("connected");
-    });
-
-    it("treats a non-default profile as a profile for a connected user", async () => {
-      mockStatusReads({
-        syncProfileItem: {
-          userId: "user-42",
-          profileId: "b6f1c0de-0000-4000-8000-000000000001",
-        },
-        userItem: { userId: "user-42", oneDriveStatus: "connected" },
-      });
-      const token = await makeValidToken();
-
-      const res = await app.request("/status", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        oneDrive: { connected: boolean };
-        oneDriveStatus: string;
-      };
-      expect(body.oneDrive.connected).toBe(true);
-      expect(body.oneDriveStatus).toBe("connected");
-    });
-
-    it("returns never_connected when no SyncProfile exists", async () => {
+    it("reports never_connected when the connection was never established", async () => {
       mockStatusReads();
-      const token = await makeValidToken();
 
-      const res = await app.request("/status", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const body = await getStatus();
 
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        oneDrive: { connected: boolean };
-        oneDriveStatus: string;
-      };
       expect(body.oneDrive.connected).toBe(false);
       expect(body.oneDriveStatus).toBe("never_connected");
     });
 
-    it("returns connected_no_profile when the user is connected and no SyncProfile exists", async () => {
-      mockStatusReads({ userItem: { userId: "user-42", oneDriveStatus: "connected" } });
-      const token = await makeValidToken();
+    it("reports connected_no_profile for a live connection with no profile", async () => {
+      mockStatusReads({ connectionItem: makeConnectionRow() });
 
-      const res = await app.request("/status", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const body = await getStatus();
 
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        oneDrive: { connected: boolean };
-        oneDriveStatus: string;
-      };
       expect(body.oneDrive.connected).toBe(true);
       expect(body.oneDriveStatus).toBe("connected_no_profile");
     });
 
-    it("returns reconnect_required when the user record requires it even with no SyncProfile", async () => {
-      mockStatusReads({ userItem: { userId: "user-42", oneDriveStatus: "reconnect_required" } });
-      const token = await makeValidToken();
+    it("reports connected_no_profile when only the user record knows the connection", async () => {
+      mockStatusReads({ userItem: { userId: "user-42", oneDriveStatus: "connected" } });
 
-      const res = await app.request("/status", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const body = await getStatus();
 
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        oneDrive: { connected: boolean };
-        oneDriveStatus: string;
-      };
-      expect(body.oneDrive.connected).toBe(false);
-      expect(body.oneDriveStatus).toBe("reconnect_required");
+      expect(body.oneDrive.connected).toBe(true);
+      expect(body.oneDriveStatus).toBe("connected_no_profile");
     });
 
-    it("returns reconnect_required when a SyncProfile exists but is disconnected", async () => {
-      mockStatusReads({
-        syncProfileItem: {
-          userId: "user-42",
-          profileId: "default",
-          oneDriveConnected: false,
-        },
-      });
-      const token = await makeValidToken();
+    it("reports connected for a live connection with a profile", async () => {
+      mockStatusReads({ connectionItem: makeConnectionRow(), profiles: [makeProfile()] });
 
-      const res = await app.request("/status", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const body = await getStatus();
 
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        oneDrive: { connected: boolean };
-        oneDriveStatus: string;
-      };
-      expect(body.oneDrive.connected).toBe(false);
-      expect(body.oneDriveStatus).toBe("reconnect_required");
-    });
-
-    it("returns reconnect_required when user record has reconnect_required even if sync profile says connected", async () => {
-      mockStatusReads({
-        syncProfileItem: {
-          userId: "user-42",
-          profileId: "default",
-          oneDriveConnected: true,
-        },
-        userItem: { userId: "user-42", oneDriveStatus: "reconnect_required" },
-      });
-      const token = await makeValidToken();
-
-      const res = await app.request("/status", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        oneDrive: { connected: boolean };
-        oneDriveStatus: string;
-      };
-      expect(body.oneDrive.connected).toBe(false);
-      expect(body.oneDriveStatus).toBe("reconnect_required");
-    });
-
-    it("returns connected when sync profile says connected and user record has no reconnect_required", async () => {
-      mockStatusReads({
-        syncProfileItem: {
-          userId: "user-42",
-          profileId: "default",
-          oneDriveConnected: true,
-        },
-        userItem: { userId: "user-42" },
-      });
-      const token = await makeValidToken();
-
-      const res = await app.request("/status", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        oneDrive: { connected: boolean };
-        oneDriveStatus: string;
-      };
       expect(body.oneDrive.connected).toBe(true);
       expect(body.oneDriveStatus).toBe("connected");
     });
 
-    it("normalizes disconnected from the user record to reconnect_required", async () => {
+    it("reports reconnect_required when the vault row requires a reconnect", async () => {
       mockStatusReads({
-        syncProfileItem: {
-          userId: "user-42",
-          profileId: "default",
-          oneDriveConnected: false,
-        },
+        connectionItem: makeConnectionRow({ reconnectRequired: true }),
+        profiles: [makeProfile()],
+      });
+
+      const body = await getStatus();
+
+      expect(body.oneDrive.connected).toBe(false);
+      expect(body.oneDriveStatus).toBe("reconnect_required");
+    });
+
+    it("reports reconnect_required when the user record requires a reconnect", async () => {
+      mockStatusReads({ userItem: { userId: "user-42", oneDriveStatus: "reconnect_required" } });
+
+      const body = await getStatus();
+
+      expect(body.oneDrive.connected).toBe(false);
+      expect(body.oneDriveStatus).toBe("reconnect_required");
+    });
+
+    it("normalizes a stored disconnected user record to reconnect_required", async () => {
+      mockStatusReads({
+        connectionItem: makeConnectionRow(),
         userItem: { userId: "user-42", oneDriveStatus: "disconnected" },
       });
-      const token = await makeValidToken();
 
-      const res = await app.request("/status", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const body = await getStatus();
 
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        oneDrive: { connected: boolean };
-        oneDriveStatus: string;
-      };
       expect(body.oneDrive.connected).toBe(false);
       expect(body.oneDriveStatus).toBe("reconnect_required");
     });
 
-    it("ignores stale never_connected from the user record when a SyncProfile is disconnected", async () => {
-      mockStatusReads({
-        syncProfileItem: {
-          userId: "user-42",
-          profileId: "default",
-          oneDriveConnected: false,
-        },
-        userItem: { userId: "user-42", oneDriveStatus: "never_connected" },
-      });
-      const token = await makeValidToken();
+    it("reports never_connected for a profile with no connection behind it", async () => {
+      // The regression this design removes: a profile row used to decide the
+      // connection state, so a profile outlived the grant and read connected.
+      mockStatusReads({ profiles: [makeProfile({ oneDriveConnected: true })] });
 
-      const res = await app.request("/status", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const body = await getStatus();
 
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        oneDrive: { connected: boolean };
-        oneDriveStatus: string;
-      };
       expect(body.oneDrive.connected).toBe(false);
-      expect(body.oneDriveStatus).toBe("reconnect_required");
+      expect(body.oneDriveStatus).toBe("never_connected");
     });
 
-    it("trusts the connected user record over a false profile flag", async () => {
+    it("keeps the status when a profile is edited", async () => {
       mockStatusReads({
-        syncProfileItem: {
-          userId: "user-42",
-          profileId: "default",
-          oneDriveConnected: false,
-        },
-        userItem: { userId: "user-42", oneDriveStatus: "connected" },
+        connectionItem: makeConnectionRow(),
+        profiles: [makeProfile({ oneDriveConnected: true })],
       });
-      const token = await makeValidToken();
+      const before = await getStatus();
 
-      const res = await app.request("/status", {
-        headers: { Authorization: `Bearer ${token}` },
+      // A profile edit changes its attributes only; the connection is untouched.
+      mockStatusReads({
+        connectionItem: makeConnectionRow(),
+        profiles: [makeProfile({ oneDriveConnected: false })],
       });
+      const after = await getStatus();
 
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        oneDrive: { connected: boolean };
-        oneDriveStatus: string;
-      };
+      expect(after).toEqual(before);
+      expect(after.oneDriveStatus).toBe("connected");
+    });
+
+    it("keeps the status when a profile is added", async () => {
+      mockStatusReads({ connectionItem: makeConnectionRow(), profiles: [makeProfile()] });
+      const before = await getStatus();
+
+      mockStatusReads({
+        connectionItem: makeConnectionRow(),
+        profiles: [makeProfile(), makeProfile({ profileId: "profile-2" })],
+      });
+      const after = await getStatus();
+
+      expect(after).toEqual(before);
+      expect(after.oneDriveStatus).toBe("connected");
+    });
+
+    it("keeps the status when a profile is deleted", async () => {
+      mockStatusReads({
+        connectionItem: makeConnectionRow(),
+        profiles: [makeProfile(), makeProfile({ profileId: "profile-2" })],
+      });
+      const before = await getStatus();
+
+      mockStatusReads({ connectionItem: makeConnectionRow(), profiles: [makeProfile()] });
+      const after = await getStatus();
+
+      expect(after).toEqual(before);
+      expect(after.oneDriveStatus).toBe("connected");
+    });
+
+    it("stays connected when the profile lookup fails", async () => {
+      mockStatusReads({ connectionItem: makeConnectionRow(), rejectProfiles: true });
+
+      const body = await getStatus();
+
       expect(body.oneDrive.connected).toBe(true);
       expect(body.oneDriveStatus).toBe("connected");
     });
 
-    it("falls back to SyncProfile state when the user lookup fails", async () => {
-      mockStatusReads({
-        syncProfileItem: {
-          userId: "user-42",
-          profileId: "default",
-          oneDriveConnected: true,
-        },
-        rejectUser: true,
-      });
-      const token = await makeValidToken();
+    it("reports never_connected when the connection lookup fails", async () => {
+      mockStatusReads({ rejectConnection: true, rejectUser: true });
 
-      const res = await app.request("/status", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const body = await getStatus();
 
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        oneDrive: { connected: boolean };
-        oneDriveStatus: string;
-      };
-      expect(body.oneDrive.connected).toBe(true);
-      expect(body.oneDriveStatus).toBe("connected");
-    });
-
-    it("returns oneDrive.connected false when the SyncProfile lookup fails", async () => {
-      mockStatusReads({ rejectSyncProfile: true });
-      const token = await makeValidToken();
-
-      const res = await app.request("/status", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        oneDrive: { connected: boolean };
-        oneDriveStatus: string;
-      };
       expect(body.oneDrive.connected).toBe(false);
       expect(body.oneDriveStatus).toBe("never_connected");
     });

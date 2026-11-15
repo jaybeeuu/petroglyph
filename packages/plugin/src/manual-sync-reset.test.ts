@@ -42,10 +42,11 @@ describe("PetroglyphPlugin manual sync/reset commands", () => {
 
   it("resetPluginState clears local token and shows notice", async () => {
     const plugin = await makePluginWithMocks({
-      feedCursors: { default: "tok" },
+      activeProfileId: "profile-1",
+      feedCursors: { "profile-1": "tok" },
     });
     await plugin.resetPluginState();
-    expect(plugin["_data"].feedCursors?.["default"]).toBeUndefined();
+    expect(plugin["_data"].feedCursors?.["profile-1"]).toBeUndefined();
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.savePluginData).toHaveBeenCalled();
   });
@@ -72,7 +73,8 @@ describe("PetroglyphPlugin manual sync/reset commands", () => {
   it("fullReset calls POST /sync/reset with scope=full, clears token if resetToken, and shows notice", async () => {
     const plugin = await makePluginWithMocks({
       jwt: "jwt-token",
-      feedCursors: { default: "tok" },
+      activeProfileId: "profile-1",
+      feedCursors: { "profile-1": "tok" },
     });
     global.fetch = vi.fn((...args) => {
       if (typeof args[0] === "string" && args[0].includes("/sync/reset")) {
@@ -91,7 +93,7 @@ describe("PetroglyphPlugin manual sync/reset commands", () => {
         body: JSON.stringify({ scope: "full" }),
       }),
     );
-    expect(plugin["_data"].feedCursors?.["default"]).toBeUndefined();
+    expect(plugin["_data"].feedCursors).toEqual({});
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.savePluginData).toHaveBeenCalled();
     expect(Notice).toHaveBeenCalledWith("Full reset complete");

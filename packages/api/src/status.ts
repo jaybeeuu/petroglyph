@@ -1,8 +1,10 @@
 import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { defineEndpoint } from "@petroglyph/contracts/hono";
 import { getStatus } from "@petroglyph/contracts/operations";
+import type { TokenRecord } from "@petroglyph/core";
 import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
+import { ONEDRIVE_PROVIDER, readConnection } from "./token-vault.js";
 
 export type OneDriveStatus =
   | "connected"
@@ -29,11 +31,6 @@ interface UserStatusRecord {
   oneDriveStatus?: string;
 }
 
-interface SyncProfileStatus {
-  exists: boolean;
-  oneDriveConnected: boolean;
-}
-
 function parseUserStatus(item: unknown): UserStatusRecord {
   if (typeof item !== "object" || item === null || Array.isArray(item)) {
     return {};
@@ -45,36 +42,41 @@ function parseUserStatus(item: unknown): UserStatusRecord {
     : {};
 }
 
-function parseSyncProfileStatus(items: unknown[]): SyncProfileStatus {
-  let exists = false;
-  let oneDriveConnected = false;
-
-  for (const item of items) {
-    if (typeof item !== "object" || item === null || Array.isArray(item)) {
-      continue;
-    }
-    exists = true;
-    if ((item as { [key: string]: unknown })["oneDriveConnected"] === true) {
-      oneDriveConnected = true;
-    }
+/**
+ * The stored connection, or null when onboarding never completed. This is the
+ * authority for the connection state; a profile says nothing about it.
+ */
+async function fetchConnection(userId: string): Promise<TokenRecord | null> {
+  try {
+    return await readConnection(docClient(), userId, ONEDRIVE_PROVIDER);
+  } catch (err) {
+    console.error("[status] Failed to read the OneDrive connection", err);
+    return null;
   }
-
-  return { exists, oneDriveConnected };
 }
 
-async function fetchSyncProfileStatus(userId: string): Promise<SyncProfileStatus> {
+/**
+ * Whether the user has created a profile yet. Presence is the only profile fact
+ * `/status` reads: it selects the no-profile sub-state and never the connection
+ * state, so a stale attribute on a profile cannot change the answer.
+ */
+async function hasProfile(userId: string): Promise<boolean> {
   try {
     const result = await docClient().send(
       new QueryCommand({
         TableName: syncProfilesTable(),
         KeyConditionExpression: "userId = :userId",
         ExpressionAttributeValues: { ":userId": userId },
+        Select: "COUNT",
+        Limit: 1,
       }),
     );
-    return parseSyncProfileStatus(result.Items ?? []);
+    return (result.Count ?? 0) > 0;
   } catch (err) {
-    console.error("[status] Failed to fetch SyncProfiles from DynamoDB", err);
-    return { exists: false, oneDriveConnected: false };
+    // Unknown, so do not invent a profile for the user to create: report the
+    // connection alone and let the profiles section speak for itself.
+    console.error("[status] Failed to count SyncProfiles in DynamoDB", err);
+    return true;
   }
 }
 
@@ -97,30 +99,31 @@ export const getStatusEndpoint = defineEndpoint(getStatus, async (_input, c: App
   const username = c.get("username");
   const userId = c.get("userId");
 
-  const [syncProfileStatus, userStatus] = await Promise.all([
-    fetchSyncProfileStatus(userId),
+  const [connection, userStatus, profileExists] = await Promise.all([
+    fetchConnection(userId),
     fetchUserStatus(userId),
+    hasProfile(userId),
   ]);
-  const storedReconnectRequired =
+
+  // The connection is the only authority: the vault row holds the grant and
+  // whether it died, and the user record holds the lifecycle mark. A profile
+  // contributes presence and nothing else, so no profile attribute can flip a
+  // connected user to reconnect_required or the reverse.
+  const reconnectRequired =
+    connection?.reconnectRequired === true ||
     userStatus.oneDriveStatus === "reconnect_required" ||
     userStatus.oneDriveStatus === "disconnected";
-  const connectionConnected = userStatus.oneDriveStatus === "connected";
+  const hasConnection = connection !== null || userStatus.oneDriveStatus === "connected";
 
-  // The user record is the connection authority: connect and the lifecycle
-  // events write it. A profile flag is the legacy fallback for a user whose
-  // record predates it. A live connection with no profile is its own state, so
-  // the plugin can prompt for one without claiming a sync.
-  const oneDriveStatus: OneDriveStatus = storedReconnectRequired
+  // A live connection with no profile is its own state, so the plugin prompts
+  // for one instead of claiming a sync.
+  const oneDriveStatus: OneDriveStatus = reconnectRequired
     ? "reconnect_required"
-    : connectionConnected
-      ? syncProfileStatus.exists
+    : !hasConnection
+      ? "never_connected"
+      : profileExists
         ? "connected"
-        : "connected_no_profile"
-      : !syncProfileStatus.exists
-        ? "never_connected"
-        : syncProfileStatus.oneDriveConnected
-          ? "connected"
-          : "reconnect_required";
+        : "connected_no_profile";
 
   const body: StatusResponse = {
     github: { connected: true, username },

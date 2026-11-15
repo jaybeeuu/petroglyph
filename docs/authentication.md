@@ -134,17 +134,19 @@ The plugin periodically calls `GET /status` to determine the current connection 
 ```json
 {
   "github": { "connected": true, "username": "<githubLogin>" },
-  "oneDrive": { "connected": false },
+  "oneDrive": { "connected": true },
   "oneDriveStatus": "connected_no_profile"
 }
 ```
 
-| Field                | Type    | Description                                                                                                                                                                                                                                                          |
-| -------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                                                                                                         |
-| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                                                                                                            |
-| `oneDrive.connected` | boolean | `true` when the connection is live, whether or not a profile exists yet. `false` for a dead grant, a never-connected user, or a DynamoDB error.                                                                                                                      |
-| `oneDriveStatus`     | string  | `connected` (live connection with a profile), `connected_no_profile` (live connection, no profile yet), `never_connected`, `reconnect_required` (dead grant or dead profile), or `disconnected` (reserved; a lost connection is normalised to `reconnect_required`). |
+| Field                | Type    | Description                                                                                                                                                                                                                                          |
+| -------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                                                                                         |
+| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                                                                                            |
+| `oneDrive.connected` | boolean | `true` when the connection is live, whether or not a profile exists yet. `false` for a dead grant, a never-connected user, or a DynamoDB error.                                                                                                      |
+| `oneDriveStatus`     | string  | `connected` (live connection with a profile), `connected_no_profile` (live connection, no profile yet), `never_connected`, `reconnect_required` (dead grant), or `disconnected` (reserved; a lost connection is normalised to `reconnect_required`). |
+
+The connection state comes from two rows and nothing else: the `token_vaults` row's `reconnectRequired` and the `users` row's `oneDriveStatus`. A `sync_profiles` row contributes presence only — the handler asks whether any exists and never reads its attributes — so editing, adding or deleting a profile cannot flip a connected user to `reconnect_required`.
 
 Unauthenticated requests (missing or invalid JWT) return `401 { "error": "UNAUTHORIZED" }` from the auth middleware before the handler is reached.
 
@@ -232,7 +234,7 @@ sequenceDiagram
 9. Cloud API completes the PKCE token exchange with Microsoft using the code, retrieved verifier, and client secret (loaded from SSM), receiving an **access token** (TTL ~1 hour) and a **refresh token** (TTL up to 90 days with `offline_access`). Returns 502 if the exchange fails.
 10. `access_token`, `refresh_token`, and `expirySeconds` are written to **both** token stores: the connection-keyed `token_vaults` record (`userId` + `provider=onedrive`), which the Delivery 1 adapter resolves the grant from, and the legacy `refresh_tokens` record (`tokenHash=userId`) that the still-live pre-Delivery-3 readers (`onedriveMiddleware`, sync-worker, processor) use. Writing only the legacy record would leave a new consent invisible to the data path; the legacy write disappears with the old copies at Delivery 3.
 11. Cloud API attempts to register a **Microsoft Graph change notification subscription** for the user's OneDrive. The requested `expirationDateTime` is capped to Graph's maximum allowed window so registration does not fail due to an out-of-range expiry. Failure is still non-blocking — a warning is logged and the request continues.
-12. Cloud API marks the connection **connected** on the user record. If a profile already exists, it stamps that profile's `oneDriveConnected` flag with a conditional update that cannot create an item. Connect **never** creates a profile: choosing which OneDrive folder maps to which vault path is the user's own profile action, so a fresh connect leaves the profile list empty and `/status` reports `connected_no_profile`.
+12. Cloud API marks the connection **connected** on the user record, and connect writes **no sync profile row at all** — not even a flag on an existing one. Choosing which OneDrive folder maps to which vault path is the user's own profile action, so a fresh connect leaves the profile list empty and `/status` reports `connected_no_profile`. Connection state lives on the connection (the `token_vaults` row and the `users` row); a profile never carries it.
 13. Returns `{ status: 'connected' }` to the plugin.
 
 ### Token Lifecycle
@@ -409,18 +411,18 @@ The adapter's per-connection Graph delta state (Delivery 1), superseding the per
 
 ### `sync_profiles`
 
-| Attribute                | Type        | Description                                                                                                |
-| ------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------- |
-| `userId`                 | String (PK) | FK to `users`                                                                                              |
-| `profileId`              | String (SK) | Profile identifier. The default profile uses the literal value `"default"`; additional profiles use UUIDs. |
-| `name`                   | String      | Human-readable profile name                                                                                |
-| `sourceFolderPath`       | String      | OneDrive folder path to watch, in canonical form — see [glossary](glossary.md#terms)                       |
-| `destinationVaultPath`   | String      | Vault folder that replaces the `handwritten` root; blank keeps it; an escape is rejected                   |
-| `pollingIntervalMinutes` | Number      | How often to poll for changes (default: `5`)                                                               |
-| `enabled`                | Boolean     | Whether the profile participates in sync runs (default: `true`)                                            |
-| `active`                 | Boolean     | `true` once OneDrive is connected and the profile is live                                                  |
-| `createdAt`              | String      | ISO 8601                                                                                                   |
-| `updatedAt`              | String      | ISO 8601                                                                                                   |
+| Attribute                | Type        | Description                                                                                       |
+| ------------------------ | ----------- | ------------------------------------------------------------------------------------------------- |
+| `userId`                 | String (PK) | FK to `users`                                                                                     |
+| `profileId`              | String (SK) | Profile identifier. Always a `randomUUID` from `POST /profiles`; no other path creates a profile. |
+| `name`                   | String      | Human-readable profile name                                                                       |
+| `sourceFolderPath`       | String      | OneDrive folder path to watch, in canonical form — see [glossary](glossary.md#terms)              |
+| `destinationVaultPath`   | String      | Vault folder that replaces the `handwritten` root; blank keeps it; an escape is rejected          |
+| `pollingIntervalMinutes` | Number      | How often to poll for changes (default: `5`)                                                      |
+| `enabled`                | Boolean     | Whether the profile participates in sync runs (default: `true`)                                   |
+| `active`                 | Boolean     | `true` once OneDrive is connected and the profile is live                                         |
+| `createdAt`              | String      | ISO 8601                                                                                          |
+| `updatedAt`              | String      | ISO 8601                                                                                          |
 
 `userId` as partition key means all profiles for a user are co-located, making list-by-user the primary key query rather than a GSI scan. Source and destination are stored as flat string fields rather than nested maps — the current single-provider design doesn't require the extra indirection.
 
