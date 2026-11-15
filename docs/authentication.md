@@ -219,7 +219,7 @@ sequenceDiagram
     Note over CloudAPI: validate & delete state token<br/>(retrieve PKCE verifier from DynamoDB)
     CloudAPI->>Microsoft: token exchange (code + verifier)
     Microsoft-->>CloudAPI: access token + refresh token
-    Note over CloudAPI: store OneDrive tokens in DynamoDB<br/>mark the connection connected<br/>stamp an existing profile only
+    Note over CloudAPI: store OneDrive tokens in DynamoDB<br/>mark the connection connected
     CloudAPI-->>Plugin: { status: 'connected' }
 ```
 
@@ -269,8 +269,8 @@ The legacy components' `refresh_tokens` storage is **DEPRECATED** (kept for roll
 
 If the refresh token expires or is revoked (e.g. user hasn't synced in 90 days, or revokes access in their Microsoft account settings):
 
-- The cloud service marks the OneDrive connection as `disconnected` in the user's DynamoDB record.
-- On the plugin's next status check, it detects the disconnected state and presents a **"Reconnect OneDrive"** prompt, explaining the reason (expired, revoked, etc.) and offering a button to re-initiate the consent flow.
+- The cloud service marks the OneDrive connection as `reconnect_required` in the user's DynamoDB record.
+- On the plugin's next status check, it detects the `reconnect_required` state and presents a **"Reconnect OneDrive"** prompt, explaining the reason (expired, revoked, etc.) and offering a button to re-initiate the consent flow.
 
 ### Subscription Lifecycle Notifications
 
@@ -310,7 +310,7 @@ The harness follows the same request flow as the app:
 
 It stores its local state in `.working-docs/local-onedrive-flow.json` by default. The API must be started with `MICROSOFT_REDIRECT_URI` pointing at the harness callback server (default port `8787`), so Microsoft can return the OneDrive auth code locally.
 
-In all `disconnected` and `reconnect_required` cases the plugin surfaces a **"Reconnect OneDrive"** prompt on its next `/status` poll, explaining the reason. There is no SNS email alert — the plugin is the primary UI for error surfacing.
+In every `reconnect_required` case the plugin surfaces a **"Reconnect OneDrive"** prompt on its next `/status` poll, explaining the reason. There is no SNS email alert — the plugin is the primary UI for error surfacing.
 
 ---
 

@@ -150,14 +150,14 @@ The plugin settings and command palette expose three reset commands:
 
 ### What to build
 
-Implement the Lifecycle Notification Lambda, reachable via a dedicated `lifecycleNotificationUrl` registered on the Graph subscription. On `reauthorizationRequired`: attempt lazy token refresh and subscription renewal; if that succeeds, no user action is needed; if it fails, mark `oneDriveStatus: "disconnected"` with a `reason` in DynamoDB. On `subscriptionRemoved`: mark disconnected immediately. The plugin's next `/status` poll detects the disconnected state and surfaces a labelled prompt explaining the reason, with a "Reconnect OneDrive" button that re-initiates the Phase 3 PKCE flow.
+Implement the Lifecycle Notification Lambda, reachable via a dedicated `lifecycleNotificationUrl` registered on the Graph subscription. On `reauthorizationRequired`: attempt lazy token refresh and subscription renewal; if that succeeds, no user action is needed; if it fails, mark `oneDriveStatus: "reconnect_required"` with a `reason` in DynamoDB. On `subscriptionRemoved`: mark `reconnect_required` immediately. The plugin's next `/status` poll detects the `reconnect_required` state and surfaces a labelled prompt explaining the reason, with a "Reconnect OneDrive" button that re-initiates the Phase 3 PKCE flow.
 
 ### Acceptance criteria
 
 - [ ] A `reauthorizationRequired` notification triggers an automatic renewal attempt
 - [ ] If renewal succeeds, `subscriptionActive` remains `true` and the plugin is unaffected
-- [ ] If renewal fails, `oneDriveStatus` becomes `disconnected` in DynamoDB
-- [ ] A `subscriptionRemoved` notification immediately sets `oneDriveStatus: "disconnected"`
+- [ ] If renewal fails, `oneDriveStatus` becomes `reconnect_required` in DynamoDB
+- [ ] A `subscriptionRemoved` notification immediately sets `oneDriveStatus: "reconnect_required"`
 - [ ] The plugin displays a persistent warning banner (`OneDrive connection lost — action required`) and a `Reconnect OneDrive` button on next status poll after `oneDriveStatus: "reconnect_required"` is detected
 - [ ] Clicking the reconnect button re-initiates the OneDrive PKCE connect flow
 - [ ] The banner persists until `oneDriveStatus` returns to `connected`

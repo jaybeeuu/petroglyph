@@ -427,6 +427,38 @@ describe("profiles CRUD handlers", () => {
       expect(dbWritesTo("petroglyph-users-test")).toEqual([{ ":hasProfile": true }]);
     });
 
+    it("promotes the newest remaining profile when the users row is absent", async () => {
+      const deletedProfile = makeProfile({ active: true, profileId: "profile-1" });
+      const newerProfile = makeProfile({
+        profileId: "profile-3",
+        createdAt: "2024-06-01T00:00:00.000Z",
+        active: false,
+      });
+      mockGetProfile.mockResolvedValue(deletedProfile);
+      mockDeleteProfile.mockResolvedValue(undefined);
+      mockListProfiles.mockResolvedValue([newerProfile]);
+      mockPutProfile.mockResolvedValue(undefined);
+      // The users row an update needs is not there: DynamoDB rejects the write.
+      mockDbSend.mockImplementation((command: unknown) => {
+        const tableName = (command as { input?: { TableName?: string } }).input?.TableName;
+        return tableName === "petroglyph-users-test"
+          ? Promise.reject(
+              Object.assign(new Error("The conditional request failed"), {
+                name: "ConditionalCheckFailedException",
+              }),
+            )
+          : Promise.resolve({ Items: [] });
+      });
+
+      const response = await request("DELETE", "/profiles/profile-1");
+
+      expect(response.status).toBe(204);
+      expect(mockPutProfile.mock.calls[0]?.[2]).toMatchObject({
+        profileId: "profile-3",
+        active: true,
+      });
+    });
+
     it("deletes file_records for the profile", async () => {
       const profile = makeProfile();
       mockGetProfile.mockResolvedValue(profile);
