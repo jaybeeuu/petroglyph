@@ -1,7 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { deriveStagingKey } from "./keys.js";
+import { deriveStagingKey, stagingPrefix } from "./keys.js";
+
+describe("stagingPrefix", () => {
+  it("is the one place the staging layout is spelled, versioned in the key", () => {
+    expect(stagingPrefix({ profileId: "p1" })).toBe("staging/v1/p1");
+  });
+
+  it("rejects a profile id that could escape the prefix", () => {
+    expect(() => stagingPrefix({ profileId: "../other" })).toThrow();
+    expect(() => stagingPrefix({ profileId: "" })).toThrow();
+  });
+});
 
 describe("deriveStagingKey", () => {
+  it("builds the key under the prefix function, never alongside it", () => {
+    expect(deriveStagingKey({ profileId: "p1", relativePath: "a/b", name: "note.pdf" })).toBe(
+      `${stagingPrefix({ profileId: "p1" })}/a/b/note.pdf`,
+    );
+  });
+
   it("derives staging/v1/<profileId>/<relativePath>/<name> with the layout version in the key", () => {
     expect(deriveStagingKey({ profileId: "p1", relativePath: "a/b", name: "note.pdf" })).toBe(
       "staging/v1/p1/a/b/note.pdf",

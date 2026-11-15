@@ -13,7 +13,9 @@ function subjectFor(change: { itemId: string }): string {
 export function emitFileStaged(
   eventLog: EventLogWriter,
   options: {
-    change: Pick<StagedChange, "profileId" | "itemId" | "relativePath"> & { name: string };
+    change: Pick<StagedChange, "profileId" | "itemId" | "relativePath" | "eTag"> & {
+      name: string;
+    };
     s3Key: string;
     mimeType: string;
     emissionId: string;
@@ -40,6 +42,9 @@ export function emitFileStaged(
         relativePath: options.change.relativePath,
         s3Key: options.s3Key,
         mimeType: options.mimeType,
+        // The provider's content version travels with the change so the
+        // consumer can record it on the change-log row.
+        ...(options.change.eTag === undefined ? {} : { eTag: options.change.eTag }),
       },
     },
     fileStagedEvent,

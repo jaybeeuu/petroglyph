@@ -3,6 +3,9 @@ import {
   stagedRecordSchema,
   type FileDeletedData,
   type FileStagedData,
+  type StagedChange,
+  type StagedChangeInput,
+  type StagedChangeLog,
   type StagedIndexStore,
   type StagedObjectStore,
   type StagedRecord,
@@ -10,7 +13,7 @@ import {
 import { applyDeleted, applyStaged } from "./index-apply.js";
 
 /** In-memory index store — unit fixture matching the interface contract. */
-function memStore(): StagedIndexStore & { records: StagedRecord[] } {
+function createIndexStore(): StagedIndexStore & { records: StagedRecord[] } {
   const records: StagedRecord[] = [];
   return {
     records,
@@ -31,8 +34,8 @@ function memStore(): StagedIndexStore & { records: StagedRecord[] } {
       );
     },
     remove(profileId, itemId) {
-      const i = records.findIndex((r) => r.profileId === profileId && r.itemId === itemId);
-      if (i >= 0) records.splice(i, 1);
+      const index = records.findIndex((r) => r.profileId === profileId && r.itemId === itemId);
+      if (index >= 0) records.splice(index, 1);
       return Promise.resolve();
     },
     listUnderPath(profileId, path) {
@@ -50,28 +53,50 @@ function memStore(): StagedIndexStore & { records: StagedRecord[] } {
           r.profileId === profileId &&
           (r.relativePath === path || r.relativePath.startsWith(`${path}/`)),
       );
-      for (const r of doomed) {
-        const i = records.indexOf(r);
-        if (i >= 0) records.splice(i, 1);
+      for (const record of doomed) {
+        const index = records.indexOf(record);
+        if (index >= 0) records.splice(index, 1);
       }
       return Promise.resolve();
     },
-    queryFeed(options) {
-      const start =
-        options.cursor === undefined
-          ? 0
-          : records.findIndex((r) => r.itemId === options.cursor) + 1;
-      const page = records.slice(
-        start,
-        options.limit === undefined ? undefined : start + options.limit,
+  };
+}
+
+/**
+ * In-memory change log honouring its contract: one row per change id, seq
+ * allocated in append order. The DynamoDB implementation of the same contract
+ * is covered against LocalStack in `staging-contracts`.
+ */
+function createChangeLog(): StagedChangeLog & { changes: StagedChange[] } {
+  const changes: StagedChange[] = [];
+  return {
+    changes,
+    append(change: StagedChangeInput) {
+      if (changes.some((existing) => existing.changeId === change.changeId)) {
+        return Promise.resolve({ status: "duplicate" as const });
+      }
+      changes.push({ ...change, seq: changes.length + 1 });
+      return Promise.resolve({ status: "appended" as const });
+    },
+    read(options) {
+      return Promise.resolve(
+        changes
+          .filter((change) => change.profileId === options.profileId)
+          .sort((left, right) => left.seq - right.seq),
       );
-      const next = start + page.length < records.length ? page[page.length - 1]?.itemId : undefined;
-      return Promise.resolve({
-        records: page,
-        ...(next === undefined ? {} : { nextCursor: next }),
-      });
     },
   };
+}
+
+function objectStoreSpy(): { objectStore: StagedObjectStore; deleteCalls: string[] } {
+  const deleteCalls: string[] = [];
+  const objectStore = {
+    delete: (key: string) => {
+      deleteCalls.push(key);
+      return Promise.resolve();
+    },
+  } as unknown as StagedObjectStore;
+  return { objectStore, deleteCalls };
 }
 
 const staged: FileStagedData = {
@@ -125,6 +150,7 @@ const deletedFolder: FileDeletedData = {
 function recordFor(data: FileStagedData): StagedRecord {
   return stagedRecordSchema.parse({
     profileId: data.profileId,
+    subscriptionId: data.profileId,
     itemId: data.itemId,
     s3Key: data.s3Key,
     relativePath: data.relativePath,
@@ -136,27 +162,23 @@ function recordFor(data: FileStagedData): StagedRecord {
   });
 }
 
-function objectStoreSpy(): { objectStore: StagedObjectStore; deleteCalls: string[] } {
-  const deleteCalls: string[] = [];
-  const objectStore = {
-    delete: (key: string) => {
-      deleteCalls.push(key);
-      return Promise.resolve();
-    },
-  } as unknown as StagedObjectStore;
-  return { objectStore, deleteCalls };
-}
-
 describe("applyStaged", () => {
-  it("upserts the {profileId, itemId} record with the staged facts; redelivery never duplicates", async () => {
-    const store = memStore();
+  it("upserts the {profileId, itemId} record and logs the change", async () => {
+    const index = createIndexStore();
+    const changeLog = createChangeLog();
 
-    await applyStaged(store, staged, { createdAt: "2026-09-01T00:00:00.000Z" });
-    await applyStaged(store, staged, { createdAt: "2026-09-01T00:00:00.000Z" });
+    await applyStaged({
+      index,
+      changeLog,
+      changeId: "p1:item-1:file:etag-1",
+      data: { ...staged, eTag: "etag-1" },
+      createdAt: "2026-09-01T00:00:00.000Z",
+    });
 
-    expect(store.records).toHaveLength(1);
-    expect(store.records[0]).toMatchObject({
+    expect(index.records).toHaveLength(1);
+    expect(index.records[0]).toMatchObject({
       profileId: "p1",
+      subscriptionId: "p1",
       itemId: "item-1",
       s3Key: "staging/v1/p1/notes/a.pdf",
       relativePath: "notes",
@@ -165,68 +187,223 @@ describe("applyStaged", () => {
       mimeType: "application/pdf",
       status: "staged",
     });
+    expect(changeLog.changes).toEqual([
+      {
+        profileId: "p1",
+        subscriptionId: "p1",
+        seq: 1,
+        changeId: "p1:item-1:file:etag-1",
+        itemId: "item-1",
+        kind: "stage",
+        relativePath: "notes",
+        name: "a.pdf",
+        mimeType: "application/pdf",
+        s3Key: "staging/v1/p1/notes/a.pdf",
+        eTag: "etag-1",
+        recordedAt: "2026-09-01T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("a redelivered change logs one row and the next change keeps the next seq", async () => {
+    const index = createIndexStore();
+    const changeLog = createChangeLog();
+    const delivery = {
+      index,
+      changeLog,
+      changeId: "p1:item-1:file:etag-1",
+      data: { ...staged, eTag: "etag-1" },
+      createdAt: "2026-09-01T00:00:00.000Z",
+    };
+
+    await applyStaged(delivery);
+    await applyStaged(delivery);
+    await applyStaged({
+      ...delivery,
+      changeId: "p1:item-2:file:etag-1",
+      data: { ...staged2, eTag: "etag-1" },
+    });
+
+    expect(changeLog.changes.map((change) => [change.seq, change.itemId])).toEqual([
+      [1, "item-1"],
+      [2, "item-2"],
+    ]);
+  });
+
+  it("a re-stage of the same item with a new eTag logs a new seq", async () => {
+    const index = createIndexStore();
+    const changeLog = createChangeLog();
+
+    await applyStaged({
+      index,
+      changeLog,
+      changeId: "p1:item-1:file:etag-1",
+      data: { ...staged, eTag: "etag-1" },
+    });
+    await applyStaged({
+      index,
+      changeLog,
+      changeId: "p1:item-1:file:etag-2",
+      data: { ...staged, eTag: "etag-2" },
+    });
+
+    expect(changeLog.changes.map((change) => [change.seq, change.eTag])).toEqual([
+      [1, "etag-1"],
+      [2, "etag-2"],
+    ]);
+    // One record still: the index holds the latest bytes of the item.
+    expect(index.records).toHaveLength(1);
+    expect(index.records[0]?.s3Key).toBe("staging/v1/p1/notes/a.pdf");
   });
 
   it("writes the expiry aligned to the S3 lifecycle when ttlSeconds is configured", async () => {
-    const store = memStore();
+    const index = createIndexStore();
 
-    await applyStaged(store, staged, {
+    await applyStaged({
+      index,
+      changeLog: createChangeLog(),
+      changeId: "p1:item-1:file:etag-1",
+      data: staged,
       createdAt: "2026-09-01T00:00:00.000Z",
       ttlSeconds: 30 * 86400,
     });
 
     const createdAtEpoch = Math.floor(Date.parse("2026-09-01T00:00:00.000Z") / 1000);
-    expect(store.records[0]?.expiresAt).toBe(createdAtEpoch + 30 * 86400);
+    expect(index.records[0]?.expiresAt).toBe(createdAtEpoch + 30 * 86400);
   });
 });
 
 describe("applyDeleted", () => {
-  it("removes the record and deletes the object at the STORED key; re-delete is a no-op", async () => {
-    const store = memStore();
+  it("removes the record, deletes the object at the STORED key and logs the delete; re-delete is one row", async () => {
+    const index = createIndexStore();
+    const changeLog = createChangeLog();
     const { objectStore, deleteCalls } = objectStoreSpy();
-    await applyStaged(store, staged, { createdAt: "2026-09-01T00:00:00.000Z" });
+    await applyStaged({
+      index,
+      changeLog,
+      changeId: "p1:item-1:file:etag-1",
+      data: staged,
+      createdAt: "2026-09-01T00:00:00.000Z",
+    });
 
-    await applyDeleted(store, objectStore, deletedItem);
-    await applyDeleted(store, objectStore, deletedItem);
+    const deletion = {
+      index,
+      objectStore,
+      changeLog,
+      changeId: "p1:item-1:deleted:",
+      data: deletedItem,
+      createdAt: "2026-09-01T00:00:01.000Z",
+    };
+    await applyDeleted(deletion);
+    await applyDeleted(deletion);
 
-    expect(store.records).toHaveLength(0);
+    expect(index.records).toHaveLength(0);
     expect(deleteCalls).toEqual(["staging/v1/p1/notes/a.pdf"]);
+    expect(changeLog.changes.map((change) => [change.seq, change.kind])).toEqual([
+      [1, "stage"],
+      [2, "delete"],
+    ]);
+  });
+
+  it("logs a delete row that names the item but no bytes", async () => {
+    const index = createIndexStore();
+    const changeLog = createChangeLog();
+    const { objectStore } = objectStoreSpy();
+    await applyStaged({
+      index,
+      changeLog,
+      changeId: "p1:item-1:file:etag-1",
+      data: staged,
+      createdAt: "2026-09-01T00:00:00.000Z",
+    });
+
+    await applyDeleted({
+      index,
+      objectStore,
+      changeLog,
+      changeId: "p1:item-1:deleted:",
+      data: deletedItem,
+      createdAt: "2026-09-01T00:00:01.000Z",
+    });
+
+    expect(changeLog.changes[1]).toEqual({
+      profileId: "p1",
+      subscriptionId: "p1",
+      seq: 2,
+      changeId: "p1:item-1:deleted:",
+      itemId: "item-1",
+      kind: "delete",
+      relativePath: "notes",
+      name: "a.pdf",
+      recordedAt: "2026-09-01T00:00:01.000Z",
+    });
   });
 
   it("an event key never overrides the stored key, so a stale guess cannot orphan the object", async () => {
-    const store = memStore();
+    const index = createIndexStore();
     const { objectStore, deleteCalls } = objectStoreSpy();
-    await applyStaged(store, staged, { createdAt: "2026-09-01T00:00:00.000Z" });
+    await applyStaged({
+      index,
+      changeLog: createChangeLog(),
+      changeId: "p1:item-1:file:etag-1",
+      data: staged,
+      createdAt: "2026-09-01T00:00:00.000Z",
+    });
 
-    await applyDeleted(store, objectStore, deletedStaleKey);
+    await applyDeleted({
+      index,
+      objectStore,
+      changeLog: createChangeLog(),
+      changeId: "p1:item-1:deleted:",
+      data: deletedStaleKey,
+    });
 
-    expect(store.records).toHaveLength(0);
+    expect(index.records).toHaveLength(0);
     expect(deleteCalls).toEqual(["staging/v1/p1/notes/a.pdf"]);
   });
 
   it("a null event s3Key still deletes the stored object, so removing the record never orphans it", async () => {
-    const store = memStore();
+    const index = createIndexStore();
     const { objectStore, deleteCalls } = objectStoreSpy();
-    await applyStaged(store, staged, { createdAt: "2026-09-01T00:00:00.000Z" });
+    await applyStaged({
+      index,
+      changeLog: createChangeLog(),
+      changeId: "p1:item-1:file:etag-1",
+      data: staged,
+      createdAt: "2026-09-01T00:00:00.000Z",
+    });
 
-    await applyDeleted(store, objectStore, deletedNullKey);
+    await applyDeleted({
+      index,
+      objectStore,
+      changeLog: createChangeLog(),
+      changeId: "p1:item-1:deleted:",
+      data: deletedNullKey,
+    });
 
-    expect(store.records).toHaveLength(0);
+    expect(index.records).toHaveLength(0);
     expect(deleteCalls).toEqual(["staging/v1/p1/notes/a.pdf"]);
   });
 
   it("a delete for a record that was never staged removes and deletes nothing", async () => {
-    const store = memStore();
+    const index = createIndexStore();
     const { objectStore, deleteCalls } = objectStoreSpy();
 
-    await applyDeleted(store, objectStore, deletedItem);
+    await applyDeleted({
+      index,
+      objectStore,
+      changeLog: createChangeLog(),
+      changeId: "p1:item-1:deleted:",
+      data: deletedItem,
+    });
 
-    expect(store.records).toHaveLength(0);
+    expect(index.records).toHaveLength(0);
     expect(deleteCalls).toEqual([]);
   });
 
-  it("folder path-level delete: sweeps every record under the path and deletes their objects; repeat is a no-op", async () => {
-    const store = memStore();
+  it("folder path-level delete: sweeps every record under the path, logs one delete row each; repeat is a no-op", async () => {
+    const index = createIndexStore();
+    const changeLog = createChangeLog();
     const child = {
       ...staged2,
       itemId: "deep-item",
@@ -248,16 +425,31 @@ describe("applyDeleted", () => {
       relativePath: "notes/other",
       s3Key: "staging/v1/p1/notes/other/e.pdf",
     };
-    store.records.push(recordFor(child), recordFor(deeper), recordFor(sibling));
+    index.records.push(recordFor(child), recordFor(deeper), recordFor(sibling));
     const { objectStore, deleteCalls } = objectStoreSpy();
 
-    await applyDeleted(store, objectStore, deletedFolder);
-    await applyDeleted(store, objectStore, deletedFolder);
+    const sweep = {
+      index,
+      objectStore,
+      changeLog,
+      changeId: "p1:folder-1:deleted:",
+      data: deletedFolder,
+      createdAt: "2026-09-01T00:00:02.000Z",
+    };
+    await applyDeleted(sweep);
+    await applyDeleted(sweep);
 
-    expect(store.records.map((r) => r.itemId)).toEqual(["sibling"]);
+    expect(index.records.map((r) => r.itemId)).toEqual(["sibling"]);
     expect(deleteCalls).toEqual([
       "staging/v1/p1/notes/sub/c.pdf",
       "staging/v1/p1/notes/sub/deep/d.pdf",
+    ]);
+    // The folder itself, then one row per swept record, each with its own
+    // change id — one event legitimises several removals.
+    expect(changeLog.changes.map((change) => [change.itemId, change.changeId])).toEqual([
+      ["folder-1", "p1:folder-1:deleted:"],
+      ["deep-item", "p1:folder-1:deleted::deep-item"],
+      ["deeper-item", "p1:folder-1:deleted::deeper-item"],
     ]);
   });
 
@@ -265,7 +457,7 @@ describe("applyDeleted", () => {
   // a folder deletion with no path on the wire cannot sweep, so a child that
   // never arrives as its own delta item keeps its record until the row TTL.
   it("a path-less folder delete removes only its own record and leaves children in place", async () => {
-    const store = memStore();
+    const index = createIndexStore();
     const child = {
       ...staged2,
       itemId: "deep-item",
@@ -273,41 +465,38 @@ describe("applyDeleted", () => {
       relativePath: "notes/sub",
       s3Key: "staging/v1/p1/notes/sub/c.pdf",
     };
-    store.records.push(recordFor(child));
+    index.records.push(recordFor(child));
     const { objectStore, deleteCalls } = objectStoreSpy();
 
-    await applyDeleted(store, objectStore, {
-      profileId: "p1",
-      source: "onedrive",
-      changeType: "deleted",
-      itemId: "folder-1",
+    await applyDeleted({
+      index,
+      objectStore,
+      changeLog: createChangeLog(),
+      changeId: "p1:folder-1:deleted:",
+      data: {
+        profileId: "p1",
+        source: "onedrive",
+        changeType: "deleted",
+        itemId: "folder-1",
+      },
     });
 
-    expect(store.records.map((r) => r.itemId)).toEqual(["deep-item"]);
+    expect(index.records.map((r) => r.itemId)).toEqual(["deep-item"]);
     expect(deleteCalls).toEqual([]);
   });
-});
 
-describe("queryFeed", () => {
-  it("serves staged records only, ordered, cursor-paged without dups or gaps", async () => {
-    const store = memStore();
-    for (const data of [
-      staged,
-      staged2,
-      { ...staged, itemId: "item-3", name: "c.pdf", s3Key: "staging/v1/p1/notes/c.pdf" },
-    ]) {
-      store.records.push(recordFor(data));
-    }
+  it("keeps the subscription id the event carried, so the row names its root", async () => {
+    const index = createIndexStore();
+    const changeLog = createChangeLog();
 
-    const page1 = await store.queryFeed({ profileId: "p1", limit: 2 });
-    expect(page1.records.map((r) => r.itemId)).toEqual(["item-1", "item-2"]);
-    const nextCursor = page1.nextCursor;
-    const page2 = await store.queryFeed(
-      nextCursor === undefined
-        ? { profileId: "p1", limit: 2 }
-        : { profileId: "p1", limit: 2, cursor: nextCursor },
-    );
-    expect(page2.records.map((r) => r.itemId)).toEqual(["item-3"]);
-    expect(page2.nextCursor).toBeUndefined();
+    await applyStaged({
+      index,
+      changeLog,
+      changeId: "p1:item-1:file:etag-1",
+      data: { ...staged, subscriptionId: "subscription-7" },
+    });
+
+    expect(index.records[0]?.subscriptionId).toBe("subscription-7");
+    expect(changeLog.changes[0]?.subscriptionId).toBe("subscription-7");
   });
 });

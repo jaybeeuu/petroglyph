@@ -4,6 +4,9 @@ import type { CloudEvent } from "@petroglyph/events";
 import type {
   FileDeletedData,
   FileStagedData,
+  StagedChange,
+  StagedChangeInput,
+  StagedChangeLog,
   StagedIndexStore,
   StagedObjectStore,
   StagedRecord,
@@ -68,9 +71,23 @@ function createMemIndexStore(options: { failOnItemId?: string } = {}): MemIndexS
       }
       return Promise.resolve();
     },
-    queryFeed(feedOptions) {
-      const page = records.slice(0, feedOptions.limit);
-      return Promise.resolve({ records: page });
+  };
+}
+
+/** In-memory change log honouring its contract: one row per change id. */
+function createChangeLog(): StagedChangeLog & { changes: StagedChange[] } {
+  const changes: StagedChange[] = [];
+  return {
+    changes,
+    append(change: StagedChangeInput) {
+      if (changes.some((existing) => existing.changeId === change.changeId)) {
+        return Promise.resolve({ status: "duplicate" as const });
+      }
+      changes.push({ ...change, seq: changes.length + 1 });
+      return Promise.resolve({ status: "appended" as const });
+    },
+    read() {
+      return Promise.resolve(changes);
     },
   };
 }
@@ -166,7 +183,13 @@ describe("createDispatchHandler", () => {
   it("applies each valid staged event once, preserving receipt order and ignoring redelivery", async () => {
     const store = createMemIndexStore();
     const { objectStore } = createObjectStoreSpy();
-    const handler = createDispatchHandler({ index: store, objectStore, log: () => undefined });
+    const changeLog = createChangeLog();
+    const handler = createDispatchHandler({
+      index: store,
+      objectStore,
+      changeLog,
+      log: () => undefined,
+    });
 
     const response = await handler(
       createSqsEvent([
@@ -196,6 +219,7 @@ describe("createDispatchHandler", () => {
     const store = createMemIndexStore();
     store.records.push({
       profileId: "p1",
+      subscriptionId: "p1",
       itemId: "item-1",
       s3Key: "staging/v1/p1/notes/a.pdf",
       relativePath: "notes",
@@ -206,7 +230,13 @@ describe("createDispatchHandler", () => {
       createdAt: "2026-09-01T00:00:00.000Z",
     });
     const { objectStore, deletedKeys } = createObjectStoreSpy();
-    const handler = createDispatchHandler({ index: store, objectStore, log: () => undefined });
+    const changeLog = createChangeLog();
+    const handler = createDispatchHandler({
+      index: store,
+      objectStore,
+      changeLog,
+      log: () => undefined,
+    });
 
     const response = await handler(
       createSqsEvent([createSqsRecord(JSON.stringify(createDeletedDocument()), "message-1")]),
@@ -221,7 +251,8 @@ describe("createDispatchHandler", () => {
     const store = createMemIndexStore({ failOnItemId: "poison" });
     const { objectStore } = createObjectStoreSpy();
     const log = vi.fn();
-    const handler = createDispatchHandler({ index: store, objectStore, log });
+    const changeLog = createChangeLog();
+    const handler = createDispatchHandler({ index: store, objectStore, changeLog, log });
 
     const response = await handler(
       createSqsEvent([
@@ -250,7 +281,8 @@ describe("createDispatchHandler", () => {
     const store = createMemIndexStore();
     const { objectStore } = createObjectStoreSpy();
     const log = vi.fn();
-    const handler = createDispatchHandler({ index: store, objectStore, log });
+    const changeLog = createChangeLog();
+    const handler = createDispatchHandler({ index: store, objectStore, changeLog, log });
 
     const response = await handler(
       createSqsEvent([
@@ -277,6 +309,7 @@ describe("createDispatchHandler", () => {
     const store = createMemIndexStore();
     store.records.push({
       profileId: "p1",
+      subscriptionId: "p1",
       itemId: "item-2",
       s3Key: "staging/v1/p1/notes/b.pdf",
       relativePath: "notes/b.pdf",
@@ -288,7 +321,8 @@ describe("createDispatchHandler", () => {
     });
     const { objectStore } = createObjectStoreSpy();
     const log = vi.fn();
-    const handler = createDispatchHandler({ index: store, objectStore, log });
+    const changeLog = createChangeLog();
+    const handler = createDispatchHandler({ index: store, objectStore, changeLog, log });
 
     await handler(
       createSqsEvent([

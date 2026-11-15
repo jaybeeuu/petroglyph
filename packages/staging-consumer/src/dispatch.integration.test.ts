@@ -6,6 +6,7 @@ import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { SQSEvent, SQSRecord } from "aws-lambda";
 import type { CloudEvent } from "@petroglyph/events";
 import {
+  DynamoDBStagedChangeLog,
   DynamoDBStagedIndexStore,
   S3StagedObjectStore,
   type FileDeletedData,
@@ -16,6 +17,7 @@ import { createDispatchHandler, type DispatchDependencies } from "./dispatch.js"
 const REGION = "eu-west-2";
 const CREDENTIALS = { accessKeyId: "test", secretAccessKey: "test" };
 const STAGED_RECORDS_TABLE = "staged-records-int";
+const STAGED_CHANGES_TABLE = "staged-changes-int";
 const STAGED_PDFS_BUCKET = "petroglyph-staged-pdfs-int";
 const PDF_BYTES = new TextEncoder().encode("%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\n%%EOF");
 
@@ -70,6 +72,7 @@ function createSqsRecord(document: CloudEvent<unknown>, messageId: string): SQSR
 describe("dispatch handler against LocalStack staged_records + S3", () => {
   let container: StartedTestContainer | undefined;
   let index: DynamoDBStagedIndexStore;
+  let changeLog: DynamoDBStagedChangeLog;
   let objectStore: S3StagedObjectStore;
   let handler: ReturnType<typeof createDispatchHandler>;
 
@@ -103,6 +106,21 @@ describe("dispatch handler against LocalStack staged_records + S3", () => {
       }),
     );
 
+    await dynamo.send(
+      new CreateTableCommand({
+        TableName: STAGED_CHANGES_TABLE,
+        KeySchema: [
+          { AttributeName: "profileId", KeyType: "HASH" },
+          { AttributeName: "seq", KeyType: "RANGE" },
+        ],
+        AttributeDefinitions: [
+          { AttributeName: "profileId", AttributeType: "S" },
+          { AttributeName: "seq", AttributeType: "S" },
+        ],
+        BillingMode: "PAY_PER_REQUEST",
+      }),
+    );
+
     const s3 = new S3Client({
       region: REGION,
       endpoint,
@@ -120,7 +138,16 @@ describe("dispatch handler against LocalStack staged_records + S3", () => {
       region: REGION,
       client: s3,
     });
-    const dependencies: DispatchDependencies = { index, objectStore, log: () => undefined };
+    changeLog = new DynamoDBStagedChangeLog({
+      client: DynamoDBDocumentClient.from(dynamo),
+      tableName: STAGED_CHANGES_TABLE,
+    });
+    const dependencies: DispatchDependencies = {
+      index,
+      objectStore,
+      changeLog,
+      log: () => undefined,
+    };
     handler = createDispatchHandler(dependencies);
   }, 180_000);
 
@@ -184,6 +211,7 @@ describe("dispatch handler against LocalStack staged_records + S3", () => {
     await objectStore.put(s3Key, PDF_BYTES, { contentType: "application/pdf" });
     await index.upsert({
       profileId: "profile-1",
+      subscriptionId: "profile-1",
       itemId: "item-1",
       s3Key,
       relativePath: "notes",
@@ -222,6 +250,7 @@ describe("dispatch handler against LocalStack staged_records + S3", () => {
     await objectStore.put(s3Key, PDF_BYTES, { contentType: "application/pdf" });
     await index.upsert({
       profileId: "profile-1",
+      subscriptionId: "profile-1",
       itemId: "item-2",
       s3Key,
       relativePath: "reports",

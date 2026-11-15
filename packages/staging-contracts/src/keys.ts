@@ -19,6 +19,16 @@ function assertSafeSegment(segment: string, label: string): void {
 }
 
 /**
+ * The S3 prefix one sync unit's staged bytes live under. This is the ONE place
+ * that spells the layout: adopting a subscription-scoped layout later is a
+ * change here plus a re-key, with every input already on the staged record.
+ */
+export function stagingPrefix(scope: { profileId: string }): string {
+  assertSafeSegment(scope.profileId, "profileId");
+  return `staging/${STAGING_LAYOUT_VERSION}/${scope.profileId}`;
+}
+
+/**
  * staging/v1/<profileId>/<relativePath>/<name> — the layout version lives in
  * the key so layout changes are additive (never a coordinated deploy).
  * `name` is kept verbatim; no extension surgery.
@@ -28,9 +38,8 @@ export function deriveStagingKey(input: {
   relativePath: string;
   name: string;
 }): string {
-  assertSafeSegment(input.profileId, "profileId");
   assertSafeSegment(input.relativePath, "relativePath");
   assertSafeSegment(input.name, "name");
 
-  return `staging/${STAGING_LAYOUT_VERSION}/${input.profileId}/${input.relativePath}/${input.name}`;
+  return `${stagingPrefix({ profileId: input.profileId })}/${input.relativePath}/${input.name}`;
 }
