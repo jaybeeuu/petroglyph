@@ -5,10 +5,9 @@ This is the reference a reviewer cites. Where the code does not yet match the de
 carries a `(not yet implemented: <bead>)` marker and a **Today** paragraph naming the code that runs.
 
 The settled design is Option 1 (decided 2026-11-15): a profile owns its staged content, and one
-subscription exists per distinct active profile root. Three seams keep Option 2 reachable — the
-reconciler takes `DesiredRoot[] = { root, ownerProfileId }` and never reads a profile row; staged rows
-carry `profileId` and `subscriptionId` through one prefix function; Graph state lives only in the
-subscription registry.
+subscription exists per distinct active profile root. Three seams keep Option 2 reachable: the reconciler
+takes `DesiredRoot[] = { root, ownerProfileId }` and never reads a profile row; one prefix function derives
+staged keys from `profileId` and `subscriptionId`; Graph state lives only in the subscription registry.
 
 ## Domains
 
@@ -70,9 +69,9 @@ sequenceDiagram
 ```
 
 **Today** this is the target, not the code. `onedrive-connect.ts:269-271` also calls
-`registerGraphSubscription` — a drive-root subscription with `clientState = userId`, whose id is then
-dropped — and `upsertSyncProfile`, which upserts a `default` profile with `sourceFolderPath: "/"` and
-`destinationVaultPath: "handwritten"`. Bead `petroglyph-bw3p` removes both and is **paused**.
+`registerGraphSubscription` (drive root, `clientState = userId`, id then dropped) and `upsertSyncProfile`
+(`default` profile, `sourceFolderPath: "/"`, `destinationVaultPath: "handwritten"`). Bead
+`petroglyph-bw3p` removes both and is **in flight**: round three, in review.
 
 ## 2. Create a profile — reconcile, subscribe, backfill
 
@@ -94,10 +93,9 @@ sequenceDiagram
   G-->>Q: full enumerate of the root
 ```
 
-**Today** (not yet implemented: bw3p, y5bm.2, z23z) there is no reconciler, no subscription registry
-and no backfill bell. `profiles.ts:24-46` writes the profile row and returns 201; the first profile
-becomes `active`, later ones do not. A subscription is created only by connect, for the drive root, so
-the first walk is whatever the next bell triggers.
+**Today** (not yet implemented: bw3p, y5bm.2, z23z) there is no reconciler, no registry and no backfill bell.
+`profiles.ts:24-46` writes the profile row, answers 201, and makes only the first profile `active`; connect
+creates the only subscription, for the drive root, so the first walk is whatever the next bell triggers.
 
 ## 3. A change arrives in OneDrive
 
@@ -120,16 +118,15 @@ sequenceDiagram
 ```
 
 **Today** the receiver is inert for this path (`ingest-onedrive/src/index.ts:217-249`): it echoes
-`validationToken` but otherwise requires a non-null `resourceData`, answering `400` when Graph sends
-none; it checks `clientState` for non-emptiness only, and enqueues a legacy `INGEST_QUEUE_URL` message
-stamped `"default"` as the profile — never a delta bell. It answers `200`. Bead `petroglyph-y5bm.2`
-owns it.
+`validationToken`, else requires a non-null `resourceData` (answering `400` when Graph sends none), checks
+`clientState` for non-emptiness only, and enqueues a legacy `INGEST_QUEUE_URL` message stamped `"default"`
+— never a delta bell — then answers `200`. Bead `petroglyph-y5bm.2` owns it.
 
-The bell is connection-scoped today — `{ userId, provider }` (`contracts/src/delta-trigger.ts:9-15`)
-— so a walk is not scoped to a root: it enumerates the drive root and filters per profile afterwards
-(`delta-walk.ts:539-547`). Bead `petroglyph-z23z` makes it one folder-scoped delta per subscription.
-The continuation bell is real: `adapter/sync.ts:153-157` stores the resume link and enqueues it, using
-the link as its dedupe basis.
+The bell is connection-scoped today — `{ userId, provider }` (`contracts/src/delta-trigger.ts:9-15`) — so
+a walk is not scoped to a root: it enumerates the drive root and filters per profile afterwards
+(`delta-walk.ts:539-547`); bead `petroglyph-z23z` makes it one folder-scoped delta per subscription. The
+continuation bell is real: `adapter/sync.ts:153-157` stores the resume link as its dedupe basis and
+enqueues it.
 
 ## 4. The client pulls changes
 
@@ -145,34 +142,41 @@ sequenceDiagram
   Note over P,F: a 400 on the cursor restarts at page one
 ```
 
-**Today** the pull exists, without a change log or a `seq` (not yet implemented: xgyd). The parameter
-is `nextToken`, the schema is `.strict()`, and the cursor is `base64url({ profileId, itemId })`
-(`staging-delivery/src/app.ts:29-41`, `cursor.ts:3-6`). Paging walks `staged_records` in `itemId` key
-order (`index-store-ddb.ts:27-30`): the feed lists current content, not changes, and a restaged file
-keeps its `itemId`. The body is `{ files, nextToken }`, scoped to the first profile that is both
-`active` and `enabled`.
+**Today** the pull exists, without a change log or a `seq` (not yet implemented: xgyd). The parameter is
+`nextToken`, the schema is `.strict()`, and the cursor is `base64url({ profileId, itemId })`
+(`staging-delivery/src/app.ts:29-41`, `cursor.ts:3-6`). Paging walks `staged_records` in `itemId` key order
+(`index-store-ddb.ts:27-30`), so the feed lists current content, not changes, and a restaged file keeps its
+`itemId`. The body is `{ files, nextToken }`, scoped to the first profile that is both `active` and
+`enabled`.
 
 ## 5. Delete a profile
+
+(not yet implemented: petroglyph-shqb.7). The decided shape is a **soft delete**: `DELETE` writes one field
+and returns, and the cleanup is a separate, replayable step.
 
 ```mermaid
 sequenceDiagram
   participant C as Client
   participant A as API
+  participant S as Profiles stream
+  participant J as Janitor
   participant R as Reconciler
-  participant G as Graph
   C->>A: DELETE /profiles/:id
-  A->>A: delete profile row, staged rows, change-log rows
-  A->>R: nudge
-  R->>R: root no longer in the desired set
-  R->>G: delete that subscription
-  A-->>C: 204
-  Note over R: a nested root keeps its own subscription
+  A->>A: set deletedAt, answer 200
+  Note over A: already unreachable
+  S->>J: deletedAt appeared, not removed
+  J->>J: my staged rows, their objects, change-log rows
+  J->>J: a replay repeats the same keyed deletes
+  R->>R: the profile leaves the desired roots
+  R->>R: an unshared root loses its subscription
 ```
 
-**Today** (`profiles-crud.ts:136-161`) the handler deletes the profile row and the legacy
-`file_records` rows, then promotes the most-recently-created remaining profile to `active`. It does
-not delete `staged_records` rows or S3 objects, and there is no subscription to delete because none is
-tracked: the 90-day S3 lifecycle and the row TTL are the only cleanup. Nudging a reconciler is (bw3p).
+**Today** (`profiles-crud.ts:136-161`) there is no `deletedAt` and no stream on `sync_profiles`. The
+handler hard-deletes the profile row and the legacy `file_records` rows, promotes the newest remaining
+profile to `active`, and answers 204; `staged_records` rows, S3 objects and change-log rows survive as
+unreachable garbage, with the 90-day S3 lifecycle and the row TTL as the only cleanup. There is no job table, no marker
+table and no `purging` state; the janitor deletes only its own domain's rows and objects, keyed by
+`profileId`, and the subscription is the reconciler's, not the janitor's.
 
 ## 6. Reconcile — one loop for renewal and repair
 
@@ -192,13 +196,13 @@ sequenceDiagram
   R->>Reg: write the row, backfill bell
 ```
 
-**Today** (not yet implemented: bw3p) there is no reconciler and no renewal loop. What runs is a
-catch-up sweep every 6 hours (`packages/infra/variables.tf:134-137`, `catch-up.ts:62-70`): one bell
-per healthy connection, deduped on a 5-minute bucket, skipping connections awaiting reauthorisation.
-Renewal happens only when Graph sends a `reauthorizationRequired` lifecycle event
-(`onedrive-lifecycle.ts:292-330`), which reauthorises, or deletes and recreates on failure, then marks
-the connection `reconnect_required` if that also fails. A subscription created at connect carries a
-4230-minute expiry (`onedrive-lifecycle.ts:249-252`) and nothing renews it on a schedule.
+**Today** (not yet implemented: bw3p) there is no reconciler and no renewal loop. What runs is a catch-up
+sweep every 6 hours (`packages/infra/variables.tf:134-137`, `catch-up.ts:62-70`): one bell per healthy
+connection, deduped on a 5-minute bucket, skipping connections awaiting reauthorisation. Renewal happens
+only when Graph sends a `reauthorizationRequired` lifecycle event (`onedrive-lifecycle.ts:292-330`), which
+reauthorises, or deletes and recreates on failure, then marks the connection `reconnect_required` if that
+also fails. A subscription created at connect carries a 4230-minute expiry
+(`onedrive-lifecycle.ts:249-252`) and nothing renews it on a schedule.
 
 ## Connection status
 
