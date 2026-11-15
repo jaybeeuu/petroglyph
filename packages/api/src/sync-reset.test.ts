@@ -13,6 +13,34 @@ import { resetKeyCache } from "./jwt.js";
 
 const app = createApp();
 
+const FILE_RECORDS_TABLE = "petroglyph-file-records-test";
+const DELTA_TOKENS_TABLE = "petroglyph-delta-tokens-test";
+const SYNC_PROFILES_TABLE = "petroglyph-sync-profiles-test";
+
+const PROFILE_ONE = "b6f1c0de-0000-4000-8000-000000000001";
+const PROFILE_TWO = "b6f1c0de-0000-4000-8000-000000000002";
+
+interface ProfileRow {
+  profileId: string;
+  userId: string;
+}
+
+function makeProfile(profileId: string): object {
+  return {
+    profileId,
+    userId: "user-42",
+    name: `profile ${profileId}`,
+    sourceFolderPath: "docs",
+    destinationVaultPath: "inbox",
+    pollingIntervalMinutes: 5,
+    enabled: true,
+    active: false,
+    initialSyncEnabled: true,
+    createdAt: "2026-11-15T00:00:00.000Z",
+    updatedAt: "2026-11-15T00:00:00.000Z",
+  };
+}
+
 describe("POST /sync/reset", () => {
   let privateKey: CryptoKey;
   let publicKeyPem: string;
@@ -24,8 +52,9 @@ describe("POST /sync/reset", () => {
   });
 
   beforeEach(() => {
-    vi.stubEnv("FILE_RECORDS_TABLE", "petroglyph-file-records-test");
-    vi.stubEnv("DELTA_TOKENS_TABLE", "petroglyph-delta-tokens-test");
+    vi.stubEnv("FILE_RECORDS_TABLE", FILE_RECORDS_TABLE);
+    vi.stubEnv("DELTA_TOKENS_TABLE", DELTA_TOKENS_TABLE);
+    vi.stubEnv("SYNC_PROFILES_TABLE", SYNC_PROFILES_TABLE);
     vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
     mockDbSend.mockReset();
     resetKeyCache();
@@ -60,38 +89,30 @@ describe("POST /sync/reset", () => {
     });
   }
 
-  it("returns 400 for an invalid scope", async () => {
-    const response = await postReset("plugin");
-
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({
-      error: "Invalid reset scope",
-    });
-  });
-
-  it("deletes the delta token and file records for a server reset", async () => {
-    const batchWriteResponses = [
-      {
-        UnprocessedItems: {
-          "petroglyph-file-records-test": [
-            {
-              DeleteRequest: {
-                Key: { profileId: "default", fileId: "file-2" },
-              },
-            },
-          ],
-        },
-      },
-      {},
-    ];
+  /**
+   * Answers the three tables the reset touches: the caller's profiles, each
+   * profile's file records, and the delta tokens.
+   */
+  function mockTables(options: {
+    profiles: ProfileRow[];
+    fileRecordIds?: { [profileId: string]: string[] };
+    batchWriteResponses?: object[];
+  }): void {
+    const { profiles, fileRecordIds = {}, batchWriteResponses = [] } = options;
 
     mockDbSend.mockImplementation((command: unknown) => {
       if (command instanceof QueryCommand) {
+        if (command.input.TableName === SYNC_PROFILES_TABLE) {
+          return Promise.resolve({ Items: profiles.map((row) => makeProfile(row.profileId)) });
+        }
+        const profileId = command.input.ExpressionAttributeValues?.[":profileId"] as
+          | string
+          | undefined;
+        if (profileId === undefined) {
+          return Promise.reject(new Error("file records query without a profile id"));
+        }
         return Promise.resolve({
-          Items: [
-            { profileId: "default", fileId: "file-1" },
-            { profileId: "default", fileId: "file-2" },
-          ],
+          Items: (fileRecordIds[profileId] ?? []).map((fileId) => ({ profileId, fileId })),
         });
       }
 
@@ -105,86 +126,115 @@ describe("POST /sync/reset", () => {
 
       return Promise.resolve({});
     });
+  }
+
+  function deltaTokenDeletes(): DeleteCommand[] {
+    const commands: DeleteCommand[] = [];
+    for (const [command] of mockDbSend.mock.calls) {
+      if (command instanceof DeleteCommand) commands.push(command);
+    }
+    return commands;
+  }
+
+  function fileRecordBatches(): BatchWriteCommand[] {
+    const commands: BatchWriteCommand[] = [];
+    for (const [command] of mockDbSend.mock.calls) {
+      if (command instanceof BatchWriteCommand) commands.push(command);
+    }
+    return commands;
+  }
+
+  it("returns 400 for an invalid scope", async () => {
+    const response = await postReset("plugin");
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Invalid reset scope",
+    });
+  });
+
+  it("deletes the delta token and file records of every profile the user owns", async () => {
+    mockTables({
+      profiles: [{ profileId: PROFILE_ONE, userId: "user-42" }],
+      fileRecordIds: { [PROFILE_ONE]: ["file-1", "file-2"] },
+    });
 
     const response = await postReset("server");
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ resetToken: false });
 
-    const deleteCommandCalls = mockDbSend.mock.calls.filter(
-      ([command]) => command instanceof DeleteCommand,
-    );
-    expect(deleteCommandCalls).toHaveLength(1);
+    const deletes = deltaTokenDeletes();
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0]?.input.TableName).toBe(DELTA_TOKENS_TABLE);
+    expect(deletes[0]?.input.Key).toEqual({ profileId: PROFILE_ONE });
 
-    const [deleteCommand] = deleteCommandCalls[0] as [
-      { input: { TableName: string; Key: { profileId: string } } },
-    ];
-    expect(deleteCommand.input.TableName).toBe("petroglyph-delta-tokens-test");
-    expect(deleteCommand.input.Key.profileId).toBe("default");
-
-    const queryCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof QueryCommand);
-    expect(queryCalls).toHaveLength(1);
-
-    const [queryCommand] = queryCalls[0] as [
-      { input: { TableName: string; ExpressionAttributeValues: { ":profileId": string } } },
-    ];
-    expect(queryCommand.input.TableName).toBe("petroglyph-file-records-test");
-    expect(queryCommand.input.ExpressionAttributeValues[":profileId"]).toBe("default");
-
-    const batchWriteCalls = mockDbSend.mock.calls.filter(
-      ([command]) => command instanceof BatchWriteCommand,
-    );
-    expect(batchWriteCalls).toHaveLength(2);
-
-    const [firstBatchWriteCommand] = batchWriteCalls[0] as [
-      {
-        input: {
-          RequestItems: {
-            [tableName: string]: Array<{
-              DeleteRequest: { Key: { profileId: string; fileId: string } };
-            }>;
-          };
-        };
-      },
-    ];
-    expect(firstBatchWriteCommand.input.RequestItems["petroglyph-file-records-test"]).toEqual([
-      { DeleteRequest: { Key: { profileId: "default", fileId: "file-1" } } },
-      { DeleteRequest: { Key: { profileId: "default", fileId: "file-2" } } },
-    ]);
-
-    const [secondBatchWriteCommand] = batchWriteCalls[1] as [
-      {
-        input: {
-          RequestItems: {
-            [tableName: string]: Array<{
-              DeleteRequest: { Key: { profileId: string; fileId: string } };
-            }>;
-          };
-        };
-      },
-    ];
-    expect(secondBatchWriteCommand.input.RequestItems["petroglyph-file-records-test"]).toEqual([
-      { DeleteRequest: { Key: { profileId: "default", fileId: "file-2" } } },
+    const batches = fileRecordBatches();
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.input.RequestItems?.[FILE_RECORDS_TABLE]).toEqual([
+      { DeleteRequest: { Key: { profileId: PROFILE_ONE, fileId: "file-1" } } },
+      { DeleteRequest: { Key: { profileId: PROFILE_ONE, fileId: "file-2" } } },
     ]);
   });
 
+  it("resets each profile separately and retries unprocessed file records", async () => {
+    mockTables({
+      profiles: [
+        { profileId: PROFILE_ONE, userId: "user-42" },
+        { profileId: PROFILE_TWO, userId: "user-42" },
+      ],
+      fileRecordIds: {
+        [PROFILE_ONE]: ["file-1"],
+        [PROFILE_TWO]: ["file-2"],
+      },
+      batchWriteResponses: [
+        {},
+        {
+          UnprocessedItems: {
+            [FILE_RECORDS_TABLE]: [
+              { DeleteRequest: { Key: { profileId: PROFILE_TWO, fileId: "file-2" } } },
+            ],
+          },
+        },
+        {},
+      ],
+    });
+
+    const response = await postReset("server");
+
+    expect(response.status).toBe(200);
+
+    const deletes = deltaTokenDeletes();
+    expect(deletes.map((command) => command.input.Key)).toEqual([
+      { profileId: PROFILE_ONE },
+      { profileId: PROFILE_TWO },
+    ]);
+
+    const batches = fileRecordBatches();
+    expect(batches.map((command) => command.input.RequestItems?.[FILE_RECORDS_TABLE]?.[0])).toEqual(
+      [
+        { DeleteRequest: { Key: { profileId: PROFILE_ONE, fileId: "file-1" } } },
+        { DeleteRequest: { Key: { profileId: PROFILE_TWO, fileId: "file-2" } } },
+        { DeleteRequest: { Key: { profileId: PROFILE_TWO, fileId: "file-2" } } },
+      ],
+    );
+  });
+
+  it("deletes nothing for a user with no profile", async () => {
+    mockTables({ profiles: [] });
+
+    const response = await postReset("full");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ resetToken: true });
+    expect(deltaTokenDeletes()).toHaveLength(0);
+    expect(fileRecordBatches()).toHaveLength(0);
+  });
+
   it("returns resetToken=true for a full reset after clearing server state", async () => {
-    mockDbSend.mockImplementation((command: unknown) => {
-      if (command instanceof QueryCommand) {
-        return Promise.resolve({
-          Items: [{ profileId: "default", fileId: "file-9" }],
-        });
-      }
-
-      if (command instanceof BatchWriteCommand) {
-        return Promise.resolve({});
-      }
-
-      if (command instanceof DeleteCommand) {
-        return Promise.resolve({});
-      }
-
-      return Promise.resolve({});
+    mockTables({
+      profiles: [{ profileId: PROFILE_ONE, userId: "user-42" }],
+      fileRecordIds: { [PROFILE_ONE]: ["file-9"] },
     });
 
     const response = await postReset("full");
@@ -192,10 +242,7 @@ describe("POST /sync/reset", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ resetToken: true });
 
-    expect(mockDbSend.mock.calls.some(([command]) => command instanceof DeleteCommand)).toBe(true);
-    expect(mockDbSend.mock.calls.some(([command]) => command instanceof QueryCommand)).toBe(true);
-    expect(mockDbSend.mock.calls.some(([command]) => command instanceof BatchWriteCommand)).toBe(
-      true,
-    );
+    expect(deltaTokenDeletes()).toHaveLength(1);
+    expect(fileRecordBatches()).toHaveLength(1);
   });
 });

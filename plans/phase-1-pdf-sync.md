@@ -62,7 +62,7 @@ Implement the GitHub OAuth flow end-to-end. The cloud API exposes `GET /auth/url
 
 ### What to build
 
-Implement the OneDrive PKCE OAuth flow. The cloud API exposes `GET /onedrive/auth-url` (generates PKCE verifier, stores it in DynamoDB, returns the Microsoft authorise URL) and `POST /onedrive/connect` (exchanges the code, stores access + refresh tokens in SSM, registers the Microsoft Graph change notification subscription for the configured folder, creates a default `SyncProfile` in DynamoDB). The plugin adds a "Connect OneDrive" button in settings and registers the `obsidian://petroglyph/oauth/callback` URI handler. `GET /status` reflects `oneDriveStatus: "connected"`.
+Implement the OneDrive PKCE OAuth flow. The cloud API exposes `GET /onedrive/auth-url` (generates PKCE verifier, stores it in DynamoDB, returns the Microsoft authorise URL) and `POST /onedrive/connect` (exchanges the code, stores access + refresh tokens in SSM, registers the Microsoft Graph change notification subscription for the configured folder, and writes no sync profile: the user creates the folder-to-vault mapping). The plugin adds a "Connect OneDrive" button in settings and registers the `obsidian://petroglyph/oauth/callback` URI handler. `GET /status` reflects `oneDriveStatus: "connected_no_profile"` until the user creates a profile, then `"connected"`.
 
 ### Acceptance criteria
 
@@ -70,7 +70,7 @@ Implement the OneDrive PKCE OAuth flow. The cloud API exposes `GET /onedrive/aut
 - [ ] After consent, the plugin shows "OneDrive connected" in settings
 - [ ] A Graph change notification subscription exists for the configured OneDrive folder (verifiable via Graph Explorer)
 - [ ] `GET /status` returns `{ oneDriveStatus: "connected", subscriptionActive: true }`
-- [ ] A default `SyncProfile` record exists in DynamoDB after connection
+- [ ] No `SyncProfile` record exists after connection; `GET /status` reports `connected_no_profile`
 - [ ] OneDrive access token is lazy-refreshed when within 10 minutes of expiry
 
 ---

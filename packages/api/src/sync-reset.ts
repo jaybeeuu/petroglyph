@@ -1,10 +1,10 @@
 import { BatchWriteCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { defineEndpoint } from "@petroglyph/contracts/hono";
 import { resetSync } from "@petroglyph/contracts/operations";
+import { listProfiles } from "@petroglyph/core";
 import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
 
-const DEFAULT_PROFILE_ID = "default";
 const BATCH_DELETE_LIMIT = 25;
 const MAX_BATCH_DELETE_ATTEMPTS = 5;
 
@@ -23,6 +23,10 @@ function fileRecordsTableName(): string {
 
 function deltaTokensTableName(): string {
   return process.env["DELTA_TOKENS_TABLE"] ?? "petroglyph-delta-tokens-default";
+}
+
+function syncProfilesTableName(): string {
+  return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
 }
 
 function parseFileRecordKeys(items: unknown[] | undefined): FileRecordKey[] {
@@ -164,8 +168,13 @@ async function deleteFileRecords(profileId: string): Promise<void> {
 }
 
 export const resetSyncEndpoint = defineEndpoint(resetSync, async (input, c: AppContext) => {
-  await deleteDeltaToken(DEFAULT_PROFILE_ID);
-  await deleteFileRecords(DEFAULT_PROFILE_ID);
+  // Every profile owns its own delta token and file records, so a reset clears
+  // the caller's profiles one by one. A user with no profile has nothing here.
+  const profiles = await listProfiles(docClient(), syncProfilesTableName(), c.get("userId"));
+  for (const profile of profiles) {
+    await deleteDeltaToken(profile.profileId);
+    await deleteFileRecords(profile.profileId);
+  }
 
   return input.body.scope === "full" ? c.json({ resetToken: true }) : c.json({ resetToken: false });
 });
