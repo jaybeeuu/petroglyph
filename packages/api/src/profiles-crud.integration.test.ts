@@ -5,6 +5,8 @@ import {
   type KeySchemaElement,
 } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { putProfile, updateProfile } from "@petroglyph/core";
+import type { SyncProfile } from "@petroglyph/core";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -73,8 +75,16 @@ describe("profiles CRUD against LocalStack DynamoDB", () => {
 
   it("sets the attribute the request names and leaves the rest of the row alone", async () => {
     const userId = "user-rename";
+    // `retainedFlag` and `retainedText` are outside the profile schema, so they
+    // stand in for any attribute a writer does not know about.
     await putStoredProfile(
-      { profileId: "profile-rename", name: "Old Name", oneDriveConnected: true },
+      {
+        profileId: "profile-rename",
+        name: "Old Name",
+        oneDriveConnected: true,
+        retainedFlag: true,
+        retainedText: "kept across the update",
+      },
       userId,
     );
 
@@ -82,9 +92,19 @@ describe("profiles CRUD against LocalStack DynamoDB", () => {
 
     expect(response.status).toBe(200);
     const stored = await readStoredProfile("profile-rename", userId);
-    expect(stored["name"]).toBe("New Name");
-    expect(stored["oneDriveConnected"]).toBe(true);
+    expect(stored).toMatchObject({
+      name: "New Name",
+      oneDriveConnected: true,
+      retainedFlag: true,
+      retainedText: "kept across the update",
+    });
   });
+
+  // `petroglyph-bw3p` deletes `oneDriveConnected` from the profile schema and moves
+  // `/status` off the profile row. It retires the `/status` round-trip test below
+  // and the `oneDriveConnected` assertions in this file; the `retainedFlag` and
+  // `retainedText` assertions above stay, because they prove the class property
+  // that any unnamed attribute survives.
 
   it("keeps the OneDrive connection marker when a connected profile is activated", async () => {
     const userId = "user-activate";
@@ -178,6 +198,38 @@ describe("profiles CRUD against LocalStack DynamoDB", () => {
     expect(promoted["oneDriveConnected"]).toBe(true);
   });
 
+  it("refuses a profile update when the row is not there instead of writing a partial row", async () => {
+    const userId = "user-missing-row";
+
+    await expect(
+      updateProfile(dynamo, SYNC_PROFILES_TABLE, userId, "profile-absent", {
+        name: "Never stored",
+      }),
+    ).rejects.toMatchObject({ name: "ConditionalCheckFailedException" });
+
+    expect(await findStoredProfile("profile-absent", userId)).toBeNull();
+  });
+
+  it("creates a profile row that does not exist yet", async () => {
+    const profile: SyncProfile = {
+      profileId: "profile-put",
+      userId: "user-put",
+      name: "Put directly",
+      sourceFolderPath: "Notes",
+      destinationVaultPath: "vault",
+      pollingIntervalMinutes: 5,
+      enabled: true,
+      active: true,
+      initialSyncEnabled: true,
+      createdAt: "2024-01-01T00:00:00.000Z",
+      updatedAt: "2024-01-01T00:00:00.000Z",
+    };
+
+    await putProfile(dynamo, SYNC_PROFILES_TABLE, profile);
+
+    expect(await findStoredProfile("profile-put", "user-put")).toEqual(profile);
+  });
+
   async function request(
     method: string,
     path: string,
@@ -218,17 +270,24 @@ describe("profiles CRUD against LocalStack DynamoDB", () => {
   }
 
   async function readStoredProfile(profileId: string, userId = USER_ID): Promise<StoredProfile> {
+    const item = await findStoredProfile(profileId, userId);
+    if (item === null) {
+      throw new Error(`No stored profile ${profileId}`);
+    }
+    return item;
+  }
+
+  async function findStoredProfile(
+    profileId: string,
+    userId = USER_ID,
+  ): Promise<StoredProfile | null> {
     const result = await dynamo.send(
       new GetCommand({
         TableName: SYNC_PROFILES_TABLE,
         Key: { userId, profileId },
       }),
     );
-    const item = result.Item;
-    if (item === undefined) {
-      throw new Error(`No stored profile ${profileId}`);
-    }
-    return item;
+    return result.Item ?? null;
   }
 
   async function makeToken(userId: string): Promise<string> {

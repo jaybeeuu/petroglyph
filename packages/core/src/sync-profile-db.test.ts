@@ -130,6 +130,7 @@ describe("updateProfile", () => {
       TableName: TABLE_NAME,
       Key: { userId: "user-1", profileId: "prof-1" },
       UpdateExpression: "SET #attribute0 = :value0, #attribute1 = :value1",
+      ConditionExpression: "attribute_exists(userId)",
       ExpressionAttributeNames: { "#attribute0": "name", "#attribute1": "updatedAt" },
       ExpressionAttributeValues: { ":value0": "Renamed", ":value1": "2024-02-02T00:00:00.000Z" },
     });
@@ -146,8 +147,19 @@ describe("updateProfile", () => {
       TableName: TABLE_NAME,
       Key: { userId: "user-1", profileId: "prof-1" },
       UpdateExpression: "REMOVE #attribute0",
+      ConditionExpression: "attribute_exists(userId)",
       ExpressionAttributeNames: { "#attribute0": "enabled" },
     });
+  });
+
+  it("guards the update so a missing profile is rejected, not created", async () => {
+    const client = makeClient(() => ({}));
+
+    await updateProfile(client, TABLE_NAME, "user-1", "prof-1", { name: "Renamed" });
+
+    const { send } = client as unknown as { send: ReturnType<typeof vi.fn> };
+    const call = send.mock.calls[0] as [{ input: { ConditionExpression?: string } }];
+    expect(call[0].input.ConditionExpression).toBe("attribute_exists(userId)");
   });
 
   it("sends no command when no attribute is named", async () => {

@@ -93,7 +93,9 @@ export type ProfileChanges = {
 
 /**
  * Writes the named attributes of an existing profile and nothing else. The item
- * must exist: an update does not create one, so a create keeps using
+ * must exist: the `attribute_exists` condition rejects a missing one, because an
+ * unguarded update would create the item holding only the named attributes and
+ * every later read of that row would fail. A create keeps using
  * {@link putProfile}.
  */
 export async function updateProfile(
@@ -138,6 +140,7 @@ export async function updateProfile(
       TableName: tableName,
       Key: { userId, profileId },
       UpdateExpression: updateExpression,
+      ConditionExpression: "attribute_exists(userId)",
       ExpressionAttributeNames: names,
       ...(Object.keys(values).length > 0 && { ExpressionAttributeValues: values }),
     }),
