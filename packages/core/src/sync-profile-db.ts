@@ -1,4 +1,10 @@
-import { DeleteCommand, GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DeleteCommand,
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { syncProfileSchema } from "./sync-profile.js";
 import type { SyncProfile } from "./sync-profile.js";
@@ -51,6 +57,10 @@ export async function listProfiles(
   return items.map((item) => syncProfileSchema.parse(item));
 }
 
+/**
+ * Stores a whole profile. Use it to create one: a put replaces the item, so it
+ * writes every attribute and deletes any attribute it does not name.
+ */
 export async function putProfile(
   client: DynamoDBDocumentClient,
   tableName: string,
@@ -60,6 +70,79 @@ export async function putProfile(
     new PutCommand({
       TableName: tableName,
       Item: profile,
+    }),
+  );
+}
+
+/** A profile attribute value as DynamoDB stores it. */
+export type ProfileAttributeValue = string | number | boolean;
+
+/**
+ * The attributes one profile write names. A field absent from the map keeps its
+ * stored value, so an update cannot erase an attribute the writer does not know
+ * about — `oneDriveConnected`, for one, is stamped by the connect path and is
+ * not part of the domain schema a reader parses.
+ *
+ * A field mapped to `null` is removed. DynamoDB has no null value, so clearing
+ * an optional attribute needs a `REMOVE` clause; a `SET` would store the string
+ * `undefined` instead.
+ */
+export type ProfileChanges = {
+  readonly [Field in keyof SyncProfile]?: ProfileAttributeValue | null;
+};
+
+/**
+ * Writes the named attributes of an existing profile and nothing else. The item
+ * must exist: the `attribute_exists` condition rejects a missing one, because an
+ * unguarded update would create the item holding only the named attributes and
+ * every later read of that row would fail. A create keeps using
+ * {@link putProfile}.
+ */
+export async function updateProfile(
+  client: DynamoDBDocumentClient,
+  tableName: string,
+  userId: string,
+  profileId: string,
+  changes: ProfileChanges,
+): Promise<void> {
+  const assignments: string[] = [];
+  const removals: string[] = [];
+  const names: { [placeholder: string]: string } = {};
+  const values: { [placeholder: string]: ProfileAttributeValue } = {};
+  let placeholder = 0;
+
+  for (const [field, value] of Object.entries(changes)) {
+    const namePlaceholder = `#attribute${placeholder}`;
+    names[namePlaceholder] = field;
+
+    if (value === null) {
+      removals.push(namePlaceholder);
+    } else {
+      const valuePlaceholder = `:value${placeholder}`;
+      values[valuePlaceholder] = value;
+      assignments.push(`${namePlaceholder} = ${valuePlaceholder}`);
+    }
+
+    placeholder += 1;
+  }
+
+  if (assignments.length === 0 && removals.length === 0) {
+    return;
+  }
+
+  const updateExpression = [
+    ...(assignments.length > 0 ? [`SET ${assignments.join(", ")}`] : []),
+    ...(removals.length > 0 ? [`REMOVE ${removals.join(", ")}`] : []),
+  ].join(" ");
+
+  await client.send(
+    new UpdateCommand({
+      TableName: tableName,
+      Key: { userId, profileId },
+      UpdateExpression: updateExpression,
+      ConditionExpression: "attribute_exists(userId)",
+      ExpressionAttributeNames: names,
+      ...(Object.keys(values).length > 0 && { ExpressionAttributeValues: values }),
     }),
   );
 }

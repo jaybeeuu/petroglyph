@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { deleteProfile, getProfile, listProfiles, putProfile } from "./sync-profile-db.js";
+import {
+  deleteProfile,
+  getProfile,
+  listProfiles,
+  putProfile,
+  updateProfile,
+} from "./sync-profile-db.js";
 import type { SyncProfile } from "./sync-profile.js";
 
 const TABLE_NAME = "test-sync-profiles";
@@ -106,6 +112,63 @@ describe("putProfile", () => {
       TableName: TABLE_NAME,
       Item: testProfile,
     });
+  });
+});
+
+describe("updateProfile", () => {
+  it("sets the change on the profile's key without replacing the item", async () => {
+    const client = makeClient(() => ({}));
+
+    await updateProfile(client, TABLE_NAME, "user-1", "prof-1", {
+      name: "Renamed",
+      updatedAt: "2024-02-02T00:00:00.000Z",
+    });
+
+    const { send } = client as unknown as { send: ReturnType<typeof vi.fn> };
+    const call = send.mock.calls[0] as [{ input: unknown }];
+    expect(call[0].input).toEqual({
+      TableName: TABLE_NAME,
+      Key: { userId: "user-1", profileId: "prof-1" },
+      UpdateExpression: "SET #attribute0 = :value0, #attribute1 = :value1",
+      ConditionExpression: "attribute_exists(userId)",
+      ExpressionAttributeNames: { "#attribute0": "name", "#attribute1": "updatedAt" },
+      ExpressionAttributeValues: { ":value0": "Renamed", ":value1": "2024-02-02T00:00:00.000Z" },
+    });
+  });
+
+  it("clears an attribute mapped to null with a REMOVE clause", async () => {
+    const client = makeClient(() => ({}));
+
+    await updateProfile(client, TABLE_NAME, "user-1", "prof-1", { enabled: null });
+
+    const { send } = client as unknown as { send: ReturnType<typeof vi.fn> };
+    const call = send.mock.calls[0] as [{ input: unknown }];
+    expect(call[0].input).toEqual({
+      TableName: TABLE_NAME,
+      Key: { userId: "user-1", profileId: "prof-1" },
+      UpdateExpression: "REMOVE #attribute0",
+      ConditionExpression: "attribute_exists(userId)",
+      ExpressionAttributeNames: { "#attribute0": "enabled" },
+    });
+  });
+
+  it("guards the update so a missing profile is rejected, not created", async () => {
+    const client = makeClient(() => ({}));
+
+    await updateProfile(client, TABLE_NAME, "user-1", "prof-1", { name: "Renamed" });
+
+    const { send } = client as unknown as { send: ReturnType<typeof vi.fn> };
+    const call = send.mock.calls[0] as [{ input: { ConditionExpression?: string } }];
+    expect(call[0].input.ConditionExpression).toBe("attribute_exists(userId)");
+  });
+
+  it("sends no command when no attribute is named", async () => {
+    const client = makeClient(() => ({}));
+
+    await updateProfile(client, TABLE_NAME, "user-1", "prof-1", {});
+
+    const { send } = client as unknown as { send: ReturnType<typeof vi.fn> };
+    expect(send).not.toHaveBeenCalled();
   });
 });
 
