@@ -43,8 +43,10 @@ export interface ProcessChangeDeps {
  *   "deduped": the write did not happen, so callers must not count it as
  *   landed/deleted.
  *
- * The three lines below report a change that did not land: worth counting, so
- * they log at WARN, and none of them is a failure — the next walk re-evaluates.
+ * Two of the three lines below report a change that did not land and that the
+ * next walk re-evaluates, so they log at WARN: worth counting, not worth paging
+ * on. The third is a fault, not an outcome — bytes that match no known type are
+ * data the adapter cannot land — so it logs at ERROR.
  */
 export async function processChange(
   change: FileChangeEvent,
@@ -80,8 +82,13 @@ export async function processChange(
 
   const detected = detectType(fetched.bytes);
   if (detected === null) {
-    log.warn(
-      `[land] lie telemetry — claim ${change.mimeType ?? "none"}, extension ${change.name}, detected null (${change.itemId})`,
+    // The claim passed the pre-download filter, so a user asked for this file.
+    // Bytes that match no known type mean a wrong claim, a truncated download,
+    // or an error page served as content. Nothing re-fetches it, so the
+    // document never lands — ERROR, because silence here is lost data.
+    log.error(
+      `[land] lie telemetry — claim ${change.mimeType ?? "none"}, extension ${change.name}, ` +
+        `detected null (${change.profileId}, item ${change.itemId}, ${fetched.bytes.byteLength} bytes)`,
     );
     return "gate-rejected";
   }

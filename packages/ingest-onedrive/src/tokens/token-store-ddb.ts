@@ -27,7 +27,7 @@ type StoredTokenRecord = TokenRecord & { userId: string; provider: string };
 export interface DynamoDBTokenStoreOptions {
   client: DynamoDBDocumentClient;
   tableName: string;
-  /** Where a vault row skipped by the sweep is reported; defaults to a WARN line. */
+  /** Where a vault row skipped by the sweep is reported; defaults to an ERROR line. */
   log?: Logger;
 }
 
@@ -36,6 +36,13 @@ const CAS_FAILURE_NAME = "ConditionalCheckFailedException";
 function describeConnection(item: unknown): string {
   const identity = connectionIdentitySchema.safeParse(item);
   return identity.success ? `${identity.data.userId}:${identity.data.provider}` : "unknown";
+}
+
+/** What the row failed on, field by field, so an operator can repair the row. */
+function describeSchemaFailure(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => `${issue.path.join(".") || "(row)"}: ${issue.message}`)
+    .join("; ");
 }
 
 function isConditionalCheckFailure(error: unknown): boolean {
@@ -76,10 +83,12 @@ export class DynamoDBTokenStore implements TokenStore {
    * right tool here: the vault is keyed by connection, and the sweep needs all
    * of them, once every few hours.
    *
-   * A row that fails storedConnectionSchema is skipped and logged, naming the
-   * connection when its identity is readable. One malformed row must never fail
-   * the sweep: the sweep is the reliability net, so it degrades to the healthy
-   * connections instead of going dark for every user.
+   * A row that fails storedConnectionSchema is skipped and logged at ERROR,
+   * naming the connection when its identity is readable and the fields that
+   * failed the schema. One malformed row must never fail the sweep: the sweep is
+   * the reliability net, so it degrades to the healthy connections instead of
+   * going dark for every user — but a row the sweep cannot read is a connection
+   * whose sync silently stops, so it stays an error, not a notice.
    */
   async list(): Promise<StoredConnection[]> {
     const connections: StoredConnection[] = [];
@@ -96,8 +105,9 @@ export class DynamoDBTokenStore implements TokenStore {
       for (const item of result.Items ?? []) {
         const connection = storedConnectionSchema.safeParse(item);
         if (!connection.success) {
-          this.#log.warn(
-            `[ingest-onedrive] skipping malformed connection in token vault: ${describeConnection(item)}`,
+          this.#log.error(
+            `[ingest-onedrive] skipping malformed connection in token vault: ` +
+              `${describeConnection(item)} — ${describeSchemaFailure(connection.error)}`,
           );
           continue;
         }

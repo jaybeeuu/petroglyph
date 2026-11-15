@@ -214,8 +214,8 @@ function describeFailure(failure: DeltaWalkFailure | undefined): string {
  * A deleted item carries no version, so its id deliberately falls back to the
  * 3-part profile:item:kind. A file change with no eTag is unexpected (the
  * delta `$select` requests the top-level `eTag`), so it falls back too — and
- * warns, because the absence means the page contract is wrong and the second
- * update would be silently suppressed as a duplicate.
+ * logs at ERROR, because the absence means the page contract is wrong and the
+ * second update would be silently suppressed as a duplicate.
  */
 function emissionIdFor(change: FileChangeEvent, log: Logger): string {
   const id = `${change.profileId}:${change.itemId}:${change.kind}`;
@@ -223,7 +223,7 @@ function emissionIdFor(change: FileChangeEvent, log: Logger): string {
     return id;
   }
   if (change.eTag === undefined) {
-    log.warn(
+    log.error(
       `[adapter] item ${change.itemId} has no eTag; emission id ${id} is unversioned and a later update will be suppressed as a duplicate`,
     );
     return id;

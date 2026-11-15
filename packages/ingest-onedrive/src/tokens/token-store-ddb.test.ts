@@ -183,7 +183,7 @@ describe("DynamoDBTokenStore", () => {
       ]);
     });
 
-    it("names the skipped connection in the log", async () => {
+    it("names the skipped connection and its failing field in the ERROR log", async () => {
       const send = vi.fn().mockResolvedValue({
         Items: [{ userId: "github|2", provider: "onedrive", reconnectRequired: null }],
       });
@@ -193,8 +193,11 @@ describe("DynamoDBTokenStore", () => {
 
       await store.list();
 
-      expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("github|2:onedrive"));
-      expect(log.error).not.toHaveBeenCalled();
+      // A row the sweep cannot read is a connection whose sync silently stops,
+      // so the line must survive an ERROR filter — and name the field to repair.
+      expect(log.error).toHaveBeenCalledWith(expect.stringContaining("github|2:onedrive"));
+      expect(log.error).toHaveBeenCalledWith(expect.stringContaining("reconnectRequired"));
+      expect(log.warn).not.toHaveBeenCalled();
     });
 
     it("skips a row with no identity at all", async () => {
@@ -211,7 +214,8 @@ describe("DynamoDBTokenStore", () => {
       const connections = await store.list();
 
       expect(connections.map((connection) => connection.userId)).toEqual(["github|1"]);
-      expect(log.warn).toHaveBeenCalledTimes(1);
+      expect(log.error).toHaveBeenCalledTimes(1);
+      expect(log.warn).not.toHaveBeenCalled();
     });
 
     it("is empty when the table holds no connection", async () => {

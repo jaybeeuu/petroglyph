@@ -155,6 +155,7 @@ function twoPageClient(): { client: GraphClient; requested: string[] } {
                 {
                   id: "item-1",
                   name: "a.pdf",
+                  eTag: "etag-1",
                   parentReference: { path: "/drive/root:/notes" },
                   file: { mimeType: "application/pdf" },
                 },
@@ -312,7 +313,7 @@ describe("runDeltaSync — adapter driver", () => {
     ]);
   });
 
-  it("falls back to the unversioned id and warns when a file change carries no eTag", async () => {
+  it("falls back to the unversioned id and logs ERROR when a file change carries no eTag", async () => {
     const harness = makeHarness([
       {
         id: "item-1",
@@ -336,8 +337,10 @@ describe("runDeltaSync — adapter driver", () => {
     });
 
     expect(harness.documents.map((document) => document.id)).toEqual(["p1:item-1:file"]);
-    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("no eTag"));
-    expect(log.error).not.toHaveBeenCalled();
+    // A missing eTag breaks the page contract and silences the next update, so
+    // the line names the item and stays above an operator's WARN filter.
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining("no eTag"));
+    expect(log.warn).not.toHaveBeenCalled();
   });
 
   it("records a gate-rejected lie as skipped with no S3 put and no emit", async () => {
@@ -455,6 +458,7 @@ describe("runDeltaSync — adapter driver", () => {
     expect(log.warn).toHaveBeenCalledWith(
       "[adapter] delta walk deferred for u1/onedrive: 1 page(s) completed, more remain — continuation enqueued",
     );
+    // A healthy deferred walk is not a failure, so it emits no ERROR line.
     expect(log.error).not.toHaveBeenCalled();
   });
 

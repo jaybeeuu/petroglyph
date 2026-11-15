@@ -185,7 +185,7 @@ describe("processChange", () => {
     expect(document.data.s3Key).toBe("staging/v1/p1/notes/a.pdf");
   });
 
-  it("lie telemetry: claim pdf but bytes are not a PDF -> no put, no event, triple warned", async () => {
+  it("lie telemetry: claim pdf but bytes are not a PDF -> no put, no event, triple at ERROR", async () => {
     const harness = makeHarness(() => bytesResponse(HTML_BYTES));
 
     const outcome = await harness.run(created);
@@ -193,11 +193,16 @@ describe("processChange", () => {
     expect(outcome).toBe("gate-rejected");
     expect(harness.put).not.toHaveBeenCalled();
     expect(harness.putIfAbsent).not.toHaveBeenCalled();
-    expect(harness.log.warn).toHaveBeenCalledTimes(1);
-    const triple = harness.log.warn.mock.calls[0]?.[0] as string;
+    // A file the user asked for that never lands is a data-integrity fault: the
+    // line has to survive an ERROR filter, so WARN is not enough.
+    expect(harness.log.error).toHaveBeenCalledTimes(1);
+    expect(harness.log.warn).not.toHaveBeenCalled();
+    const triple = harness.log.error.mock.calls[0]?.[0] as string;
     expect(triple).toContain("application/pdf"); // claim
     expect(triple).toContain("a.pdf"); // extension
     expect(triple).toContain("null"); // detected
+    expect(triple).toContain("p1"); // profile, so the drive is locatable
+    expect(triple).toContain(`${HTML_BYTES.byteLength} bytes`); // size: truncation or a wrong claim
   });
 
   it("deleted: emits FileDeletedEvent carrying itemId only — no path, no staging key", async () => {
