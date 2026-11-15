@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { TransactionCanceledException } from "@aws-sdk/client-dynamodb";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBStagedChangeLog } from "./change-log-ddb.js";
 import type { StagedChangeInput } from "./change-log.js";
@@ -34,86 +35,110 @@ function createStore(send: ReturnType<typeof vi.fn>): DynamoDBStagedChangeLog {
   });
 }
 
-function conditionalCheckFailed(): Error {
-  const error = new Error("The conditional request failed");
-  error.name = "ConditionalCheckFailedException";
-  return error;
+/** A real cancellation: the transaction wrote nothing and named why. */
+function transactionCancelled(code: string): TransactionCanceledException {
+  return new TransactionCanceledException({
+    message: `Transaction cancelled because of ${code}`,
+    $metadata: {},
+    CancellationReasons: [{ Code: code, Message: code }],
+  });
 }
 
 describe("DynamoDBStagedChangeLog.append", () => {
-  it("allocates the next seq from the profile's counter and stores the row under the padded key", async () => {
+  it("writes the row and its dedupe marker in one transaction, under the padded seq key", async () => {
     const send = vi
       .fn()
-      .mockResolvedValueOnce({}) // change marker
       .mockResolvedValueOnce({ Attributes: { count: 7 } }) // counter
-      .mockResolvedValueOnce({}); // log row
+      .mockResolvedValueOnce({}); // transaction
 
     await createStore(send).append(createChange());
 
-    const marker = inputAt(send, 0);
-    expect(marker).toMatchObject({
+    expect(inputAt(send, 0)).toMatchObject({
       TableName: "petroglyph-staged-changes",
-      Item: {
-        profileId: "p1",
-        seq: "~change#p1:item-1:file:etag-1",
-        changeId: "p1:item-1:file:etag-1",
-      },
-      ConditionExpression: "attribute_not_exists(#seq)",
-    });
-
-    const counter = inputAt(send, 1);
-    expect(counter).toMatchObject({
       Key: { profileId: "p1", seq: "!seq" },
       UpdateExpression: "ADD #count :one",
       ReturnValues: "UPDATED_NEW",
     });
 
-    const row = inputAt(send, 2);
-    expect(row).toMatchObject({
-      TableName: "petroglyph-staged-changes",
-      Item: {
-        profileId: "p1",
-        subscriptionId: "subscription-1",
-        seq: "00000000000000000007",
-        itemId: "item-1",
-        kind: "stage",
-      },
+    expect(inputAt(send, 1)).toMatchObject({
+      TransactItems: [
+        {
+          Put: {
+            TableName: "petroglyph-staged-changes",
+            Item: {
+              profileId: "p1",
+              subscriptionId: "subscription-1",
+              seq: "00000000000000000007",
+              itemId: "item-1",
+              kind: "stage",
+            },
+          },
+        },
+        {
+          Put: {
+            TableName: "petroglyph-staged-changes",
+            Item: {
+              profileId: "p1",
+              seq: "~change#p1:item-1:file:etag-1",
+              changeId: "p1:item-1:file:etag-1",
+            },
+            ConditionExpression: "attribute_not_exists(#seq)",
+          },
+        },
+      ],
     });
   });
 
-  it("reports a redelivered change as a duplicate without allocating a seq", async () => {
-    const send = vi.fn().mockRejectedValueOnce(conditionalCheckFailed());
+  it("reports a redelivered change as a duplicate without a second write", async () => {
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce({ Attributes: { count: 8 } })
+      .mockRejectedValueOnce(transactionCancelled("ConditionalCheckFailed"));
 
     const outcome = await createStore(send).append(createChange());
 
     expect(outcome).toEqual({ status: "duplicate" });
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(2);
   });
 
-  it("releases the claim when the append fails, so the retry can log the change", async () => {
+  it("surfaces a cancellation the marker did not cause, and the retry then appends", async () => {
     const send = vi
       .fn()
-      .mockResolvedValueOnce({}) // change marker
-      .mockRejectedValueOnce(new Error("counter unavailable"))
-      .mockResolvedValueOnce({}); // marker release
+      .mockResolvedValueOnce({ Attributes: { count: 8 } })
+      .mockRejectedValueOnce(transactionCancelled("TransactionConflict"))
+      .mockResolvedValueOnce({ Attributes: { count: 9 } })
+      .mockResolvedValueOnce({});
 
-    await expect(createStore(send).append(createChange())).rejects.toThrow("counter unavailable");
+    const store = createStore(send);
 
-    expect(inputAt(send, 2)).toMatchObject({
-      Key: { profileId: "p1", seq: "~change#p1:item-1:file:etag-1" },
+    await expect(store.append(createChange())).rejects.toThrow("Transaction cancelled");
+    expect(await store.append(createChange())).toEqual({ status: "appended" });
+    expect(inputAt(send, 3)).toMatchObject({
+      TransactItems: [
+        { Put: { Item: { profileId: "p1", seq: "00000000000000000009" } } },
+        { Put: { Item: { seq: "~change#p1:item-1:file:etag-1" } } },
+      ],
     });
   });
 
-  it("fails loudly when the counter returns no value rather than writing an unnumbered row", async () => {
+  it("surfaces a write failure rather than reporting an append that did not happen", async () => {
     const send = vi
       .fn()
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({});
+      .mockResolvedValueOnce({ Attributes: { count: 8 } })
+      .mockRejectedValueOnce(new Error("transaction unavailable"));
+
+    await expect(createStore(send).append(createChange())).rejects.toThrow(
+      "transaction unavailable",
+    );
+  });
+
+  it("fails loudly when the counter returns no value rather than writing an unnumbered row", async () => {
+    const send = vi.fn().mockResolvedValueOnce({});
 
     await expect(createStore(send).append(createChange())).rejects.toThrow(
       "counter for profile p1 returned no count",
     );
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });
 

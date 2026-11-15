@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { CreateTableCommand, DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { z } from "zod";
 import { DynamoDBStagedChangeLog } from "./change-log-ddb.js";
 import type { StagedChangeInput } from "./change-log.js";
 
@@ -25,6 +26,7 @@ function change(overrides: Partial<StagedChangeInput> = {}): StagedChangeInput {
 
 describe("change log against LocalStack DynamoDB", () => {
   let container: StartedTestContainer;
+  let client: DynamoDBDocumentClient;
   let log: DynamoDBStagedChangeLog;
 
   beforeAll(async () => {
@@ -40,12 +42,12 @@ describe("change log against LocalStack DynamoDB", () => {
       .start();
 
     const endpoint = `http://${container.getHost()}:${container.getMappedPort(4566)}`;
-    const client = new DynamoDBClient({
+    const rawClient = new DynamoDBClient({
       region: "eu-west-2",
       endpoint,
       credentials: { accessKeyId: "test", secretAccessKey: "test" },
     });
-    await client.send(
+    await rawClient.send(
       new CreateTableCommand({
         TableName: CHANGES_TABLE,
         KeySchema: [
@@ -59,8 +61,9 @@ describe("change log against LocalStack DynamoDB", () => {
         BillingMode: "PAY_PER_REQUEST",
       }),
     );
+    client = DynamoDBDocumentClient.from(rawClient);
     log = new DynamoDBStagedChangeLog({
-      client: DynamoDBDocumentClient.from(client),
+      client,
       tableName: CHANGES_TABLE,
     });
   }, 180_000);
@@ -84,7 +87,7 @@ describe("change log against LocalStack DynamoDB", () => {
     expect(changes.map((entry) => entry.itemId)).toEqual(["item-9", "item-10", "item-1"]);
   }, 30_000);
 
-  it("a redelivered change appends once and burns no seq", async () => {
+  it("a redelivered change appends exactly one row and leaves only a counter gap", async () => {
     await log.append(change({ profileId: "p-retry" }));
     const redelivered = await log.append(change({ profileId: "p-retry" }));
     await log.append(
@@ -93,9 +96,35 @@ describe("change log against LocalStack DynamoDB", () => {
 
     expect(redelivered).toEqual({ status: "duplicate" });
     const changes = await log.read({ profileId: "p-retry" });
+    // Seq 2 went to the redelivery that the marker cancelled. A gap is harmless
+    // because a reader asks for `seq > cursor`, and it is the only trace a
+    // crashed append leaves behind.
     expect(changes.map((entry) => [entry.seq, entry.itemId])).toEqual([
       [1, "item-1"],
-      [2, "item-2"],
+      [3, "item-2"],
+    ]);
+  }, 30_000);
+
+  it("stores the row and its dedupe marker in the profile's partition in one append", async () => {
+    await log.append(change({ profileId: "p-marker", changeId: "p-marker:item-1:file:etag-1" }));
+
+    const stored = await client.send(
+      new QueryCommand({
+        TableName: CHANGES_TABLE,
+        KeyConditionExpression: "profileId = :profileId",
+        ExpressionAttributeValues: { ":profileId": "p-marker" },
+      }),
+    );
+
+    const storedSeqs = z
+      .array(z.object({ seq: z.string() }))
+      .parse(stored.Items)
+      .map((item) => item.seq);
+
+    expect(storedSeqs).toEqual([
+      "!seq",
+      "00000000000000000001",
+      "~change#p-marker:item-1:file:etag-1",
     ]);
   }, 30_000);
 

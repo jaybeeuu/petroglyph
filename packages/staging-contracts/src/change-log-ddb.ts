@@ -1,10 +1,10 @@
 import {
-  DeleteCommand,
-  PutCommand,
   QueryCommand,
+  TransactWriteCommand,
   UpdateCommand,
   type DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
+import type { CancellationReason } from "@aws-sdk/client-dynamodb";
 import {
   stagedChangeSchema,
   type AppendOutcome,
@@ -42,8 +42,26 @@ export function seqKeyFor(seq: number): string {
   return String(seq).padStart(SEQ_WIDTH, "0");
 }
 
-function isConditionalCheckFailed(error: unknown): boolean {
-  return error instanceof Error && error.name === "ConditionalCheckFailedException";
+/** The cancellation code DynamoDB reports for a failed condition inside a transaction. */
+const CONDITIONAL_CHECK_FAILED = "ConditionalCheckFailed";
+const TRANSACTION_CANCELLED = "TransactionCanceledException";
+
+/**
+ * A cancellation whose only cause was the marker's condition: the change is
+ * already logged, so nothing was written and the outcome is a duplicate.
+ *
+ * Any other cancellation - a conflict on the marker, say - is NOT a duplicate:
+ * the append did not land, so the caller must retry it.
+ */
+function isDuplicateCancellation(error: unknown): boolean {
+  if (!(error instanceof Error) || error.name !== TRANSACTION_CANCELLED) {
+    return false;
+  }
+  // The SDK types the reasons on its own error class; the name is checked first
+  // because the error may come from another copy of the SDK in the graph.
+  const reasons =
+    (error as { CancellationReasons?: CancellationReason[] }).CancellationReasons ?? [];
+  return reasons.some((reason) => reason.Code === CONDITIONAL_CHECK_FAILED);
 }
 
 /**
@@ -63,11 +81,17 @@ function parseChange(item: { [key: string]: unknown }): StagedChange {
  * highest seq and is therefore served, where a `stagedAt + itemId` composite
  * would land behind a cursor that had already moved past that instant.
  *
- * The append is gated by a conditional put of a marker keyed on the change id,
- * because an append-only log must not record a redelivered change twice. The
- * marker is claimed before the counter moves, so a duplicate burns no seq; a
- * failed append releases the claim so the retry can re-attempt it. A seq lost
- * this way leaves a gap, which is harmless: readers ask for `seq > cursor`.
+ * The append commits as ONE transaction: a put of the row under the `seq` the
+ * counter just allocated, and a put of a marker keyed on the change id under
+ * `ConditionExpression: attribute_not_exists`. Either both land or neither
+ * does, so no window exists in which a change is claimed but not yet logged.
+ *
+ * A cancelled transaction is the duplicate outcome: the marker already exists,
+ * because a redelivery of a change that was logged before carries the same id.
+ * A crash therefore loses nothing — the seq it allocated leaves a gap, which is
+ * harmless because readers ask for `seq > cursor` — and a lost response leaves
+ * both items, so the redelivery is recognised as a duplicate rather than
+ * appended twice.
  *
  * The class names the transport (DynamoDB); `StagedChangeLog` stays the
  * consumer-facing capability, so callers keep injecting it and tests keep
@@ -83,21 +107,39 @@ export class DynamoDBStagedChangeLog implements StagedChangeLog {
   }
 
   async append(change: StagedChangeInput): Promise<AppendOutcome> {
-    if (!(await this.#claimChange(change))) {
-      return { status: "duplicate" };
-    }
+    const seq = await this.#nextSeq(change.profileId);
 
     try {
-      const seq = await this.#nextSeq(change.profileId);
       await this.#client.send(
-        new PutCommand({
-          TableName: this.#tableName,
-          Item: { ...change, seq: seqKeyFor(seq) },
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Put: {
+                TableName: this.#tableName,
+                Item: { ...change, seq: seqKeyFor(seq) },
+              },
+            },
+            {
+              Put: {
+                TableName: this.#tableName,
+                Item: {
+                  profileId: change.profileId,
+                  seq: `${CHANGE_MARKER_PREFIX}${change.changeId}`,
+                  changeId: change.changeId,
+                  expiresAt: Math.floor(Date.now() / 1000) + MARKER_RETENTION_SECONDS,
+                },
+                ConditionExpression: "attribute_not_exists(#seq)",
+                ExpressionAttributeNames: { "#seq": "seq" },
+              },
+            },
+          ],
         }),
       );
       return { status: "appended" };
     } catch (error) {
-      await this.#releaseChange(change);
+      if (isDuplicateCancellation(error)) {
+        return { status: "duplicate" };
+      }
       throw error;
     }
   }
@@ -122,51 +164,6 @@ export class DynamoDBStagedChangeLog implements StagedChangeLog {
       }),
     );
     return (result.Items ?? []).map(parseChange);
-  }
-
-  /** Claims the change id, returning false when it is already logged. */
-  async #claimChange(change: StagedChangeInput): Promise<boolean> {
-    try {
-      await this.#client.send(
-        new PutCommand({
-          TableName: this.#tableName,
-          Item: {
-            profileId: change.profileId,
-            seq: `${CHANGE_MARKER_PREFIX}${change.changeId}`,
-            changeId: change.changeId,
-            expiresAt: Math.floor(Date.now() / 1000) + MARKER_RETENTION_SECONDS,
-          },
-          ConditionExpression: "attribute_not_exists(#seq)",
-          ExpressionAttributeNames: { "#seq": "seq" },
-        }),
-      );
-      return true;
-    } catch (error) {
-      if (isConditionalCheckFailed(error)) {
-        return false;
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Drops a claim whose append failed, so the retry can log the change. This is
-   * best effort: the original failure is what the caller must see.
-   */
-  async #releaseChange(change: StagedChangeInput): Promise<void> {
-    try {
-      await this.#client.send(
-        new DeleteCommand({
-          TableName: this.#tableName,
-          Key: {
-            profileId: change.profileId,
-            seq: `${CHANGE_MARKER_PREFIX}${change.changeId}`,
-          },
-        }),
-      );
-    } catch {
-      // The marker expires on its own, and the retry still appends.
-    }
   }
 
   async #nextSeq(profileId: string): Promise<number> {
