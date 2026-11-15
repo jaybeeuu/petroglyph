@@ -188,13 +188,14 @@ sequenceDiagram
   R->>G: rows Graph no longer knows
   R->>Reg: delete them
   R->>Reg: desired roots with no row
-  E->>G: create, write the row, backfill bell
+  R->>G: create for a new root
+  R->>Reg: write the row, backfill bell
 ```
 
 **Today** (not yet implemented: bw3p) there is no reconciler and no renewal loop. What runs is a
-catch-up sweep every 6 hours (`infra/variables.tf:134-137`, `catch-up.ts:62-70`): one bell per healthy
-connection, deduped on a 5-minute bucket, skipping connections awaiting reauthorisation. Renewal
-happens only when Graph sends a `reauthorizationRequired` lifecycle event
+catch-up sweep every 6 hours (`packages/infra/variables.tf:134-137`, `catch-up.ts:62-70`): one bell
+per healthy connection, deduped on a 5-minute bucket, skipping connections awaiting reauthorisation.
+Renewal happens only when Graph sends a `reauthorizationRequired` lifecycle event
 (`onedrive-lifecycle.ts:292-330`), which reauthorises, or deletes and recreates on failure, then marks
 the connection `reconnect_required` if that also fails. A subscription created at connect carries a
 4230-minute expiry (`onedrive-lifecycle.ts:249-252`) and nothing renews it on a schedule.
@@ -242,23 +243,24 @@ The things a reviewer checks. Each one is testable against the code named.
    defects (`by11`, `bw3p`, `0imy`).
 3. **A profile is a mapping** from `sourceFolderPath` to `destinationVaultPath`. It owns staged
    content under Option 1 and never Graph state. `sourceFolderPath` is canonical (`notes/a`); `/` is
-   the whole drive.4. **One subscription per distinct active root**, each with its own deltaLink; two profiles with the
+   the whole drive.
+4. **One subscription per distinct active root**, each with its own deltaLink; two profiles with the
    same root share it. Not yet implemented: bell and deltaLink are per connection (`delta_states`).
-4. **The bell names the root**, and a walk never reads outside its root. Not yet implemented (z23z):
+5. **The bell names the root**, and a walk never reads outside its root. Not yet implemented (z23z):
    the bell is `{ userId, provider }`; the post-walk filter only discards what it already read.
-5. **`seq` is monotonic per unit and only ever appends**, so a restage is served again while a
+6. **`seq` is monotonic per unit and only ever appends**, so a restage is served again while a
    redelivery is not appended twice. Not yet implemented (xgyd): a restage is an idempotent upsert.
-6. **The client's cursor is ours**, opaque, and unaffected by a server-side resync. Holds: the cursor
+7. **The client's cursor is ours**, opaque, and unaffected by a server-side resync. Holds: the cursor
    is `{ profileId, itemId }`, and a rejected cursor restarts at page one rather than wedging.
-7. **A missed notification is a latency bug, never a data-loss bug.** The 6-hourly sweep and the
+8. **A missed notification is a latency bug, never a data-loss bug.** The 6-hourly sweep and the
    client's 5-minute poll are independent backstops (`catch-up.ts`, `plugin/src/main.ts:638-646`).
-8. **No covering-set or maximal-root logic exists.** Its absence is deliberate: it is Option 2's job
+9. **No covering-set or maximal-root logic exists.** Its absence is deliberate: it is Option 2's job
    and the seam that keeps the reversal cheap. A PR that adds one under Option 1 is a defect.
-9. **Nothing outside the vault destination is ever written, and no sync deletes inside it.** Holds
-   for the client: `vaultPathsFor` rejects an escaping path, and the plugin writes and overwrites but
-   never deletes (`plugin/src/feed.ts:91-110`). Server-side deletes ARE acted on: `applyDeleted`
-   removes the staged row and the S3 object (`index-apply.ts:53-71`), so the vault keeps a file whose
-   staged copy is gone.
+10. **Nothing outside the vault destination is ever written, and no sync deletes inside it.** Holds
+    for the client: `vaultPathsFor` rejects an escaping path, and the plugin writes and overwrites but
+    never deletes (`plugin/src/feed.ts:91-110`). Server-side deletes ARE acted on: `applyDeleted`
+    removes the staged row and the S3 object (`index-apply.ts:53-71`), so the vault keeps a file whose
+    staged copy is gone.
 
 At most one profile per user is `active`: activating one deactivates the others, deactivating the
 active profile is a 409, and deleting it promotes the newest remaining profile
