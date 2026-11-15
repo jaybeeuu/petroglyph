@@ -349,5 +349,30 @@ describe("/profiles", () => {
 
       expect(dbWritesTo("test-users")).toEqual([{ ":hasProfile": true }]);
     });
+
+    it("keeps the created profile when the users row is absent", async () => {
+      const token = await makeValidToken("user-42");
+      mockDbSend.mockRejectedValue(
+        Object.assign(new Error("The conditional request failed"), {
+          name: "ConditionalCheckFailedException",
+        }),
+      );
+
+      const res = await app.request("/profiles", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "My Profile",
+          sourceFolderPath: "/source",
+          destinationVaultPath: "/vault",
+        }),
+      });
+
+      expect(res.status).toBe(201);
+      expect(mockPutProfile).toHaveBeenCalledOnce();
+    });
   });
 });

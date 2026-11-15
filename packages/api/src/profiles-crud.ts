@@ -170,9 +170,8 @@ export const deleteProfileEndpoint = defineEndpoint(
     await deleteFileRecordsForProfile(profileId);
     const remaining = await listProfiles(docClient(), syncProfilesTableName(), userId);
     const others = remaining.filter((p) => p.profileId !== profileId);
-    // The user record carries profile presence, so `/status` never reads a
-    // profile row. Clearing it with the last profile keeps that mark honest.
-    await setProfilePresence(userId, others.length > 0);
+    // Promote before recording presence: the presence mark is best-effort, so it
+    // must never gate a promotion the user needs after losing the active profile.
     if (existing.active && others.length > 0) {
       const newest = others.reduce((best: SyncProfile, p: SyncProfile) =>
         p.createdAt > best.createdAt ? p : best,
@@ -182,6 +181,9 @@ export const deleteProfileEndpoint = defineEndpoint(
         updatedAt: new Date().toISOString(),
       });
     }
+    // The user record carries profile presence, so `/status` never reads a
+    // profile row. Clearing it with the last profile keeps that mark honest.
+    await setProfilePresence(userId, others.length > 0);
     return new Response(null, { status: 204 });
   },
 );

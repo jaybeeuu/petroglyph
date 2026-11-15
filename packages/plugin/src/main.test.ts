@@ -3045,6 +3045,66 @@ describe("createProfile", () => {
     expect(plugin.data.profiles).toHaveLength(1);
   });
 
+  it("starts the sync poll when the first profile is created", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve([
+            {
+              id: "p1",
+              name: "My Profile",
+              sourceFolderPath: "/src",
+              destinationVaultPath: "/dst",
+              active: true,
+            },
+          ]),
+      });
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+
+    await plugin.createProfile({
+      name: "My Profile",
+      sourceFolderPath: "/src",
+      destinationVaultPath: "/dst",
+    });
+
+    const syncCalls = setIntervalSpy.mock.calls.filter((call) => call[1] === 5 * 60 * 1000);
+    expect(syncCalls).toHaveLength(1);
+  });
+
+  it("starts no sync poll when the created profile is not active", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve([
+            {
+              id: "p1",
+              name: "My Profile",
+              sourceFolderPath: "/src",
+              destinationVaultPath: "/dst",
+              active: false,
+            },
+          ]),
+      });
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+
+    await plugin.createProfile({
+      name: "My Profile",
+      sourceFolderPath: "/src",
+      destinationVaultPath: "/dst",
+    });
+
+    const syncCalls = setIntervalSpy.mock.calls.filter((call) => call[1] === 5 * 60 * 1000);
+    expect(syncCalls).toHaveLength(0);
+  });
+
   it("shows notice and does not call loadProfiles on API failure", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
     global.fetch = vi.fn().mockResolvedValue({ ok: false });

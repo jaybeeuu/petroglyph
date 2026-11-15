@@ -1101,6 +1101,12 @@ export class PetroglyphPlugin extends Plugin {
         return;
       }
       await this.loadProfiles();
+      // Connecting first and creating the profile second is the normal flow, so
+      // the poll must start here too: the connect callback found no profile and
+      // started nothing. A creation that leaves no active profile still waits.
+      if (!this.loadedNoProfiles() && this._data.activeProfileId !== undefined) {
+        this.startSyncPolling();
+      }
     } catch {
       new Notice("Failed to create profile: network error");
     }
