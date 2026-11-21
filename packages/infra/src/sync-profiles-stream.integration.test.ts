@@ -38,8 +38,16 @@ const infraDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  * gets the same time as an idle one instead of a shorter one.
  */
 const RECORD_WAIT_BUDGET_MS = 120_000;
-/** Above the wait, so a slow runner reports the wait's message, not a timeout. */
+/**
+ * Above the wait, so a slow runner reports the wait's message, not a timeout.
+ * The describe below applies this value to every test. Do not pass a timeout to
+ * an individual `it`: a per-test value overrides this one and makes the wait's
+ * diagnostic unreachable on a starved runner.
+ */
 const RECORD_TEST_TIMEOUT_MS = RECORD_WAIT_BUDGET_MS + 60_000;
+/** How long CreateTable may take to report its first shard. */
+const SHARD_DISCOVERY_BUDGET_MS = 10_000;
+const SHARD_DISCOVERY_INTERVAL_MS = 250;
 const POLL_INTERVAL_MS = 250;
 /**
  * The shard iterator is re-created this often. TRIM_HORIZON replays the shard
@@ -122,7 +130,7 @@ function isAbortedRequest(error: unknown): boolean {
 }
 
 describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
-  let container: StartedTestContainer;
+  let container: StartedTestContainer | undefined;
   let dynamo: DynamoDBClient;
   let streams: DynamoDBStreamsClient;
   let streamArn: string;
@@ -170,15 +178,35 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
     if (streamArn === "") {
       throw new Error("the table has no stream ARN");
     }
-    const stream = await streams.send(new DescribeStreamCommand({ StreamArn: streamArn }));
-    shardId = stream.StreamDescription?.Shards?.[0]?.ShardId ?? "";
-    if (shardId === "") {
-      throw new Error("the stream has no shard");
-    }
+    shardId = await awaitShardId();
   }, 180_000);
 
+  /**
+   * LocalStack can answer DescribeStream before it reports the table's first
+   * shard, so a single read is a race. Retry until the deadline and fail with
+   * the reason rather than an empty shard id.
+   */
+  async function awaitShardId(): Promise<string> {
+    const deadline = Date.now() + SHARD_DISCOVERY_BUDGET_MS;
+    for (;;) {
+      const stream = await streams.send(new DescribeStreamCommand({ StreamArn: streamArn }));
+      const discovered = stream.StreamDescription?.Shards?.[0]?.ShardId ?? "";
+      if (discovered !== "") {
+        return discovered;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `the stream reported no shard within ${SHARD_DISCOVERY_BUDGET_MS} ms of CreateTable`,
+        );
+      }
+      await delay(SHARD_DISCOVERY_INTERVAL_MS);
+    }
+  }
+
   afterAll(async () => {
-    await container.stop();
+    // beforeAll can fail during start(), which leaves no container to stop; an
+    // unguarded call would throw a TypeError and hide that first failure.
+    await container?.stop();
   }, 30_000);
 
   async function openShardIterator(): Promise<string> {
@@ -257,6 +285,10 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
   }
 
   it("keeps the row as it was before a soft delete on the MODIFY record", async () => {
+    // The items these tests write are deliberately partial: this suite reads the
+    // stream envelope, never the row, so name, destinationVaultPath, active,
+    // createdAt and updatedAt are omitted. Do not treat them as schema-conformant.
+
     const deletedAt = "2026-11-21T09:00:00.000Z";
     await dynamo.send(
       new PutItemCommand({
@@ -291,13 +323,16 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
     // deletion, so the old image must carry the row as it stood without
     // deletedAt.
     const oldImage = record.dynamodb?.OldImage;
+    // Without this, not.toHaveProperty passes on an absent OldImage and the
+    // assertion above proves nothing.
+    expect(oldImage).toBeDefined();
     expect(oldImage).not.toHaveProperty("deletedAt");
     expect(oldImage).toMatchObject({
       profileId: { S: "profile-soft-delete" },
       sourceFolderPath: { S: "notes" },
       enabled: { BOOL: true },
     });
-  }, 60_000);
+  });
 
   it("keeps the row as it was before removal on the REMOVE record", async () => {
     await dynamo.send(
@@ -324,7 +359,9 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
       profileId: { S: "profile-purge" },
       sourceFolderPath: { S: "journal" },
     });
-  }, 60_000);
+    // "Only" in the acceptance criteria: a removal carries no new image.
+    expect(record.dynamodb?.NewImage).toBeUndefined();
+  });
 
   it("carries the new row on the INSERT record", async () => {
     await dynamo.send(
@@ -345,5 +382,7 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
       profileId: { S: "profile-created" },
       sourceFolderPath: { S: "inbox" },
     });
-  }, 60_000);
+    // "Only" in the acceptance criteria: an insertion carries no old image.
+    expect(record.dynamodb?.OldImage).toBeUndefined();
+  });
 });
