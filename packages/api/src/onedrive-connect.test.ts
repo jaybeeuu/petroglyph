@@ -1,12 +1,23 @@
 import { DeleteCommand, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type * as onedriveLifecycle from "./onedrive-lifecycle.js";
 
 const mockDbSend = vi.hoisted(() => vi.fn());
 
 vi.mock("./db.js", () => ({
   docClient: () => ({ send: mockDbSend }),
 }));
+
+const mockRegisterGraphSubscription = vi.hoisted(() => vi.fn());
+
+// Pass-through spy: connect must not reach the subscription path, and the other
+// exports stay real so `markConnected` still writes the user record.
+vi.mock("./onedrive-lifecycle.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof onedriveLifecycle>();
+  mockRegisterGraphSubscription.mockImplementation(actual.registerGraphSubscription);
+  return { ...actual, registerGraphSubscription: mockRegisterGraphSubscription };
+});
 
 const mockFetch = vi.hoisted(() => vi.fn());
 vi.stubGlobal("fetch", mockFetch);
@@ -37,7 +48,6 @@ const VALID_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 const MS_ACCESS_TOKEN = "ms-access-token-abc";
 const MS_REFRESH_TOKEN = "ms-refresh-token-def";
 const MS_EXPIRES_IN = 3600;
-const MS_DRIVE_ID = "drive-123";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -59,31 +69,40 @@ function makeMsTokenResponse(): object {
   };
 }
 
+const SYNC_PROFILES_TABLE = "petroglyph-sync-profiles-test";
+
 function setupDynamoMock(stateItem: object | undefined): void {
   mockDbSend.mockImplementation((cmd: unknown) => {
     if (cmd instanceof GetCommand) {
       return Promise.resolve({ Item: stateItem });
     }
-    if (cmd instanceof DeleteCommand) return Promise.resolve({});
-    if (cmd instanceof UpdateCommand) return Promise.resolve({});
     return Promise.resolve({});
   });
+}
+
+/** Every command aimed at the profiles table: connect must send none. */
+function profileWrites(): unknown[] {
+  const writes: unknown[] = [];
+  for (const [command] of mockDbSend.mock.calls) {
+    if (
+      (command instanceof PutCommand ||
+        command instanceof UpdateCommand ||
+        command instanceof DeleteCommand) &&
+      command.input.TableName === SYNC_PROFILES_TABLE
+    ) {
+      writes.push(command);
+    }
+  }
+  return writes;
 }
 
 function setupFetchMock(
   options: {
     msTokenOk?: boolean;
     msTokenBody?: object;
-    graphOk?: boolean;
-    graphDriveOk?: boolean;
   } = {},
 ): void {
-  const {
-    msTokenOk = true,
-    msTokenBody = makeMsTokenResponse(),
-    graphOk = true,
-    graphDriveOk = true,
-  } = options;
+  const { msTokenOk = true, msTokenBody = makeMsTokenResponse() } = options;
 
   mockFetch.mockImplementation((url: string) => {
     if (url === "https://login.microsoftonline.com/common/oauth2/v2.0/token") {
@@ -100,31 +119,15 @@ function setupFetchMock(
         json: () => Promise.resolve(msTokenBody),
       } as Response);
     }
-    if (url === "https://graph.microsoft.com/v1.0/me/drive") {
-      if (!graphDriveOk) {
-        return Promise.resolve({
-          ok: false,
-          status: 500,
-          statusText: "Internal Server Error",
-          json: () => Promise.resolve({}),
-        } as Response);
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ id: MS_DRIVE_ID }),
-      } as Response);
-    }
-    if (url === "https://graph.microsoft.com/v1.0/subscriptions") {
-      return Promise.resolve({
-        ok: graphOk,
-        status: graphOk ? 201 : 500,
-        statusText: graphOk ? "Created" : "Internal Server Error",
-        json: () => Promise.resolve({ id: "sub-123" }),
-        text: () => Promise.resolve('{"error":"Invalid request"}'),
-      } as Response);
-    }
     return Promise.reject(new Error(`Unexpected fetch: ${url}`));
   });
+}
+
+/** Every fetch aimed at the Graph host: connect must send none. */
+function graphFetchCalls(): unknown[] {
+  return mockFetch.mock.calls.filter(([url]) =>
+    String(url).startsWith("https://graph.microsoft.com/"),
+  );
 }
 
 async function makeToken(): Promise<string> {
@@ -165,6 +168,7 @@ describe("POST /onedrive/connect", () => {
     vi.stubEnv("USERS_TABLE", "petroglyph-users-test");
     mockDbSend.mockClear();
     mockFetch.mockClear();
+    mockRegisterGraphSubscription.mockClear();
   });
 
   afterEach(() => {
@@ -394,132 +398,47 @@ describe("POST /onedrive/connect", () => {
     expect(expirySeconds).toBeLessThanOrEqual(after + MS_EXPIRES_IN);
   });
 
-  // ── Behaviour 7: Graph subscription registered ───────────────────────────
+  // ── Behaviour 7: connect registers no Graph subscription ─────────────────
 
-  it("POSTs to Graph subscriptions endpoint with correct body", async () => {
-    setupDynamoMock(makeStateItem());
-    setupFetchMock();
-
-    const before = Date.now();
-    await postConnect({ code: VALID_CODE, state: VALID_STATE });
-    const after = Date.now();
-
-    const graphCall = mockFetch.mock.calls.find(
-      (args) => args[0] === "https://graph.microsoft.com/v1.0/subscriptions",
-    );
-    expect(graphCall).toBeDefined();
-
-    const [, options] = graphCall as [string, RequestInit];
-    expect(options.method).toBe("POST");
-
-    const headers = options.headers as { [key: string]: string };
-    expect(headers["Authorization"]).toBe(`Bearer ${MS_ACCESS_TOKEN}`);
-
-    const sentBody = JSON.parse(options.body as string) as {
-      changeType: string;
-      notificationUrl: string;
-      lifecycleNotificationUrl?: string;
-      resource: string;
-      expirationDateTime: string;
-      clientState: string;
-    };
-    expect(sentBody.changeType).toBe("updated");
-    expect(sentBody.notificationUrl).toBe("https://api.example.com/graph/notify");
-    expect(sentBody.lifecycleNotificationUrl).toBe("https://api.example.com/graph/lifecycle");
-    expect(sentBody.resource).toBe(`/drives/${MS_DRIVE_ID}/root`);
-    expect(sentBody.clientState).toBe(USER_ID);
-
-    const expiryMs = new Date(sentBody.expirationDateTime).getTime();
-    const maxGraphSubscriptionMs = 4230 * 60 * 1000;
-    expect(expiryMs).toBeGreaterThanOrEqual(before + maxGraphSubscriptionMs - 5000);
-    expect(expiryMs).toBeLessThanOrEqual(after + maxGraphSubscriptionMs);
-  });
-
-  it("returns 200 even when Graph subscription registration fails", async () => {
-    setupDynamoMock(makeStateItem());
-    setupFetchMock({ graphOk: false });
-
-    const res = await postConnect({ code: VALID_CODE, state: VALID_STATE });
-
-    expect(res.status).toBe(200);
-  });
-
-  it("skips Graph subscription when GRAPH_NOTIFICATION_URL is not set", async () => {
-    vi.stubEnv("GRAPH_NOTIFICATION_URL", "");
+  it("registers no Graph subscription and reaches no Graph endpoint", async () => {
+    // beforeEach leaves GRAPH_NOTIFICATION_URL set, so a registration attempt
+    // would find a notification URL and call Graph. Zero calls proves the
+    // connect call site is gone; the reconciler owns registration instead.
     setupDynamoMock(makeStateItem());
     setupFetchMock();
 
     const res = await postConnect({ code: VALID_CODE, state: VALID_STATE });
 
     expect(res.status).toBe(200);
-    const graphCall = mockFetch.mock.calls.find(
-      (args) => args[0] === "https://graph.microsoft.com/v1.0/subscriptions",
-    );
-    expect(graphCall).toBeUndefined();
+    expect(mockRegisterGraphSubscription).not.toHaveBeenCalled();
+    expect(graphFetchCalls()).toHaveLength(0);
   });
 
-  // ── Behaviour 8: SyncProfile upserted in DynamoDB ───────────────────────
+  // ── Behaviour 8: connect writes no SyncProfile row at all ───────────────
 
-  it("upserts SyncProfile and clears reconnect_required in users table", async () => {
+  it("writes no SyncProfile row for a user who has none", async () => {
+    setupDynamoMock(makeStateItem());
+    setupFetchMock();
+
+    const res = await postConnect({ code: VALID_CODE, state: VALID_STATE });
+
+    expect(res.status).toBe(200);
+    expect(profileWrites()).toHaveLength(0);
+  });
+
+  it("leaves an existing SyncProfile untouched", async () => {
     setupDynamoMock(makeStateItem());
     setupFetchMock();
 
     await postConnect({ code: VALID_CODE, state: VALID_STATE });
 
-    const updateCalls = mockDbSend.mock.calls.filter(([cmd]) => cmd instanceof UpdateCommand);
-    expect(updateCalls).toHaveLength(3); // tokens + sync profile + markConnected
-
-    // token store
-    const [tokenCmd] = updateCalls[0] as [
-      { input: { TableName: string; Key: { tokenHash: string } } },
-    ];
-    expect(tokenCmd.input.TableName).toBe("petroglyph-refresh_tokens-test");
-
-    // sync profile
-    const [syncProfileCmd] = updateCalls[1] as [
-      {
-        input: {
-          TableName: string;
-          Key: { userId: string; profileId: string };
-          UpdateExpression: string;
-          ExpressionAttributeValues: { [key: string]: unknown };
-        };
-      },
-    ];
-    expect(syncProfileCmd.input.TableName).toBe("petroglyph-sync-profiles-test");
-    expect(syncProfileCmd.input.Key.userId).toBe(USER_ID);
-    expect(syncProfileCmd.input.Key.profileId).toBe("default");
-    expect(syncProfileCmd.input.ExpressionAttributeValues[":true"]).toBe(true);
-    expect(typeof syncProfileCmd.input.ExpressionAttributeValues[":now"]).toBe("string");
-
-    // all required sync-profile fields set with sensible defaults
-    expect(syncProfileCmd.input.ExpressionAttributeValues[":name"]).toBe("default");
-    expect(syncProfileCmd.input.ExpressionAttributeValues[":rootPath"]).toBe("/");
-    expect(syncProfileCmd.input.ExpressionAttributeValues[":defaultDest"]).toBe("handwritten");
-    expect(syncProfileCmd.input.ExpressionAttributeValues[":interval"]).toBe(5);
-    expect(syncProfileCmd.input.UpdateExpression).toContain("#name");
-    expect(syncProfileCmd.input.UpdateExpression).toContain("sourceFolderPath");
-    expect(syncProfileCmd.input.UpdateExpression).toContain("destinationVaultPath");
-    expect(syncProfileCmd.input.UpdateExpression).toContain("#active");
-    expect(syncProfileCmd.input.UpdateExpression).toContain("initialSyncEnabled");
-    expect(syncProfileCmd.input.UpdateExpression).toContain("#enabled");
-    expect(syncProfileCmd.input.UpdateExpression).toContain("pollingIntervalMinutes");
-
-    // markConnected
-    const [userCmd] = updateCalls[2] as [
-      {
-        input: {
-          TableName: string;
-          Key: { userId: string };
-          UpdateExpression: string;
-          ExpressionAttributeValues: { [key: string]: unknown };
-        };
-      },
-    ];
-    expect(userCmd.input.TableName).toBe("petroglyph-users-test");
-    expect(userCmd.input.Key.userId).toBe(USER_ID);
-    expect(userCmd.input.UpdateExpression).toContain("oneDriveStatus");
-    expect(userCmd.input.ExpressionAttributeValues[":status"]).toBe("connected");
+    // Only the profile's owner chooses its folder mapping, and the connection
+    // state lives on the connection, so connect reads and writes no profile.
+    expect(profileWrites()).toHaveLength(0);
+    const userUpdate = mockDbSend.mock.calls.find(
+      ([cmd]) => cmd instanceof UpdateCommand && cmd.input.TableName === "petroglyph-users-test",
+    ) as [{ input: { ExpressionAttributeValues: { [key: string]: unknown } } }] | undefined;
+    expect(userUpdate?.[0].input.ExpressionAttributeValues[":status"]).toBe("connected");
   });
 
   // ── Behaviour 9: returns 200 { status: 'connected' } ────────────────────

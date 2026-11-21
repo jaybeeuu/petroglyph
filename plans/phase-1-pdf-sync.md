@@ -58,19 +58,19 @@ Implement the GitHub OAuth flow end-to-end. The cloud API exposes `GET /auth/url
 
 ## Phase 3: OneDrive Connection
 
-**Goal**: A logged-in user can connect their OneDrive account and the service begins watching the configured folder.
+**Goal**: A logged-in user can connect their OneDrive account. Connect establishes the connection and its grant only, so no folder is watched until the user creates a profile that binds a source folder to a vault path.
 
 ### What to build
 
-Implement the OneDrive PKCE OAuth flow. The cloud API exposes `GET /onedrive/auth-url` (generates PKCE verifier, stores it in DynamoDB, returns the Microsoft authorise URL) and `POST /onedrive/connect` (exchanges the code, stores access + refresh tokens in SSM, registers the Microsoft Graph change notification subscription for the configured folder, creates a default `SyncProfile` in DynamoDB). The plugin adds a "Connect OneDrive" button in settings and registers the `obsidian://petroglyph/oauth/callback` URI handler. `GET /status` reflects `oneDriveStatus: "connected"`.
+Implement the OneDrive PKCE OAuth flow. The cloud API exposes `GET /onedrive/auth-url` (generates PKCE verifier, stores it in DynamoDB, returns the Microsoft authorise URL) and `POST /onedrive/connect` (exchanges the code, stores access + refresh tokens in SSM, and writes neither a sync profile nor a Graph change notification subscription: choosing the folder-to-vault mapping is the user's own profile action, and a subscription is created and deleted with the profiles that cover it, by the subscription reconciler). The plugin adds a "Connect OneDrive" button in settings and registers the `obsidian://petroglyph/oauth/callback` URI handler. `GET /status` reflects `oneDriveStatus: "connected_no_profile"` until the user creates a profile, then `"connected"`.
 
 ### Acceptance criteria
 
 - [ ] Clicking "Connect OneDrive" opens the browser to Microsoft login
-- [ ] After consent, the plugin shows "OneDrive connected" in settings
-- [ ] A Graph change notification subscription exists for the configured OneDrive folder (verifiable via Graph Explorer)
-- [ ] `GET /status` returns `{ oneDriveStatus: "connected", subscriptionActive: true }`
-- [ ] A default `SyncProfile` record exists in DynamoDB after connection
+- [ ] After consent, the plugin shows "OneDrive connected" in settings and prompts for a profile
+- [ ] `POST /onedrive/connect` sends no Microsoft Graph subscription request; registration belongs to the subscription reconciler that follows profile roots
+- [ ] `GET /status` returns `{ oneDriveStatus: "connected" }` for a connected user who has a profile
+- [ ] No `SyncProfile` record exists after connection; `GET /status` reports `connected_no_profile`
 - [ ] OneDrive access token is lazy-refreshed when within 10 minutes of expiry
 
 ---
@@ -150,14 +150,14 @@ The plugin settings and command palette expose three reset commands:
 
 ### What to build
 
-Implement the Lifecycle Notification Lambda, reachable via a dedicated `lifecycleNotificationUrl` registered on the Graph subscription. On `reauthorizationRequired`: attempt lazy token refresh and subscription renewal; if that succeeds, no user action is needed; if it fails, mark `oneDriveStatus: "disconnected"` with a `reason` in DynamoDB. On `subscriptionRemoved`: mark disconnected immediately. The plugin's next `/status` poll detects the disconnected state and surfaces a labelled prompt explaining the reason, with a "Reconnect OneDrive" button that re-initiates the Phase 3 PKCE flow.
+Implement the Lifecycle Notification Lambda, reachable via a dedicated `lifecycleNotificationUrl` registered on the Graph subscription. On `reauthorizationRequired`: attempt lazy token refresh and subscription renewal; if that succeeds, no user action is needed; if it fails, mark `oneDriveStatus: "reconnect_required"` with a `reason` in DynamoDB. On `subscriptionRemoved`: mark `reconnect_required` immediately. The plugin's next `/status` poll detects the `reconnect_required` state and surfaces a labelled prompt explaining the reason, with a "Reconnect OneDrive" button that re-initiates the Phase 3 PKCE flow.
 
 ### Acceptance criteria
 
 - [ ] A `reauthorizationRequired` notification triggers an automatic renewal attempt
 - [ ] If renewal succeeds, `subscriptionActive` remains `true` and the plugin is unaffected
-- [ ] If renewal fails, `oneDriveStatus` becomes `disconnected` in DynamoDB
-- [ ] A `subscriptionRemoved` notification immediately sets `oneDriveStatus: "disconnected"`
+- [ ] If renewal fails, `oneDriveStatus` becomes `reconnect_required` in DynamoDB
+- [ ] A `subscriptionRemoved` notification immediately sets `oneDriveStatus: "reconnect_required"`
 - [ ] The plugin displays a persistent warning banner (`OneDrive connection lost — action required`) and a `Reconnect OneDrive` button on next status poll after `oneDriveStatus: "reconnect_required"` is detected
 - [ ] Clicking the reconnect button re-initiates the OneDrive PKCE connect flow
 - [ ] The banner persists until `oneDriveStatus` returns to `connected`

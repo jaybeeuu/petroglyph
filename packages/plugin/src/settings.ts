@@ -1,6 +1,7 @@
 import type { App } from "obsidian";
 import { Modal, Notice, PluginSettingTab, Setting } from "obsidian";
 import type { PetroglyphPlugin } from "./main.js";
+import { NO_PROFILES_NOTICE } from "./types.js";
 
 class ProfileModal extends Modal {
   private readonly onSubmit: (
@@ -235,7 +236,7 @@ export class PetroglyphSettingTab extends PluginSettingTab {
       );
     const profiles = this.plugin.data.profiles ?? [];
     if (profiles.length === 0) {
-      containerEl.createEl("p", { text: "No profiles found." });
+      containerEl.createEl("p", { text: NO_PROFILES_NOTICE });
     } else {
       for (const profile of profiles) {
         const isActive = profile.profileId === this.plugin.data.activeProfileId;

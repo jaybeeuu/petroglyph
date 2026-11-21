@@ -57,6 +57,16 @@ function profileWrites(): { profileId: string; attributes: string[] }[] {
   }));
 }
 
+/** The attribute values of every write sent to `tableName`, in call order. */
+function dbWritesTo(tableName: string): unknown[] {
+  return mockDbSend.mock.calls
+    .map(
+      (call) => call[0] as { input?: { TableName?: string; ExpressionAttributeValues?: unknown } },
+    )
+    .filter((command) => command.input?.TableName === tableName)
+    .map((command) => command.input?.ExpressionAttributeValues);
+}
+
 describe("profiles CRUD handlers", () => {
   let privateKey: CryptoKey;
   let publicKeyPem: string;
@@ -71,6 +81,7 @@ describe("profiles CRUD handlers", () => {
     vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
     vi.stubEnv("SYNC_PROFILES_TABLE", "petroglyph-sync-profiles-test");
     vi.stubEnv("FILE_RECORDS_TABLE", "petroglyph-file-records-test");
+    vi.stubEnv("USERS_TABLE", "petroglyph-users-test");
     mockGetProfile.mockReset();
     mockListProfiles.mockReset();
     mockPutProfile.mockReset();
@@ -390,6 +401,65 @@ describe("profiles CRUD handlers", () => {
 
       expect(response.status).toBe(204);
       expect(mockUpdateProfile).not.toHaveBeenCalled();
+    });
+
+    it("clears the user's profile mark when the last profile is deleted", async () => {
+      mockGetProfile.mockResolvedValue(makeProfile({ active: true }));
+      mockDeleteProfile.mockResolvedValue(undefined);
+      mockDbSend.mockResolvedValue({ Items: [] });
+      mockListProfiles.mockResolvedValue([]);
+
+      const response = await request("DELETE", "/profiles/profile-1");
+
+      expect(response.status).toBe(204);
+      expect(dbWritesTo("petroglyph-users-test")).toEqual([{ ":hasProfile": false }]);
+    });
+
+    it("keeps the user's profile mark when other profiles remain", async () => {
+      mockGetProfile.mockResolvedValue(makeProfile({ active: false }));
+      mockDeleteProfile.mockResolvedValue(undefined);
+      mockDbSend.mockResolvedValue({ Items: [] });
+      mockListProfiles.mockResolvedValue([makeProfile({ profileId: "profile-2", active: true })]);
+
+      const response = await request("DELETE", "/profiles/profile-1");
+
+      expect(response.status).toBe(204);
+      expect(dbWritesTo("petroglyph-users-test")).toEqual([{ ":hasProfile": true }]);
+    });
+
+    it("promotes the newest remaining profile when the users row is absent", async () => {
+      const deletedProfile = makeProfile({ active: true, profileId: "profile-1" });
+      const newerProfile = makeProfile({
+        profileId: "profile-3",
+        createdAt: "2024-06-01T00:00:00.000Z",
+        active: false,
+      });
+      mockGetProfile.mockResolvedValue(deletedProfile);
+      mockDeleteProfile.mockResolvedValue(undefined);
+      mockListProfiles.mockResolvedValue([newerProfile]);
+      mockUpdateProfile.mockResolvedValue(undefined);
+      // The users row an update needs is not there: DynamoDB rejects the write.
+      mockDbSend.mockImplementation((command: unknown) => {
+        const tableName = (command as { input?: { TableName?: string } }).input?.TableName;
+        return tableName === "petroglyph-users-test"
+          ? Promise.reject(
+              Object.assign(new Error("The conditional request failed"), {
+                name: "ConditionalCheckFailedException",
+              }),
+            )
+          : Promise.resolve({ Items: [] });
+      });
+
+      const response = await request("DELETE", "/profiles/profile-1");
+
+      expect(response.status).toBe(204);
+      expect(mockUpdateProfile).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+        expect.any(String),
+        "profile-3",
+        expect.objectContaining({ active: true }),
+      );
     });
 
     it("deletes file_records for the profile", async () => {

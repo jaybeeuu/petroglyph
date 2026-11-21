@@ -1,12 +1,15 @@
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { defineEndpoint } from "@petroglyph/contracts/hono";
 import { getStatus } from "@petroglyph/contracts/operations";
+import type { TokenRecord } from "@petroglyph/core";
 import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
+import { ONEDRIVE_PROVIDER, readConnection } from "./token-vault.js";
+import { usersTableName } from "./user-record.js";
 
 export type OneDriveStatus =
   | "connected"
-  | "disconnected"
+  | "connected_no_profile"
   | "never_connected"
   | "reconnect_required";
 
@@ -16,21 +19,9 @@ export interface StatusResponse {
   oneDriveStatus: OneDriveStatus;
 }
 
-function syncProfilesTable(): string {
-  return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
-}
-
-function usersTable(): string {
-  return process.env["USERS_TABLE"] ?? "petroglyph-users-default";
-}
-
 interface UserStatusRecord {
   oneDriveStatus?: string;
-}
-
-interface SyncProfileStatus {
-  exists: boolean;
-  oneDriveConnected: boolean;
+  hasProfile?: boolean;
 }
 
 function parseUserStatus(item: unknown): UserStatusRecord {
@@ -39,55 +30,43 @@ function parseUserStatus(item: unknown): UserStatusRecord {
   }
 
   const value = item as { [key: string]: unknown };
-  return typeof value["oneDriveStatus"] === "string"
-    ? { oneDriveStatus: value["oneDriveStatus"] }
-    : {};
-}
+  const oneDriveStatus =
+    typeof value["oneDriveStatus"] === "string" ? value["oneDriveStatus"] : undefined;
+  const hasProfile = typeof value["hasProfile"] === "boolean" ? value["hasProfile"] : undefined;
 
-function parseSyncProfileStatus(item: unknown): SyncProfileStatus {
-  if (typeof item !== "object" || item === null || Array.isArray(item)) {
-    return { exists: false, oneDriveConnected: false };
-  }
-
-  const value = item as { [key: string]: unknown };
   return {
-    exists: true,
-    oneDriveConnected: value["oneDriveConnected"] === true,
+    ...(oneDriveStatus !== undefined && { oneDriveStatus }),
+    ...(hasProfile !== undefined && { hasProfile }),
   };
 }
 
-async function fetchSyncProfileStatus(userId: string): Promise<SyncProfileStatus> {
+/**
+ * The stored connection, or null when onboarding never completed. This is the
+ * authority for the connection state; a profile says nothing about it.
+ */
+async function fetchConnection(userId: string): Promise<TokenRecord | null> {
   try {
-    const result = await docClient().send(
-      new GetCommand({
-        TableName: syncProfilesTable(),
-        Key: { userId, profileId: "default" },
-      }),
-    );
-    return parseSyncProfileStatus(result.Item);
+    return await readConnection(docClient(), userId, ONEDRIVE_PROVIDER);
   } catch (err) {
-    console.error("[status] Failed to fetch SyncProfile from DynamoDB", err);
-    return { exists: false, oneDriveConnected: false };
+    console.error("[status] Failed to read the OneDrive connection", err);
+    return null;
   }
 }
 
-async function fetchStoredReconnectRequired(userId: string): Promise<boolean> {
+async function fetchUserStatus(userId: string): Promise<UserStatusRecord> {
   try {
     const result = await docClient().send(
       new GetCommand({
-        TableName: usersTable(),
+        TableName: usersTableName(),
         Key: { userId },
       }),
     );
-    const { oneDriveStatus } = parseUserStatus(result.Item);
-
-    if (oneDriveStatus === "reconnect_required" || oneDriveStatus === "disconnected") {
-      return true;
-    }
-    return false;
+    return parseUserStatus(result.Item);
   } catch (err) {
     console.error("[status] Failed to fetch user record from DynamoDB", err);
-    return false;
+    // Unknown, so report presence: a failed read must never tell a user to
+    // create a profile they may already have.
+    return { hasProfile: true };
   }
 }
 
@@ -95,22 +74,34 @@ export const getStatusEndpoint = defineEndpoint(getStatus, async (_input, c: App
   const username = c.get("username");
   const userId = c.get("userId");
 
-  const [syncProfileStatus, storedReconnectRequired] = await Promise.all([
-    fetchSyncProfileStatus(userId),
-    fetchStoredReconnectRequired(userId),
+  const [connection, userStatus] = await Promise.all([
+    fetchConnection(userId),
+    fetchUserStatus(userId),
   ]);
-  const oneDriveStatus = storedReconnectRequired
+
+  // The connection is the only authority: the vault row holds the grant and
+  // whether it died, and the user record holds the lifecycle mark. Profile
+  // presence is the user record's own mark, so no profile row is read and no
+  // profile attribute can flip a connected user to reconnect_required or the
+  // reverse.
+  const reconnectRequired =
+    connection?.reconnectRequired === true || userStatus.oneDriveStatus === "reconnect_required";
+  const hasConnection = connection !== null || userStatus.oneDriveStatus === "connected";
+
+  // A live connection with no profile is its own state, so the plugin prompts
+  // for one instead of claiming a sync.
+  const oneDriveStatus: OneDriveStatus = reconnectRequired
     ? "reconnect_required"
-    : syncProfileStatus.oneDriveConnected
-      ? "connected"
-      : syncProfileStatus.exists
-        ? "reconnect_required"
-        : "never_connected";
+    : !hasConnection
+      ? "never_connected"
+      : userStatus.hasProfile === true
+        ? "connected"
+        : "connected_no_profile";
 
   const body: StatusResponse = {
     github: { connected: true, username },
     oneDrive: {
-      connected: oneDriveStatus === "connected" && syncProfileStatus.oneDriveConnected,
+      connected: oneDriveStatus === "connected" || oneDriveStatus === "connected_no_profile",
     },
     oneDriveStatus,
   };

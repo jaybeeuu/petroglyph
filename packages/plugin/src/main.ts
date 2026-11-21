@@ -13,6 +13,7 @@ import {
 } from "./log.js";
 import { PetroglyphSettingTab } from "./settings.js";
 import type { PluginData, SyncProfile } from "./types.js";
+import { NO_PROFILES_NOTICE } from "./types.js";
 import { hasStringProp, isRecord } from "./validate.js";
 
 const DEFAULT_DATA: PluginData = {
@@ -22,7 +23,6 @@ const DEFAULT_DATA: PluginData = {
 };
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
-const DEFAULT_PROFILE_ID = "default";
 const LOG_FLUSH_INTERVAL_MS = 2000;
 
 const jwtPayloadSchema = z.object({
@@ -230,6 +230,14 @@ export class PetroglyphPlugin extends Plugin {
     }
   }
   /**
+   * True once the profile list has been fetched and is empty. `undefined` means
+   * it has not been loaded yet, so an unknown list never blocks a sync.
+   */
+  private loadedNoProfiles(): boolean {
+    return this._data.profiles !== undefined && this._data.profiles.length === 0;
+  }
+
+  /**
    * Manually sync the vault: POST /onedrive/sync-trigger, then drain GET /files
    * from the stored cursor and report the outcome. The trigger only enqueues one
    * OneDrive walk, so a document saved a moment ago is usually not in the feed
@@ -242,6 +250,10 @@ export class PetroglyphPlugin extends Plugin {
   async syncNow(): Promise<void> {
     if (this._data.jwt === undefined || !this._data.oneDriveConnected) {
       new Notice("Not connected. Cannot sync.");
+      return;
+    }
+    if (this.loadedNoProfiles() || this._data.activeProfileId === undefined) {
+      new Notice(NO_PROFILES_NOTICE);
       return;
     }
     // One manual sync at a time. The settings button has no debounce, so a
@@ -285,7 +297,8 @@ export class PetroglyphPlugin extends Plugin {
     if (trigger.kind === "refused") return trigger.message;
     if (trigger.kind === "stop") return null;
 
-    const profileId = this.resolveProfileId();
+    const profileId = this._data.activeProfileId;
+    if (profileId === undefined) return null;
     let drain: FeedDrain = await this.drainFilesFeed(profileId);
     if (syncAborted(controller)) return null;
     if (drain.ok && drain.synced === 0) {
@@ -386,15 +399,6 @@ export class PetroglyphPlugin extends Plugin {
       if (!drain.ok || drain.synced > 0) return drain;
     }
     return drain;
-  }
-
-  /**
-   * The profile whose feed cursor and files feed paging are used; falls back to
-   * "default" when no profile is active. An empty id is as absent as a missing
-   * one, so a stored "" can never pin the drain to a profile that does not exist.
-   */
-  private resolveProfileId(): string {
-    return this._data.activeProfileId || DEFAULT_PROFILE_ID;
   }
 
   /** The loaded profile a feed is scoped to, if its data has been fetched yet. */
@@ -557,8 +561,9 @@ export class PetroglyphPlugin extends Plugin {
    * the next sync re-enumerates the feed from the head.
    */
   async resetPluginState(): Promise<void> {
-    if (this._data.feedCursors?.[DEFAULT_PROFILE_ID] !== undefined) {
-      await this.saveFeedCursor(DEFAULT_PROFILE_ID, undefined);
+    const profileId = this._data.activeProfileId;
+    if (profileId !== undefined && this._data.feedCursors?.[profileId] !== undefined) {
+      await this.saveFeedCursor(profileId, undefined);
     }
     new Notice("Plugin state reset: local sync token cleared");
   }
@@ -613,7 +618,10 @@ export class PetroglyphPlugin extends Plugin {
       }
       const body: unknown = await resp.json();
       if (isRecord(body) && body["resetToken"] === true) {
-        await this.saveFeedCursor(DEFAULT_PROFILE_ID, undefined);
+        // The server cleared every profile's delta token, so every local feed
+        // cursor is stale: the next drain must start from the head.
+        this._data = { ...this._data, feedCursors: {} };
+        await this.savePluginData();
       }
       new Notice("Full reset complete");
     } catch {
@@ -731,8 +739,11 @@ export class PetroglyphPlugin extends Plugin {
 
   async performSync(): Promise<void> {
     if (this._data.jwt === undefined || !this._data.oneDriveConnected) return;
+    if (this.loadedNoProfiles()) return;
+    const profileId = this._data.activeProfileId;
+    if (profileId === undefined) return;
 
-    await this.drainFilesFeed(this.resolveProfileId());
+    await this.drainFilesFeed(profileId);
     await this._log.flush();
   }
 
@@ -855,7 +866,7 @@ export class PetroglyphPlugin extends Plugin {
           ? manifest["version"]
           : "unknown",
       apiBaseUrl: this._data.apiBaseUrl,
-      activeProfileId: this.resolveProfileId(),
+      activeProfileId: this._data.activeProfileId ?? "none",
       oneDriveStatus: this._data.oneDriveStatus ?? "unknown",
       cursors: Object.keys(this._data.feedCursors ?? {}).length,
     });
@@ -1090,6 +1101,12 @@ export class PetroglyphPlugin extends Plugin {
         return;
       }
       await this.loadProfiles();
+      // Connecting first and creating the profile second is the normal flow, so
+      // the poll must start here too: the connect callback found no profile and
+      // started nothing. A creation that leaves no active profile still waits.
+      if (!this.loadedNoProfiles() && this._data.activeProfileId !== undefined) {
+        this.startSyncPolling();
+      }
     } catch {
       new Notice("Failed to create profile: network error");
     }
@@ -1208,10 +1225,15 @@ export class PetroglyphPlugin extends Plugin {
       }
       this.setOneDriveConnected(true);
       this._data = { ...this._data, oneDriveStatus: "connected" };
+      await this.loadProfiles();
       await this.savePluginData();
       this.refreshSettingsUi();
-      this.startSyncPolling();
-      new Notice("OneDrive connected");
+      if (this.loadedNoProfiles()) {
+        new Notice(NO_PROFILES_NOTICE);
+      } else {
+        this.startSyncPolling();
+        new Notice("OneDrive connected");
+      }
     } catch (error) {
       this._log.error("auth", "onedrive connect failed", { error: describeError(error) });
       new Notice("OneDrive connection failed");

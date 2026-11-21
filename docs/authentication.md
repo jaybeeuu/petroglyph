@@ -134,15 +134,19 @@ The plugin periodically calls `GET /status` to determine the current connection 
 ```json
 {
   "github": { "connected": true, "username": "<githubLogin>" },
-  "oneDrive": { "connected": false }
+  "oneDrive": { "connected": true },
+  "oneDriveStatus": "connected_no_profile"
 }
 ```
 
-| Field                | Type    | Description                                                                                                                                                                                       |
-| -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                                      |
-| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                                         |
-| `oneDrive.connected` | boolean | `true` if the user has an active OneDrive connection (`active === true` on the `sync_profiles` DynamoDB record); `false` if the record is absent, the field is false, or a DynamoDB error occurs. |
+| Field                | Type    | Description                                                                                                                                                                     |
+| -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                    |
+| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                       |
+| `oneDrive.connected` | boolean | `true` when the connection is live, whether or not a profile exists yet. `false` for a dead grant, a never-connected user, or a DynamoDB error.                                 |
+| `oneDriveStatus`     | string  | `connected` (live connection with a profile), `connected_no_profile` (live connection, no profile yet), `never_connected`, or `reconnect_required` (dead grant or user record). |
+
+The connection state comes from the `token_vaults` row's `reconnectRequired` and the `users` row's `oneDriveStatus`. Whether the user has a profile at all is the `users` row's own `hasProfile` mark, which `POST /profiles` sets and deleting the last profile clears, so `/status` reads no `sync_profiles` row anywhere and editing a profile cannot flip a connected user to `reconnect_required`.
 
 Unauthenticated requests (missing or invalid JWT) return `401 { "error": "UNAUTHORIZED" }` from the auth middleware before the handler is reached.
 
@@ -215,7 +219,7 @@ sequenceDiagram
     Note over CloudAPI: validate & delete state token<br/>(retrieve PKCE verifier from DynamoDB)
     CloudAPI->>Microsoft: token exchange (code + verifier)
     Microsoft-->>CloudAPI: access token + refresh token
-    Note over CloudAPI: store OneDrive tokens in DynamoDB<br/>register Graph subscription (non-blocking)<br/>upsert SyncProfile in DynamoDB
+    Note over CloudAPI: store OneDrive tokens in DynamoDB<br/>mark the connection connected
     CloudAPI-->>Plugin: { status: 'connected' }
 ```
 
@@ -229,8 +233,8 @@ sequenceDiagram
 8. Cloud API validates the state token against DynamoDB (`type='onedrive_state'`, TTL check) → 401 if invalid or expired. The state record is deleted immediately after lookup (one-time-use), and the PKCE `verifier` is read from it.
 9. Cloud API completes the PKCE token exchange with Microsoft using the code, retrieved verifier, and client secret (loaded from SSM), receiving an **access token** (TTL ~1 hour) and a **refresh token** (TTL up to 90 days with `offline_access`). Returns 502 if the exchange fails.
 10. `access_token`, `refresh_token`, and `expirySeconds` are written to **both** token stores: the connection-keyed `token_vaults` record (`userId` + `provider=onedrive`), which the Delivery 1 adapter resolves the grant from, and the legacy `refresh_tokens` record (`tokenHash=userId`) that the still-live pre-Delivery-3 readers (`onedriveMiddleware`, sync-worker, processor) use. Writing only the legacy record would leave a new consent invisible to the data path; the legacy write disappears with the old copies at Delivery 3.
-11. Cloud API attempts to register a **Microsoft Graph change notification subscription** for the user's OneDrive. The requested `expirationDateTime` is capped to Graph's maximum allowed window so registration does not fail due to an out-of-range expiry. Failure is still non-blocking — a warning is logged and the request continues.
-12. Cloud API upserts a **SyncProfile** in DynamoDB (`PK=userId`, `SK='default'`, `oneDriveConnected=true`).
+11. Connect registers **no** Microsoft Graph change notification subscription. A subscription belongs to one active profile root and is created and deleted with that profile, so its lifecycle is the reconciler's job, not the connect step's. `GRAPH_NOTIFICATION_URL` and `GRAPH_LIFECYCLE_URL` stay configured for that registration.
+12. Cloud API marks the connection **connected** on the user record, and connect writes **no sync profile row at all** — not even a flag on an existing one. Choosing which OneDrive folder maps to which vault path is the user's own profile action, so a fresh connect leaves the profile list empty and `/status` reports `connected_no_profile`. Connection state lives on the connection (the `token_vaults` row and the `users` row); a profile never carries it.
 13. Returns `{ status: 'connected' }` to the plugin.
 
 ### Token Lifecycle
@@ -265,8 +269,8 @@ The legacy components' `refresh_tokens` storage is **DEPRECATED** (kept for roll
 
 If the refresh token expires or is revoked (e.g. user hasn't synced in 90 days, or revokes access in their Microsoft account settings):
 
-- The cloud service marks the OneDrive connection as `disconnected` in the user's DynamoDB record.
-- On the plugin's next status check, it detects the disconnected state and presents a **"Reconnect OneDrive"** prompt, explaining the reason (expired, revoked, etc.) and offering a button to re-initiate the consent flow.
+- The cloud service marks the OneDrive connection as `reconnect_required` in the user's DynamoDB record.
+- On the plugin's next status check, it detects the `reconnect_required` state and presents a **"Reconnect OneDrive"** prompt, explaining the reason (expired, revoked, etc.) and offering a button to re-initiate the consent flow.
 
 ### Subscription Lifecycle Notifications
 
@@ -306,7 +310,7 @@ The harness follows the same request flow as the app:
 
 It stores its local state in `.working-docs/local-onedrive-flow.json` by default. The API must be started with `MICROSOFT_REDIRECT_URI` pointing at the harness callback server (default port `8787`), so Microsoft can return the OneDrive auth code locally.
 
-In all `disconnected` and `reconnect_required` cases the plugin surfaces a **"Reconnect OneDrive"** prompt on its next `/status` poll, explaining the reason. There is no SNS email alert — the plugin is the primary UI for error surfacing.
+In every `reconnect_required` case the plugin surfaces a **"Reconnect OneDrive"** prompt on its next `/status` poll, explaining the reason. There is no SNS email alert — the plugin is the primary UI for error surfacing.
 
 ---
 
@@ -342,6 +346,8 @@ interface SyncProfile {
 
 Profiles can be created, edited, and deleted from the plugin's Obsidian settings panel. Each operation calls the corresponding API endpoint (`POST /profiles`, `PATCH /profiles/:id`, `DELETE /profiles/:id`) and then refreshes the local state via `loadProfiles()`.
 
+A connected user with no profile is a normal state, because connect establishes the connection only. The settings panel and a manual sync both show `No profiles yet - create one to start syncing`, and the plugin syncs nothing until the user creates a profile.
+
 On deletion, `activeProfileId` is cleared locally _before_ `loadProfiles()` is called. This ordering is deliberate: `loadProfiles()` uses the locally-stored ID as a fallback when the API returns no `active: true` profile, so clearing it first ensures the deleted profile is not silently re-applied by the fallback path.
 
 ### Device Behaviour
@@ -358,13 +364,14 @@ On deletion, `activeProfileId` is cleared locally _before_ `loadProfiles()` is c
 
 ### `users`
 
-| Attribute                  | Type        | Description                                        |
-| -------------------------- | ----------- | -------------------------------------------------- |
-| `userId`                   | String (PK) | GitHub user ID                                     |
-| `githubUsername`           | String      | GitHub login name                                  |
-| `oneDriveStatus`           | String      | `connected` \| `disconnected` \| `never_connected` |
-| `oneDriveDisconnectReason` | String?     | `expired` \| `revoked` \| `error`                  |
-| `createdAt`                | String      | ISO 8601                                           |
+| Attribute                  | Type        | Description                                                                                                                                                                                              |
+| -------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `userId`                   | String (PK) | GitHub user ID                                                                                                                                                                                           |
+| `githubUsername`           | String      | GitHub login name                                                                                                                                                                                        |
+| `oneDriveStatus`           | String      | Stored values are `connected` and `reconnect_required`. `GET /status` derives `never_connected` from an absent connection and `connected_no_profile` when `hasProfile` is not `true`; it stores neither. |
+| `hasProfile`               | Boolean     | `true` while the user has at least one `sync_profiles` row; `POST /profiles` sets it and deleting the last profile clears it                                                                             |
+| `oneDriveDisconnectReason` | String?     | `expired` \| `revoked` \| `error`                                                                                                                                                                        |
+| `createdAt`                | String      | ISO 8601                                                                                                                                                                                                 |
 
 ### `refresh_tokens`
 
@@ -407,18 +414,18 @@ The adapter's per-connection Graph delta state (Delivery 1), superseding the per
 
 ### `sync_profiles`
 
-| Attribute                | Type        | Description                                                                                                |
-| ------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------- |
-| `userId`                 | String (PK) | FK to `users`                                                                                              |
-| `profileId`              | String (SK) | Profile identifier. The default profile uses the literal value `"default"`; additional profiles use UUIDs. |
-| `name`                   | String      | Human-readable profile name                                                                                |
-| `sourceFolderPath`       | String      | OneDrive folder path to watch, in canonical form — see [glossary](glossary.md#terms)                       |
-| `destinationVaultPath`   | String      | Vault folder that replaces the `handwritten` root; blank keeps it; an escape is rejected                   |
-| `pollingIntervalMinutes` | Number      | How often to poll for changes (default: `5`)                                                               |
-| `enabled`                | Boolean     | Whether the profile participates in sync runs (default: `true`)                                            |
-| `active`                 | Boolean     | `true` once OneDrive is connected and the profile is live                                                  |
-| `createdAt`              | String      | ISO 8601                                                                                                   |
-| `updatedAt`              | String      | ISO 8601                                                                                                   |
+| Attribute                | Type        | Description                                                                                       |
+| ------------------------ | ----------- | ------------------------------------------------------------------------------------------------- |
+| `userId`                 | String (PK) | FK to `users`                                                                                     |
+| `profileId`              | String (SK) | Profile identifier. Always a `randomUUID` from `POST /profiles`; no other path creates a profile. |
+| `name`                   | String      | Human-readable profile name                                                                       |
+| `sourceFolderPath`       | String      | OneDrive folder path to watch, in canonical form — see [glossary](glossary.md#terms)              |
+| `destinationVaultPath`   | String      | Vault folder that replaces the `handwritten` root; blank keeps it; an escape is rejected          |
+| `pollingIntervalMinutes` | Number      | How often to poll for changes (default: `5`)                                                      |
+| `enabled`                | Boolean     | Whether the profile participates in sync runs (default: `true`)                                   |
+| `active`                 | Boolean     | `true` once OneDrive is connected and the profile is live                                         |
+| `createdAt`              | String      | ISO 8601                                                                                          |
+| `updatedAt`              | String      | ISO 8601                                                                                          |
 
 `userId` as partition key means all profiles for a user are co-located, making list-by-user the primary key query rather than a GSI scan. Source and destination are stored as flat string fields rather than nested maps — the current single-provider design doesn't require the extra indirection.
 

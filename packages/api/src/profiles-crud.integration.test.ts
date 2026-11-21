@@ -121,33 +121,6 @@ describe("profiles CRUD against LocalStack DynamoDB", () => {
     expect(stored["oneDriveConnected"]).toBe(true);
   });
 
-  it("reports connected after a connect followed by a profile update", async () => {
-    const userId = "user-status";
-    // The connect path stamps `oneDriveConnected` on the default profile.
-    await putStoredProfile({ profileId: "default", oneDriveConnected: true }, userId);
-    await dynamo.send(
-      new PutCommand({
-        TableName: USERS_TABLE,
-        Item: { userId, oneDriveStatus: "connected" },
-      }),
-    );
-
-    const updateResponse = await request(
-      "PUT",
-      "/profiles/default",
-      { pollingIntervalMinutes: 10 },
-      userId,
-    );
-    const statusResponse = await request("GET", "/status", undefined, userId);
-
-    expect(updateResponse.status).toBe(200);
-    expect(statusResponse.status).toBe(200);
-    expect(await statusResponse.json()).toMatchObject({
-      oneDrive: { connected: true },
-      oneDriveStatus: "connected",
-    });
-  });
-
   it("creates a profile with every attribute a new profile needs", async () => {
     const newUserId = "user-without-profiles";
 
