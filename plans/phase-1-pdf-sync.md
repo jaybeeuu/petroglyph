@@ -58,7 +58,7 @@ Implement the GitHub OAuth flow end-to-end. The cloud API exposes `GET /auth/url
 
 ## Phase 3: OneDrive Connection
 
-**Goal**: A logged-in user can connect their OneDrive account and the service begins watching the configured folder.
+**Goal**: A logged-in user can connect their OneDrive account. Connect establishes the connection and its grant only, so no folder is watched until the user creates a profile that binds a source folder to a vault path.
 
 ### What to build
 
@@ -67,7 +67,7 @@ Implement the OneDrive PKCE OAuth flow. The cloud API exposes `GET /onedrive/aut
 ### Acceptance criteria
 
 - [ ] Clicking "Connect OneDrive" opens the browser to Microsoft login
-- [ ] After consent, the plugin shows "OneDrive connected" in settings
+- [ ] After consent, the plugin shows "OneDrive connected" in settings and prompts for a profile
 - [ ] `POST /onedrive/connect` sends no Microsoft Graph subscription request; registration belongs to the subscription reconciler that follows profile roots
 - [ ] `GET /status` returns `{ oneDriveStatus: "connected" }` for a connected user who has a profile
 - [ ] No `SyncProfile` record exists after connection; `GET /status` reports `connected_no_profile`
