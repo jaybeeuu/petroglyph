@@ -431,6 +431,7 @@ describe("runDeltaSync — adapter driver", () => {
     expect(log.error).toHaveBeenCalledWith(
       expect.stringContaining("delta walk failed for u1/onedrive"),
     );
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining("after 0 page(s)"));
     expect(log.error).toHaveBeenCalledWith(expect.stringContaining("status=500"));
     expect(log.warn).not.toHaveBeenCalled();
     expect(log.info).not.toHaveBeenCalled();

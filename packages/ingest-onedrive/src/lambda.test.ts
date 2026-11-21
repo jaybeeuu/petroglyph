@@ -138,6 +138,8 @@ describe("adapter lambda handler (delta-trigger SQS)", () => {
     );
 
     expect(response.batchItemFailures).toEqual([{ itemIdentifier: "msg-0" }]);
+    // The loop kept going: the record after the throw was still handed to the run.
+    expect(runDelta).toHaveBeenCalledWith({ userId: "u2", provider: "onedrive" });
     expect(log.error).toHaveBeenCalledWith("[adapter] delta run failed: Error: graph 500");
   });
 
