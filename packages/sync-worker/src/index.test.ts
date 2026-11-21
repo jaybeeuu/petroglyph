@@ -60,14 +60,18 @@ interface MockTokenRecord {
   accessToken: string;
   refreshToken: string;
   expirySeconds: number;
+  updatedAt: string;
+  reconnectRequired: boolean;
 }
 
 function mockTokenRecord({
   accessToken = "onedrive-access-token",
   refreshToken = "onedrive-refresh-token",
   expirySeconds = Math.floor((Date.now() + 60 * 60 * 1000) / 1000),
+  updatedAt = "2026-01-01T00:00:00.000Z",
+  reconnectRequired = false,
 }: Partial<MockTokenRecord> = {}): MockTokenRecord {
-  return { accessToken, refreshToken, expirySeconds };
+  return { accessToken, refreshToken, expirySeconds, updatedAt, reconnectRequired };
 }
 
 describe("sync-worker handler", () => {
@@ -75,12 +79,13 @@ describe("sync-worker handler", () => {
     vi.stubEnv("FILE_RECORDS_TABLE", "petroglyph-file-records-test");
     vi.stubEnv("DELTA_TOKENS_TABLE", "petroglyph-delta-tokens-test");
     vi.stubEnv("SYNC_JOBS_TABLE", "petroglyph-sync-jobs-test");
-    vi.stubEnv("REFRESH_TOKENS_TABLE", "petroglyph-refresh-tokens-test");
+    vi.stubEnv("TOKEN_VAULTS_TABLE", "petroglyph-token-vaults-test");
     vi.stubEnv(
       "INGEST_QUEUE_URL",
       "https://sqs.eu-west-2.amazonaws.com/123456789/petroglyph-ingest-test",
     );
     vi.stubEnv("MICROSOFT_CLIENT_ID", "test-client-id");
+    vi.stubEnv("MICROSOFT_CLIENT_SECRET", "test-client-secret");
     mockDocSend.mockReset();
     mockSqsSend.mockReset();
     mockFetch.mockReset();
@@ -94,7 +99,7 @@ describe("sync-worker handler", () => {
     mockDocSend.mockImplementation((command: unknown) => {
       if (command instanceof GetCommand) {
         const tableName = command.input.TableName;
-        if (tableName === "petroglyph-refresh-tokens-test") {
+        if (tableName === "petroglyph-token-vaults-test") {
           return Promise.resolve({ Item: mockTokenRecord() });
         }
         if (tableName === "petroglyph-delta-tokens-test") {
@@ -192,7 +197,7 @@ describe("sync-worker handler", () => {
     mockDocSend.mockImplementation((command: unknown) => {
       if (command instanceof GetCommand) {
         const tableName = command.input.TableName;
-        if (tableName === "petroglyph-refresh-tokens-test") {
+        if (tableName === "petroglyph-token-vaults-test") {
           return Promise.resolve({ Item: mockTokenRecord() });
         }
         if (tableName === "petroglyph-delta-tokens-test") {
@@ -246,15 +251,15 @@ describe("sync-worker handler", () => {
     );
   });
 
-  it("refreshes access token when it is about to expire", async () => {
+  it("refreshes an expired access token before walking the delta", async () => {
     const expiringToken = mockTokenRecord({
-      expirySeconds: Math.floor((Date.now() + 5 * 60 * 1000) / 1000),
+      expirySeconds: Math.floor(Date.now() / 1000) - 60,
     });
 
     mockDocSend.mockImplementation((command: unknown) => {
       if (command instanceof GetCommand) {
         const tableName = command.input.TableName;
-        if (tableName === "petroglyph-refresh-tokens-test") {
+        if (tableName === "petroglyph-token-vaults-test") {
           return Promise.resolve({ Item: expiringToken });
         }
         if (tableName === "petroglyph-delta-tokens-test") {
@@ -315,11 +320,59 @@ describe("sync-worker handler", () => {
     );
   });
 
+  it("marks the vault connection reconnect-required when Microsoft answers invalid_grant", async () => {
+    mockDocSend.mockImplementation((command: unknown) => {
+      if (command instanceof GetCommand) {
+        const tableName = command.input.TableName;
+        if (tableName === "petroglyph-token-vaults-test") {
+          return Promise.resolve({
+            Item: mockTokenRecord({ expirySeconds: Math.floor(Date.now() / 1000) - 60 }),
+          });
+        }
+        if (tableName === "petroglyph-delta-tokens-test") {
+          return Promise.resolve({ Item: undefined });
+        }
+      }
+      return Promise.resolve({});
+    });
+
+    mockSqsSend.mockResolvedValue({});
+
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 }),
+    );
+
+    const result = await handler(
+      makeEvent({
+        jobId: "job-grant-invalid",
+        profileId: "profile-456",
+        sourceFolderPath: "OnyxBoox",
+        userId: "user-42",
+      }),
+    );
+
+    expect(result.batchItemFailures).toHaveLength(1);
+
+    const reconnectUpdates = mockDocSend.mock.calls.filter(
+      ([command]) =>
+        command instanceof UpdateCommand &&
+        command.input.TableName === "petroglyph-token-vaults-test" &&
+        command.input.ExpressionAttributeValues?.[":reconnectRequired"] === true,
+    ) as [[UpdateCommand]];
+    expect(reconnectUpdates).toHaveLength(1);
+
+    const [reconnectCommand] = reconnectUpdates[0];
+    expect(reconnectCommand.input.Key).toEqual({ userId: "user-42", provider: "onedrive" });
+    expect(reconnectCommand.input.ExpressionAttributeValues?.[":refreshToken"]).toBe(
+      "onedrive-refresh-token",
+    );
+  });
+
   it("continues from existing delta token", async () => {
     mockDocSend.mockImplementation((command: unknown) => {
       if (command instanceof GetCommand) {
         const tableName = command.input.TableName;
-        if (tableName === "petroglyph-refresh-tokens-test") {
+        if (tableName === "petroglyph-token-vaults-test") {
           return Promise.resolve({ Item: mockTokenRecord() });
         }
         if (tableName === "petroglyph-delta-tokens-test") {
@@ -416,7 +469,7 @@ describe("sync-worker handler", () => {
     mockDocSend.mockImplementation((command: unknown) => {
       if (command instanceof GetCommand) {
         const tableName = command.input.TableName;
-        if (tableName === "petroglyph-refresh-tokens-test") {
+        if (tableName === "petroglyph-token-vaults-test") {
           return Promise.resolve({ Item: mockTokenRecord() });
         }
         if (tableName === "petroglyph-delta-tokens-test") {
@@ -501,7 +554,7 @@ describe("sync-worker handler", () => {
     mockDocSend.mockImplementation((command: unknown) => {
       if (command instanceof GetCommand) {
         const tableName = command.input.TableName;
-        if (tableName === "petroglyph-refresh-tokens-test") {
+        if (tableName === "petroglyph-token-vaults-test") {
           return Promise.resolve({ Item: mockTokenRecord() });
         }
         if (tableName === "petroglyph-delta-tokens-test") {
@@ -601,7 +654,7 @@ describe("sync-worker handler", () => {
     mockDocSend.mockImplementation((command: unknown) => {
       if (command instanceof GetCommand) {
         const tableName = command.input.TableName;
-        if (tableName === "petroglyph-refresh-tokens-test") {
+        if (tableName === "petroglyph-token-vaults-test") {
           return Promise.resolve({ Item: mockTokenRecord() });
         }
         if (tableName === "petroglyph-delta-tokens-test") {
@@ -650,7 +703,7 @@ describe("sync-worker handler", () => {
     mockDocSend.mockImplementation((command: unknown) => {
       if (command instanceof GetCommand) {
         const tableName = command.input.TableName;
-        if (tableName === "petroglyph-refresh-tokens-test") {
+        if (tableName === "petroglyph-token-vaults-test") {
           return Promise.resolve({ Item: mockTokenRecord() });
         }
         if (tableName === "petroglyph-delta-tokens-test") {
@@ -704,7 +757,7 @@ describe("sync-worker handler", () => {
     mockDocSend.mockImplementation((command: unknown) => {
       if (command instanceof GetCommand) {
         const tableName = command.input.TableName;
-        if (tableName === "petroglyph-refresh-tokens-test") {
+        if (tableName === "petroglyph-token-vaults-test") {
           return Promise.resolve({ Item: mockTokenRecord() });
         }
         if (tableName === "petroglyph-delta-tokens-test") {
@@ -758,7 +811,7 @@ describe("sync-worker handler", () => {
     mockDocSend.mockImplementation((command: unknown) => {
       if (command instanceof GetCommand) {
         const tableName = command.input.TableName;
-        if (tableName === "petroglyph-refresh-tokens-test") {
+        if (tableName === "petroglyph-token-vaults-test") {
           return Promise.resolve({ Item: mockTokenRecord() });
         }
         if (tableName === "petroglyph-delta-tokens-test") {

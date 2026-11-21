@@ -41,6 +41,12 @@ export const notificationPayloadSchema = z.object({
 const ingestQueueMessageSchema = z.object({
   fileId: z.string().min(1),
   profileId: z.string().min(1),
+  /**
+   * The connection the changed file belongs to. Graph returns the userId as the
+   * subscription's clientState, and the token vault is keyed (userId, provider),
+   * so the processor cannot resolve a grant without it.
+   */
+  userId: z.string().min(1),
   itemMetadata: z.object({
     id: z.string().min(1),
     odataType: z.string().min(1),
@@ -164,6 +170,7 @@ async function enqueueNotificationJobs(notifications: Notification[]): Promise<v
       const message = ingestQueueMessageSchema.parse({
         fileId: notification.resourceData.id,
         profileId: DEFAULT_PROFILE_ID,
+        userId: notification.clientState,
         itemMetadata: {
           id: notification.resourceData.id,
           odataType: notification.resourceData["@odata.type"],

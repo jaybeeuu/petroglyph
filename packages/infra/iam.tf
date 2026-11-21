@@ -187,7 +187,7 @@ resource "aws_iam_role_policy" "petroglyph_processor_policy" {
         ]
         Resource = [
           local.file_records_table_arn,
-          aws_dynamodb_table.refresh_tokens.arn,
+          aws_dynamodb_table.token_vaults.arn,
         ]
       },
       {
@@ -323,7 +323,7 @@ resource "aws_iam_role_policy" "petroglyph_sync_worker_policy" {
           local.file_records_table_arn,
           aws_dynamodb_table.delta_tokens.arn,
           aws_dynamodb_table.sync_jobs.arn,
-          aws_dynamodb_table.refresh_tokens.arn,
+          aws_dynamodb_table.token_vaults.arn,
         ]
       },
       {

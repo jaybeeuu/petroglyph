@@ -58,6 +58,8 @@ interface MockTokenRecord {
   accessToken: string;
   refreshToken: string;
   expirySeconds: number;
+  updatedAt: string;
+  reconnectRequired: boolean;
 }
 
 function makeTokenRecord(overrides: Partial<MockTokenRecord> = {}): MockTokenRecord {
@@ -65,15 +67,17 @@ function makeTokenRecord(overrides: Partial<MockTokenRecord> = {}): MockTokenRec
     accessToken: "existing-access-token",
     refreshToken: "existing-refresh-token",
     expirySeconds: Math.floor(Date.now() / 1000) + 60 * 60,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    reconnectRequired: false,
     ...overrides,
   };
 }
 
-function mockOneDriveParams(userId: string, record: MockTokenRecord): void {
+function mockVaultRecord(userId: string, record: MockTokenRecord): void {
   mockDocSend.mockImplementation((command: unknown) => {
     if (command instanceof GetCommand) {
-      const key = command.input.Key as { tokenHash: string };
-      if (key.tokenHash === userId) {
+      const key = command.input.Key as { userId: string; provider: string };
+      if (key.userId === userId && key.provider === "onedrive") {
         return Promise.resolve({ Item: record });
       }
       return Promise.resolve({});
@@ -93,8 +97,9 @@ describe("processor handler", () => {
     vi.stubEnv("STAGED_PDFS_BUCKET", "petroglyph-staged-pdfs-staging");
     vi.stubEnv("STAGED_PDF_PREFIX", "handwritten");
     vi.stubEnv("FILE_RECORDS_TABLE", "petroglyph-file-records-staging");
-    vi.stubEnv("REFRESH_TOKENS_TABLE", "petroglyph-refresh_tokens-staging");
+    vi.stubEnv("TOKEN_VAULTS_TABLE", "petroglyph-token-vaults-staging");
     vi.stubEnv("MICROSOFT_CLIENT_ID", "test-microsoft-client-id");
+    vi.stubEnv("MICROSOFT_CLIENT_SECRET", "test-microsoft-client-secret");
   });
 
   afterEach(() => {
@@ -103,7 +108,7 @@ describe("processor handler", () => {
   });
 
   it("downloads the PDF, uploads it to S3, and writes a staged file record", async () => {
-    mockOneDriveParams("default", makeTokenRecord());
+    mockVaultRecord("user-1", makeTokenRecord());
 
     mockFetch
       .mockResolvedValueOnce(
@@ -141,6 +146,7 @@ describe("processor handler", () => {
       makeEvent({
         fileId: "file-123",
         profileId: "default",
+        userId: "user-1",
         itemMetadata: {
           id: "file-123",
           odataType: "#Microsoft.Graph.DriveItem",
@@ -185,8 +191,8 @@ describe("processor handler", () => {
     expect(putCommands).toHaveLength(1);
 
     const [getCommand] = getCommands[0] as [GetCommand];
-    expect(getCommand.input.TableName).toBe("petroglyph-refresh_tokens-staging");
-    expect(getCommand.input.Key).toEqual({ tokenHash: "default" });
+    expect(getCommand.input.TableName).toBe("petroglyph-token-vaults-staging");
+    expect(getCommand.input.Key).toEqual({ userId: "user-1", provider: "onedrive" });
 
     const [putCommand] = putCommands[0] as [PutCommand];
     expect(putCommand.input.TableName).toBe("petroglyph-file-records-staging");
@@ -202,8 +208,8 @@ describe("processor handler", () => {
 
   it("refreshes an expired access token before fetching and downloading the PDF", async () => {
     const expiredTime = Math.floor(Date.now() / 1000) - 60;
-    mockOneDriveParams(
-      "default",
+    mockVaultRecord(
+      "user-1",
       makeTokenRecord({
         accessToken: "expired-access-token",
         refreshToken: "stale-refresh-token",
@@ -261,6 +267,7 @@ describe("processor handler", () => {
       makeEvent({
         fileId: "file-123",
         profileId: "default",
+        userId: "user-1",
         itemMetadata: {
           id: "file-123",
           odataType: "#Microsoft.Graph.DriveItem",
@@ -278,7 +285,7 @@ describe("processor handler", () => {
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
         },
-        body: "client_id=test-microsoft-client-id&grant_type=refresh_token&refresh_token=stale-refresh-token&scope=files.readwrite+offline_access",
+        body: "client_id=test-microsoft-client-id&client_secret=test-microsoft-client-secret&grant_type=refresh_token&refresh_token=stale-refresh-token&scope=files.readwrite+offline_access",
       },
     ]);
 
@@ -306,8 +313,8 @@ describe("processor handler", () => {
     expect(updateCommands).toHaveLength(1);
 
     const [updateCommand] = updateCommands[0];
-    expect(updateCommand.input.TableName).toBe("petroglyph-refresh_tokens-staging");
-    expect(updateCommand.input.Key).toEqual({ tokenHash: "default" });
+    expect(updateCommand.input.TableName).toBe("petroglyph-token-vaults-staging");
+    expect(updateCommand.input.Key).toEqual({ userId: "user-1", provider: "onedrive" });
     expect(updateCommand.input.ExpressionAttributeValues).toMatchObject({
       ":accessToken": "fresh-access-token",
       ":refreshToken": "fresh-refresh-token",
@@ -318,7 +325,7 @@ describe("processor handler", () => {
   });
 
   it("skips non-PDF drive items without uploading or writing a file record", async () => {
-    mockOneDriveParams("default", makeTokenRecord());
+    mockVaultRecord("user-1", makeTokenRecord());
 
     mockFetch.mockResolvedValue(
       new Response(
@@ -346,6 +353,7 @@ describe("processor handler", () => {
       makeEvent({
         fileId: "file-123",
         profileId: "default",
+        userId: "user-1",
         itemMetadata: {
           id: "file-123",
           odataType: "#Microsoft.Graph.DriveItem",
@@ -363,7 +371,7 @@ describe("processor handler", () => {
   });
 
   it("returns a batch item failure when PDF download fails", async () => {
-    mockOneDriveParams("default", makeTokenRecord());
+    mockVaultRecord("user-1", makeTokenRecord());
 
     mockFetch
       .mockResolvedValueOnce(
@@ -398,6 +406,7 @@ describe("processor handler", () => {
       makeEvent({
         fileId: "file-123",
         profileId: "default",
+        userId: "user-1",
         itemMetadata: {
           id: "file-123",
           odataType: "#Microsoft.Graph.DriveItem",
@@ -413,5 +422,27 @@ describe("processor handler", () => {
     expect(mockS3Send).not.toHaveBeenCalled();
     const putCommands = mockDocSend.mock.calls.filter(([command]) => command instanceof PutCommand);
     expect(putCommands).toHaveLength(0);
+  });
+
+  it("fails the record when the connection requires reconnect", async () => {
+    mockVaultRecord("user-1", makeTokenRecord({ reconnectRequired: true }));
+
+    const result = await handler(
+      makeEvent({
+        fileId: "file-123",
+        profileId: "default",
+        userId: "user-1",
+        itemMetadata: {
+          id: "file-123",
+          odataType: "#Microsoft.Graph.DriveItem",
+          name: "notes.pdf",
+          resource: "me/drive/items/file-123",
+        },
+      }),
+    );
+
+    expect(result).toEqual({ batchItemFailures: [{ itemIdentifier: "message-123" }] });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockS3Send).not.toHaveBeenCalled();
   });
 });
