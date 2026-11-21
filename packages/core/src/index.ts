@@ -21,3 +21,5 @@ export type { TokenResolver, TokenResolveOptions } from "./tokens/token-resolver
 export type { TokenRequestOutcome, ResolveOutcome } from "./tokens/token-resolver.js";
 export { tokenRecordSchema } from "./tokens/token-store.js";
 export type { TokenRecord, TokenStore } from "./tokens/token-store.js";
+export { DynamoDBTokenStore, storedConnectionSchema } from "./tokens/token-store-ddb.js";
+export type { DynamoDBTokenStoreOptions, StoredConnection } from "./tokens/token-store-ddb.js";

@@ -21,6 +21,7 @@ describe("POST /onedrive/lifecycle", () => {
     mockFetch.mockReset();
     vi.stubEnv("USERS_TABLE", "petroglyph-users-test");
     vi.stubEnv("REFRESH_TOKENS_TABLE", "petroglyph-refresh_tokens-test");
+    vi.stubEnv("TOKEN_VAULTS_TABLE", "petroglyph-token-vaults-test");
     vi.stubEnv("MICROSOFT_CLIENT_ID", "test-ms-client-id");
     vi.stubEnv("MICROSOFT_CLIENT_SECRET", "test-ms-client-secret");
   });
@@ -46,6 +47,29 @@ describe("POST /onedrive/lifecycle", () => {
     return mockDbSend.mock.calls.filter(([command]) => command instanceof UpdateCommand) as Array<
       [unknown]
     >;
+  }
+
+  /** The `input` of every UpdateCommand issued against one table. */
+  function updateCallsForTable(tableName: string): Array<{ [key: string]: unknown }> {
+    return updateCalls()
+      .map(
+        ([command]) =>
+          (command as { input: { TableName?: string } & { [key: string]: unknown } }).input,
+      )
+      .filter((input) => input["TableName"] === tableName);
+  }
+
+  /** The stored connection row the lifecycle path refreshes, as the vault holds it. */
+  function vaultItem(): { [key: string]: unknown } {
+    return {
+      userId: "user-123",
+      provider: "onedrive",
+      accessToken: "expired-access-token",
+      refreshToken: "old-refresh-token",
+      expirySeconds: 1_000_000,
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      reconnectRequired: false,
+    };
   }
 
   function usersStatusUpdate():
@@ -165,9 +189,7 @@ describe("POST /onedrive/lifecycle", () => {
   });
 
   it("refreshes the token and reauthorizes the subscription for reauthorizationRequired events", async () => {
-    setupDbMock([
-      { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
-    ]);
+    setupDbMock([{ command: GetCommand, response: { Item: vaultItem() } }]);
     mockFetch.mockImplementation((url: string) => {
       if (url === "https://login.microsoftonline.com/common/oauth2/v2.0/token") {
         return Promise.resolve({
@@ -230,41 +252,74 @@ describe("POST /onedrive/lifecycle", () => {
       expect(updateCalls()).toHaveLength(2);
     });
 
-    const updateCommands = updateCalls().map(([command]) => command as { input: unknown });
-    const tokenUpdate = updateCommands.find(
-      (command) =>
-        (command.input as { TableName?: string }).TableName === "petroglyph-refresh_tokens-test",
-    );
-    expect(tokenUpdate).toBeDefined();
-    expect((tokenUpdate?.input as { Key: { tokenHash: string } }).Key).toEqual({
-      tokenHash: "user-123",
+    const [vaultUpdate] = updateCallsForTable("petroglyph-token-vaults-test") as [
+      {
+        Key: { userId: string; provider: string };
+        ConditionExpression?: string;
+        ExpressionAttributeValues: { [key: string]: unknown };
+      },
+    ];
+    expect(vaultUpdate.Key).toEqual({ userId: "user-123", provider: "onedrive" });
+    expect(vaultUpdate.ConditionExpression).toContain("updatedAt = :expectedUpdatedAt");
+    expect(vaultUpdate.ExpressionAttributeValues).toMatchObject({
+      ":accessToken": "new-access-token",
+      ":refreshToken": "new-refresh-token",
+      ":expectedUpdatedAt": "2026-09-01T00:00:00.000Z",
+      ":reconnectRequired": false,
     });
-    expect(
-      (tokenUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
-        .ExpressionAttributeValues[":accessToken"],
-    ).toBe("new-access-token");
-    expect(
-      (tokenUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
-        .ExpressionAttributeValues[":refreshToken"],
-    ).toBe("new-refresh-token");
 
-    const statusUpdate = updateCommands.find(
-      (command) => (command.input as { TableName?: string }).TableName === "petroglyph-users-test",
-    );
-    expect(statusUpdate).toBeDefined();
-    expect((statusUpdate?.input as { Key: { userId: string } }).Key).toEqual({
-      userId: "user-123",
+    const [statusUpdate] = updateCallsForTable("petroglyph-users-test") as [
+      {
+        Key: { userId: string };
+        ExpressionAttributeValues: { [key: string]: unknown };
+      },
+    ];
+    expect(statusUpdate.Key).toEqual({ userId: "user-123" });
+    expect(statusUpdate.ExpressionAttributeValues[":status"]).toBe("connected");
+  });
+
+  it("writes no rotated token to the legacy refresh_tokens table", async () => {
+    setupDbMock([{ command: GetCommand, response: { Item: vaultItem() } }]);
+    mockFetch.mockImplementation((url: string) => {
+      if (url === "https://login.microsoftonline.com/common/oauth2/v2.0/token") {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              access_token: "new-access-token",
+              refresh_token: "new-refresh-token",
+              expires_in: 3600,
+            }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true } as Response);
     });
-    expect(
-      (statusUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
-        .ExpressionAttributeValues[":status"],
-    ).toBe("connected");
+
+    const response = await app.request("/onedrive/lifecycle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        value: [
+          {
+            lifecycleEvent: "reauthorizationRequired",
+            clientState: "user-123",
+            subscriptionId: "sub-123",
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(202);
+
+    await vi.waitFor(() => {
+      expect(updateCalls()).toHaveLength(2);
+    });
+
+    expect(updateCallsForTable("petroglyph-refresh_tokens-test")).toHaveLength(0);
   });
 
   it("marks the user as reconnect_required when token refresh fails", async () => {
-    setupDbMock([
-      { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
-    ]);
+    setupDbMock([{ command: GetCommand, response: { Item: vaultItem() } }]);
     mockFetch.mockResolvedValue({
       ok: false,
       status: 401,
@@ -289,32 +344,28 @@ describe("POST /onedrive/lifecycle", () => {
     expect(response.status).toBe(202);
 
     await vi.waitFor(() => {
-      expect(updateCalls()).toHaveLength(1);
+      expect(updateCallsForTable("petroglyph-users-test")).toHaveLength(1);
     });
 
-    const updateCall = updateCalls()[0];
-    if (!updateCall) {
-      throw new Error("Expected one UpdateCommand call");
-    }
+    const [vaultUpdate] = updateCallsForTable("petroglyph-token-vaults-test") as [
+      { ExpressionAttributeValues: { [key: string]: unknown } },
+    ];
+    expect(vaultUpdate.ExpressionAttributeValues[":reconnectRequired"]).toBe(true);
 
-    const [updateCommand] = updateCall as [
+    const [statusUpdate] = updateCallsForTable("petroglyph-users-test") as [
       {
-        input: {
-          Key: { userId: string };
-          ExpressionAttributeValues: { [key: string]: unknown };
-        };
+        Key: { userId: string };
+        ExpressionAttributeValues: { [key: string]: unknown };
       },
     ];
-    expect(updateCommand.input.Key).toEqual({ userId: "user-123" });
-    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("reconnect_required");
+    expect(statusUpdate.Key).toEqual({ userId: "user-123" });
+    expect(statusUpdate.ExpressionAttributeValues[":status"]).toBe("reconnect_required");
   });
 
   it("falls back to DELETE + recreate and marks connected when Graph reauthorize returns 308", async () => {
     vi.stubEnv("GRAPH_NOTIFICATION_URL", "https://api.example.com/graph/notify");
     vi.stubEnv("GRAPH_LIFECYCLE_URL", "https://api.example.com/graph/lifecycle");
-    setupDbMock([
-      { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
-    ]);
+    setupDbMock([{ command: GetCommand, response: { Item: vaultItem() } }]);
     setupReauthorizeFallbackFetch({
       subscriptionId: "sub-123",
       deleteStatus: 204,
@@ -370,9 +421,7 @@ describe("POST /onedrive/lifecycle", () => {
   it("ignores a 404 from DELETE and still recreates the subscription", async () => {
     vi.stubEnv("GRAPH_NOTIFICATION_URL", "https://api.example.com/graph/notify");
     vi.stubEnv("GRAPH_LIFECYCLE_URL", "https://api.example.com/graph/lifecycle");
-    setupDbMock([
-      { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
-    ]);
+    setupDbMock([{ command: GetCommand, response: { Item: vaultItem() } }]);
     setupReauthorizeFallbackFetch({
       subscriptionId: "sub-124",
       deleteStatus: 404,
@@ -420,9 +469,7 @@ describe("POST /onedrive/lifecycle", () => {
   it("marks the user as reconnect_required when subscription recreate also fails", async () => {
     vi.stubEnv("GRAPH_NOTIFICATION_URL", "https://api.example.com/graph/notify");
     vi.stubEnv("GRAPH_LIFECYCLE_URL", "https://api.example.com/graph/lifecycle");
-    setupDbMock([
-      { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
-    ]);
+    setupDbMock([{ command: GetCommand, response: { Item: vaultItem() } }]);
     setupReauthorizeFallbackFetch({
       subscriptionId: "sub-456",
       deleteStatus: 204,
@@ -476,9 +523,7 @@ describe("POST /onedrive/lifecycle", () => {
   });
 
   it("returns 202 after reauthorization work finishes", async () => {
-    setupDbMock([
-      { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
-    ]);
+    setupDbMock([{ command: GetCommand, response: { Item: vaultItem() } }]);
     mockFetch.mockImplementation((url: string) => {
       if (url === "https://login.microsoftonline.com/common/oauth2/v2.0/token") {
         return Promise.resolve({

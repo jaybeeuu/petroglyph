@@ -5,7 +5,7 @@ export {
   parseTokenResponse,
 } from "./token-client.js";
 export type { TokenClient, TokenClientOptions } from "./token-client.js";
-export { DynamoDBTokenStore, tokenRecordSchema } from "./token-store-ddb.js";
+export { DynamoDBTokenStore, tokenRecordSchema } from "@petroglyph/core";
 export { buildAuthUrl, exchangeCodeForTokens, storeInitialTokens } from "./auth-bootstrap.js";
 export type { AuthBootstrapLoginOptions, AuthUrlOptions } from "./auth-bootstrap.js";
 export { MicrosoftGraphClient } from "./graph-client.js";

@@ -3,7 +3,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { SQSBatchResponse, SQSEvent } from "aws-lambda";
-import { OAuthTokenResolver, listProfiles } from "@petroglyph/core";
+import { OAuthTokenResolver, listProfiles, DynamoDBTokenStore } from "@petroglyph/core";
 import { DynamoDBEventLogWriter } from "@petroglyph/events";
 import { S3StagedObjectStore } from "@petroglyph/staging-contracts";
 import {
@@ -11,7 +11,6 @@ import {
   deltaTriggerSchema,
   type DeltaTrigger,
 } from "@petroglyph/contracts";
-import { DynamoDBTokenStore } from "./tokens/token-store-ddb.js";
 import { OAuthTokenClient } from "./tokens/token-client.js";
 import { MicrosoftGraphClient } from "./tokens/graph-client.js";
 import { DynamoDBDeltaStateStore } from "./delta/delta-state-store-ddb.js";

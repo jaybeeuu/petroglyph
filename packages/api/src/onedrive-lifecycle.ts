@@ -1,16 +1,16 @@
-import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { defineEndpoint } from "@petroglyph/contracts/hono";
 import { postOnedriveLifecycle } from "@petroglyph/contracts/operations";
+import { OAuthTokenResolver, type TokenRequestOutcome } from "@petroglyph/core";
 import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
+import { ONEDRIVE_PROVIDER, connectionTokenStore } from "./token-vault.js";
 
 function usersTable(): string {
   return process.env["USERS_TABLE"] ?? "petroglyph-users-default";
 }
 
-function refreshTokensTable(): string {
-  return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
-}
+const TOKEN_ENDPOINT = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 
 interface LifecycleNotification {
   lifecycleEvent: string;
@@ -22,17 +22,6 @@ type OneDriveStatus = "connected" | "reconnect_required";
 
 function isRecord(value: unknown): value is { [key: string]: unknown } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseRefreshToken(item: unknown, userId: string): string {
-  if (
-    !isRecord(item) ||
-    typeof item["refreshToken"] !== "string" ||
-    item["refreshToken"].length === 0
-  ) {
-    throw new Error(`Refresh token missing for user ${userId}`);
-  }
-  return item["refreshToken"];
 }
 
 function parseLifecycleNotifications(body: unknown): LifecycleNotification[] {
@@ -129,7 +118,12 @@ function parseMicrosoftTokenResponse(value: unknown): MicrosoftTokenResponse {
   };
 }
 
-async function refreshUserToken(refreshToken: string): Promise<MicrosoftTokenResponse> {
+/**
+ * Rotates the connection's grant with Microsoft. A dead grant is an outcome,
+ * not a crash: `invalid_grant` is what the resolver turns into the sticky
+ * `reconnectRequired` flag it shares with the OneDrive adapter.
+ */
+async function requestMicrosoftTokens(refreshToken: string): Promise<TokenRequestOutcome> {
   const clientId = process.env["MICROSOFT_CLIENT_ID"];
   if (!clientId) throw new Error("MICROSOFT_CLIENT_ID env var not set");
   const clientSecret = process.env["MICROSOFT_CLIENT_SECRET"];
@@ -143,41 +137,42 @@ async function refreshUserToken(refreshToken: string): Promise<MicrosoftTokenRes
     scope: "files.readwrite offline_access",
   });
 
-  const response = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+  const response = await fetch(TOKEN_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: body.toString(),
   });
+
   if (!response.ok) {
+    const error = await response.json().catch(() => undefined);
+    if (isRecord(error) && error["error"] === "invalid_grant") {
+      return { kind: "grant-invalid" };
+    }
     throw new Error(`Microsoft token refresh failed with status ${response.status}`);
   }
 
-  return parseMicrosoftTokenResponse(await response.json());
+  const tokens = parseMicrosoftTokenResponse(await response.json());
+  return {
+    kind: "success",
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    expiresIn: tokens.expires_in,
+  };
 }
 
-async function storeUserTokens(
-  userId: string,
-  accessToken: string,
-  refreshToken: string,
-  expiresIn: number,
-): Promise<void> {
-  const expirySeconds = Math.floor(Date.now() / 1000) + expiresIn;
-  await docClient().send(
-    new UpdateCommand({
-      TableName: refreshTokensTable(),
-      Key: { tokenHash: userId },
-      UpdateExpression:
-        "SET accessToken = :accessToken, refreshToken = :refreshToken, expirySeconds = :expirySeconds, updatedAt = :updatedAt",
-      ExpressionAttributeValues: {
-        ":accessToken": accessToken,
-        ":refreshToken": refreshToken,
-        ":expirySeconds": expirySeconds,
-        ":updatedAt": new Date().toISOString(),
-      },
-    }),
-  );
+/**
+ * The API's door to the connection vault. Refreshing through it — rather than
+ * through a second copy of the grant — is what keeps a rotation visible to the
+ * adapter, which resolves its grant from the same row.
+ */
+function createConnectionTokenResolver(): OAuthTokenResolver {
+  return new OAuthTokenResolver({
+    store: connectionTokenStore(docClient()),
+    now: () => Math.floor(Date.now() / 1000),
+    requestTokens: requestMicrosoftTokens,
+  });
 }
 
 async function deleteGraphSubscription(subscriptionId: string, accessToken: string): Promise<void> {
@@ -294,35 +289,27 @@ async function handleReauthorizationRequired(notification: LifecycleNotification
     throw new Error("Lifecycle notification missing subscriptionId");
   }
 
-  const refreshTokenResult = await docClient().send(
-    new GetCommand({
-      TableName: refreshTokensTable(),
-      Key: { tokenHash: notification.clientState },
-    }),
-  );
-  const refreshToken = parseRefreshToken(
-    refreshTokenResult.Item as unknown,
+  // Forced: Graph asked for the subscription to be reauthorized, so the stored
+  // access token is obsolete even when its clock has not run out yet.
+  const grant = await createConnectionTokenResolver().resolveAccessToken(
     notification.clientState,
+    ONEDRIVE_PROVIDER,
+    { force: true },
   );
-  const refreshed = await refreshUserToken(refreshToken);
-  await storeUserTokens(
-    notification.clientState,
-    refreshed.access_token,
-    refreshed.refresh_token,
-    refreshed.expires_in,
-  );
+  if (grant.kind !== "success") {
+    throw new Error(`OneDrive grant for user ${notification.clientState} cannot be refreshed`);
+  }
+  const accessToken = grant.accessToken;
+
   try {
-    await reauthorizeGraphSubscription(notification.subscriptionId, refreshed.access_token);
+    await reauthorizeGraphSubscription(notification.subscriptionId, accessToken);
   } catch (error) {
     console.warn(
       "[onedrive-lifecycle] Graph subscription reauthorize failed; falling back to delete + recreate",
       error,
     );
-    await deleteGraphSubscription(notification.subscriptionId, refreshed.access_token);
-    const recreated = await registerGraphSubscription(
-      refreshed.access_token,
-      notification.clientState,
-    );
+    await deleteGraphSubscription(notification.subscriptionId, accessToken);
+    const recreated = await registerGraphSubscription(accessToken, notification.clientState);
     if (!recreated) {
       throw new Error("Graph subscription recreate failed after reauthorize failure");
     }
