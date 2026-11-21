@@ -124,7 +124,7 @@ sequenceDiagram
 
 The bell is connection-scoped today — `{ userId, provider }` (`contracts/src/delta-trigger.ts:9-15`) — so
 a walk is not scoped to a root: it enumerates the drive root and filters per profile afterwards
-(`delta-walk.ts:539-547`); bead `petroglyph-z23z` makes it one folder-scoped delta per subscription. The
+(`delta-walk.ts:547-561`); bead `petroglyph-z23z` makes it one folder-scoped delta per subscription. The
 continuation bell is real: `adapter/sync.ts:153-157` stores the resume link as its dedupe basis and
 enqueues it.
 
@@ -145,7 +145,7 @@ sequenceDiagram
 **Today** the pull exists, without a change log or a `seq` (not yet implemented: xgyd). The parameter is
 `nextToken`, the schema is `.strict()`, and the cursor is `base64url({ profileId, itemId })`
 (`staging-delivery/src/app.ts:29-41`, `cursor.ts:3-6`). Paging walks `staged_records` in `itemId` key order
-(`index-store-ddb.ts:27-30`), so the feed lists current content, not changes, and a restaged file keeps its
+(`index-store-ddb.ts:105-125`), so the feed lists current content, not changes, and a restaged file keeps its
 `itemId`. The body is `{ files, nextToken }`, scoped to the first profile that is both `active` and
 `enabled`.
 
@@ -199,7 +199,7 @@ sequenceDiagram
 **Today** (not yet implemented: bw3p) there is no reconciler and no renewal loop. What runs is a catch-up
 sweep every 6 hours (`packages/infra/variables.tf:134-137`, `catch-up.ts:62-70`): one bell per healthy
 connection, deduped on a 5-minute bucket, skipping connections awaiting reauthorisation. Renewal happens
-only when Graph sends a `reauthorizationRequired` lifecycle event (`onedrive-lifecycle.ts:292-330`), which
+only when Graph sends a `reauthorizationRequired` lifecycle event (`onedrive-lifecycle.ts:292-346`), which
 reauthorises, or deletes and recreates on failure, then marks the connection `reconnect_required` if that
 also fails. A subscription created at connect carries a 4230-minute expiry
 (`onedrive-lifecycle.ts:249-252`) and nothing renews it on a schedule.
@@ -216,7 +216,7 @@ stateDiagram-v2
   disconnected --> connected: re-consent
 ```
 
-`/status` is meant to derive this from the connection alone. **Today** it does not: `status.ts:84-114`
+`/status` is meant to derive this from the connection alone. **Today** it does not: `status.ts:59-108`
 also reads the `default` profile row from `SYNC_PROFILES_TABLE` — no row means `never_connected`, and
 a row with `oneDriveConnected` false means `reconnect_required`. The `disconnected` state exists only
 in the response type and is unreachable: a stored `disconnected` reports as `reconnect_required`.
