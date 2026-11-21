@@ -28,6 +28,24 @@ function createRecord(overrides: Partial<StagedRecord> = {}): StagedRecord {
   };
 }
 
+/**
+ * The row the release before `subscriptionId` shipped wrote: that attribute is
+ * absent, and every row already in the table looks like this.
+ */
+function previousReleaseRow(): { [key: string]: unknown } {
+  return {
+    profileId: "p1",
+    itemId: "item-1",
+    s3Key: "staging/v1/p1/notes/a.pdf",
+    relativePath: "notes",
+    name: "a.pdf",
+    source: "onedrive",
+    mimeType: "application/pdf",
+    status: "staged",
+    createdAt: "2026-09-01T00:00:00.000Z",
+  };
+}
+
 describe("DynamoDBStagedIndexStore", () => {
   const options = { tableName: "petroglyph-file-records" };
 
@@ -64,6 +82,31 @@ describe("DynamoDBStagedIndexStore", () => {
       TableName: "petroglyph-file-records",
       Key: { profileId: "p1", itemId: "item-1" },
     });
+  });
+
+  it("reads a row the previous release wrote without a subscriptionId", async () => {
+    const send = vi.fn().mockResolvedValue({ Item: previousReleaseRow() });
+    const store = new DynamoDBStagedIndexStore({
+      ...options,
+      client: { send } as unknown as DynamoDBDocumentClient,
+    });
+
+    await expect(store.get("p1", "item-1")).resolves.toMatchObject({
+      itemId: "item-1",
+      subscriptionId: "p1",
+    });
+  });
+
+  it("lists a row the previous release wrote without a subscriptionId", async () => {
+    const send = vi.fn().mockResolvedValue({ Items: [previousReleaseRow()] });
+    const store = new DynamoDBStagedIndexStore({
+      ...options,
+      client: { send } as unknown as DynamoDBDocumentClient,
+    });
+
+    await expect(store.listUnderPath("p1", "notes")).resolves.toMatchObject([
+      { itemId: "item-1", subscriptionId: "p1" },
+    ]);
   });
 
   it("removes a record idempotently", async () => {
