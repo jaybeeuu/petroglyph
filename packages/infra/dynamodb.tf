@@ -90,6 +90,63 @@ resource "aws_dynamodb_table" "sync_profiles" {
   }
 }
 
+# Subscription registry (profile flows, decision 4): one Graph subscription per
+# profile, keyed {profileId, provider}. Graph state — root, folder itemId,
+# subscriptionId, deltaLink, clientState secret, expiry and subscriptionState —
+# lives here and never on the profile row. Two access patterns drive the two
+# indexes:
+#
+# * the webhook and lifecycle notifications arrive holding a subscriptionId and
+#   nothing else, so `subscriptionId-index` answers them;
+# * the hourly renewer asks which rows expire inside a 24-hour horizon, so
+#   `expiry-index` serves a range query on the epoch seconds in `expiry`.
+#   `provider` is the partition key because every row carries it (it is the
+#   table's sort key) and the renewer must see every state.
+
+resource "aws_dynamodb_table" "graph_subscriptions" {
+  name         = "petroglyph-graph-subscriptions-${terraform.workspace}"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "profileId"
+  range_key    = "provider"
+
+  attribute {
+    name = "profileId"
+    type = "S"
+  }
+
+  attribute {
+    name = "provider"
+    type = "S"
+  }
+
+  attribute {
+    name = "subscriptionId"
+    type = "S"
+  }
+
+  attribute {
+    name = "expiry"
+    type = "N"
+  }
+
+  global_secondary_index {
+    name            = "subscriptionId-index"
+    hash_key        = "subscriptionId"
+    projection_type = "ALL"
+  }
+
+  global_secondary_index {
+    name            = "expiry-index"
+    hash_key        = "provider"
+    range_key       = "expiry"
+    projection_type = "ALL"
+  }
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
 resource "aws_dynamodb_table" "file_records" {
   name         = "petroglyph-file-records-${terraform.workspace}"
   billing_mode = "PAY_PER_REQUEST"
