@@ -2013,24 +2013,25 @@ describe("feed sync", () => {
     expect(plugin.data.feedCursors?.["default"]).toBe("page-2-cursor");
   });
 
-  it("stops on a 410 and keeps the stored cursor, so a deleted profile is never read as empty", async () => {
+  it("stops on a 410, keeps the stored cursor and says the profile was deleted", async () => {
     const { plugin } = await makePlugin({
       jwt: "jwt-token",
       oneDriveConnected: true,
       feedCursors: { default: "cursor-1" },
     });
-    let callCount = 0;
-    global.fetch = vi.fn((url) => {
-      if (typeof url === "string" && url.includes("/files")) {
-        callCount++;
-        return Promise.resolve({ ok: false, status: 410 });
-      }
-      return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)) });
-    }) as unknown as typeof fetch;
+    let feedRequests = 0;
+    stubTriggerFetch(queuedTrigger(), (url) => {
+      if (!url.includes("/files")) return Promise.resolve(bytesResponse());
+      feedRequests += 1;
+      return Promise.resolve(failureResponse(410));
+    });
 
-    await plugin.performSync();
+    await plugin.syncNow();
 
-    expect(callCount).toBe(1);
+    // A deleted profile is not an empty one: the drain stops, says why, and
+    // leaves the cursor where it was so nothing already written is forgotten.
+    expect(Notice).toHaveBeenCalledWith("Sync stopped: this profile was deleted");
+    expect(feedRequests).toBe(1);
     expect(plugin.data.feedCursors?.["default"]).toBe("cursor-1");
   });
 
