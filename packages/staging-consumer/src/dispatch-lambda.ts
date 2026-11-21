@@ -1,7 +1,11 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { SQSBatchResponse, SQSEvent } from "aws-lambda";
-import { DynamoDBStagedIndexStore, S3StagedObjectStore } from "@petroglyph/staging-contracts";
+import {
+  DynamoDBStagedChangeLog,
+  DynamoDBStagedIndexStore,
+  S3StagedObjectStore,
+} from "@petroglyph/staging-contracts";
 import { createDispatchHandler, type DispatchDependencies } from "./dispatch.js";
 
 let cachedDocClient: DynamoDBDocumentClient | undefined;
@@ -34,6 +38,10 @@ function createDependencies(): DispatchDependencies {
     index: new DynamoDBStagedIndexStore({
       client: docClient(),
       tableName: requiredEnv("FILE_RECORDS_TABLE"),
+    }),
+    changeLog: new DynamoDBStagedChangeLog({
+      client: docClient(),
+      tableName: requiredEnv("STAGED_CHANGES_TABLE"),
     }),
     objectStore: new S3StagedObjectStore({
       bucket: requiredEnv("STAGED_PDFS_BUCKET"),

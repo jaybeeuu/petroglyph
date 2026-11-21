@@ -1,5 +1,9 @@
 import { listProfiles } from "@petroglyph/core";
-import { DynamoDBStagedIndexStore, S3StagedObjectStore } from "@petroglyph/staging-contracts";
+import {
+  DynamoDBStagedChangeLog,
+  DynamoDBStagedIndexStore,
+  S3StagedObjectStore,
+} from "@petroglyph/staging-contracts";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { handle } from "hono/aws-lambda";
@@ -9,6 +13,10 @@ import { docClient } from "./db.js";
 
 function fileRecordsTableName(): string {
   return process.env["FILE_RECORDS_TABLE"] ?? "petroglyph-file-records-default";
+}
+
+function stagedChangesTableName(): string {
+  return process.env["STAGED_CHANGES_TABLE"] ?? "petroglyph-staged-changes-default";
 }
 
 function syncProfilesTableName(): string {
@@ -46,6 +54,10 @@ export function createApp(): Hono {
       index: new DynamoDBStagedIndexStore({
         client: docClient(),
         tableName: fileRecordsTableName(),
+      }),
+      changeLog: new DynamoDBStagedChangeLog({
+        client: docClient(),
+        tableName: stagedChangesTableName(),
       }),
       objectStore: new S3StagedObjectStore({
         bucket: stagedBucketName(),

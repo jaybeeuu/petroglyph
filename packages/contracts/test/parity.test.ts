@@ -28,7 +28,10 @@ function createFilesRouterSurface(): ReturnType<typeof createFilesRouter> {
       remove: unreachable,
       listUnderPath: unreachable,
       removeUnderPath: unreachable,
-      queryFeed: unreachable,
+    },
+    changeLog: {
+      append: unreachable,
+      read: unreachable,
     },
     objectStore: {
       put: unreachable,

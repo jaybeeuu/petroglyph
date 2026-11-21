@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { SyncProfile } from "@petroglyph/core";
 import type {
-  FeedPage,
+  StagedChange,
+  StagedChangeInput,
+  StagedChangeLog,
   StagedIndexStore,
   StagedObjectStore,
   StagedRecord,
@@ -30,6 +32,7 @@ function profile(overrides: Partial<SyncProfile> = {}): SyncProfile {
 
 const stagedRecord: StagedRecord = {
   profileId: "p1",
+  subscriptionId: "p1",
   itemId: "item-1",
   s3Key: "staging/v1/p1/notes/a.pdf",
   relativePath: "notes",
@@ -80,21 +83,75 @@ class MemoryIndex implements StagedIndexStore {
       this.records.delete(this.key(profileId, record.itemId));
     }
   }
-  queryFeed(options: { profileId: string; limit?: number; cursor?: string }): Promise<FeedPage> {
-    const sorted = [...this.records.values()]
-      .filter((r) => r.profileId === options.profileId)
-      .sort((left, right) => left.itemId.localeCompare(right.itemId));
-    const start =
-      options.cursor === undefined ? 0 : sorted.findIndex((r) => r.itemId === options.cursor) + 1;
-    const limit = options.limit ?? 1000;
-    const records = sorted.slice(start, start + limit);
-    // DDB semantics: LastEvaluatedKey is the last RETURNED key; the next
-    // page resumes exclusively after it.
-    const lastReturned = sorted[start + limit - 1];
+}
+
+/** In-memory change log — the feed's only read path in these tests. */
+class MemoryChangeLog implements StagedChangeLog {
+  readonly changes: StagedChange[] = [];
+
+  append(change: StagedChangeInput): Promise<{ status: "appended" | "duplicate" }> {
+    if (this.changes.some((existing) => existing.changeId === change.changeId)) {
+      return Promise.resolve({ status: "duplicate" });
+    }
+    this.changes.push({ ...change, seq: this.changes.length + 1 });
+    return Promise.resolve({ status: "appended" });
+  }
+
+  read(options: { profileId: string; after?: number; limit?: number }): Promise<StagedChange[]> {
+    const after = options.after ?? 0;
     return Promise.resolve(
-      lastReturned === undefined ? { records } : { records, nextCursor: lastReturned.itemId },
+      this.changes
+        .filter((change) => change.profileId === options.profileId && change.seq > after)
+        .sort((left, right) => left.seq - right.seq)
+        .slice(0, options.limit ?? 100),
     );
   }
+}
+
+/** Stages one item the way the consumer does: a record plus its change-log row. */
+async function stageItem(
+  index: MemoryIndex,
+  changeLog: MemoryChangeLog,
+  options: { itemId: string; profileId?: string; name?: string; eTag?: string },
+): Promise<void> {
+  const profileId = options.profileId ?? "p1";
+  const name = options.name ?? "a.pdf";
+  const eTag = options.eTag ?? "etag-1";
+  index.put({
+    ...stagedRecord,
+    profileId,
+    subscriptionId: profileId,
+    itemId: options.itemId,
+    name,
+    s3Key: `staging/v1/${profileId}/notes/${name}`,
+  });
+  await changeLog.append(
+    createChange({
+      profileId,
+      subscriptionId: profileId,
+      itemId: options.itemId,
+      name,
+      changeId: `${profileId}:${options.itemId}:file:${eTag}`,
+      s3Key: `staging/v1/${profileId}/notes/${name}`,
+    }),
+  );
+}
+
+/** A stage row as the consumer writes it, for a record this test also staged. */
+function createChange(overrides: Partial<StagedChangeInput> = {}): StagedChangeInput {
+  return {
+    profileId: "p1",
+    subscriptionId: "p1",
+    changeId: "p1:item-1:file:etag-1",
+    itemId: "item-1",
+    kind: "stage",
+    relativePath: "notes",
+    name: "a.pdf",
+    mimeType: "application/pdf",
+    s3Key: "staging/v1/p1/notes/a.pdf",
+    recordedAt: "2026-09-01T00:00:00.000Z",
+    ...overrides,
+  };
 }
 
 function objectStoreSpy(): {
@@ -117,8 +174,11 @@ function buildApp(options: {
   profiles: SyncProfile[];
   index: MemoryIndex;
   objectStore: StagedObjectStore;
+  /** Only the tests that assert feed contents stage changes; the rest read an empty log. */
+  changeLog?: MemoryChangeLog;
 }): { app: Hono<{ Variables: FilesRouterVariables }>; listProfiles: ReturnType<typeof vi.fn> } {
   const listProfiles = vi.fn().mockResolvedValue(options.profiles.map((p) => ({ ...p })));
+  const changeLog = options.changeLog ?? new MemoryChangeLog();
   const app = new Hono<{ Variables: FilesRouterVariables }>();
   app.use("*", async (c, next) => {
     c.set("userId", "user-1");
@@ -126,7 +186,12 @@ function buildApp(options: {
   });
   app.route(
     "/",
-    createFilesRouter({ index: options.index, objectStore: options.objectStore, listProfiles }),
+    createFilesRouter({
+      index: options.index,
+      changeLog,
+      objectStore: options.objectStore,
+      listProfiles,
+    }),
   );
   return { app, listProfiles };
 }
@@ -134,12 +199,14 @@ function buildApp(options: {
 describe("GET /files feed", () => {
   it("answers 500 instead of a page that violates the contract the operation declares", async () => {
     const index = new MemoryIndex();
+    const changeLog = new MemoryChangeLog();
     // The feed entry schema requires a non-empty name, so this page is one the
     // registry forbids; in `report` mode it fails the run instead of shipping.
-    index.put({ ...stagedRecord, name: "" });
+    await stageItem(index, changeLog, { itemId: "item-1", name: "" });
     const { app } = buildApp({
       profiles: [profile()],
       index,
+      changeLog,
       objectStore: objectStoreSpy().objectStore,
     });
 
@@ -162,24 +229,27 @@ describe("GET /files feed", () => {
 
   it("returns an empty feed when the active profile is not sync-enabled (M8, read-only)", async () => {
     const index = new MemoryIndex();
-    index.put(stagedRecord);
+    const changeLog = new MemoryChangeLog();
+    await stageItem(index, changeLog, { itemId: "item-1" });
     const { app, listProfiles } = buildApp({
       profiles: [Object.freeze(profile({ enabled: false }))],
       index,
+      changeLog,
       objectStore: objectStoreSpy().objectStore,
     });
 
     const res = await app.request("/files");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ files: [], nextToken: null });
-    // READ-ONLY: the record was read back as-is; the profile record was never written.
-    expect(index.records.size).toBe(1);
+    // READ-ONLY: the change log was read back as-is; the profile was never written.
+    expect(changeLog.changes).toHaveLength(1);
     expect(listProfiles).toHaveBeenCalledWith("user-1");
   });
 
   it("returns an empty feed when no profile is both active and sync-enabled", async () => {
     const index = new MemoryIndex();
-    index.put(stagedRecord);
+    const changeLog = new MemoryChangeLog();
+    await stageItem(index, changeLog, { itemId: "item-1" });
     const { app } = buildApp({
       // Neither candidate qualifies: the first is disabled, the second is inactive.
       profiles: [
@@ -187,6 +257,7 @@ describe("GET /files feed", () => {
         profile({ profileId: "p2", active: false }),
       ],
       index,
+      changeLog,
       objectStore: objectStoreSpy().objectStore,
     });
 
@@ -197,11 +268,13 @@ describe("GET /files feed", () => {
 
   it("serves the active+enabled profile when an earlier active profile is disabled", async () => {
     const index = new MemoryIndex();
-    index.put({ ...stagedRecord, profileId: "p2", itemId: "item-1" });
+    const changeLog = new MemoryChangeLog();
+    await stageItem(index, changeLog, { itemId: "item-1", profileId: "p2" });
     const { app } = buildApp({
       // Listed first, so a scan-order-dependent pick would blank the feed.
       profiles: [profile({ profileId: "p1", enabled: false }), profile({ profileId: "p2" })],
       index,
+      changeLog,
       objectStore: objectStoreSpy().objectStore,
     });
 
@@ -211,24 +284,27 @@ describe("GET /files feed", () => {
     expect(body.files.map((file) => file.itemId)).toEqual(["item-1"]);
   });
 
-  it("serves the active profile's staged records with cursor paging (M1, M7 monitor semantics)", async () => {
+  it("serves the change log in seq order with cursor paging (M1, M7 monitor semantics)", async () => {
     const index = new MemoryIndex();
-    index.put({ ...stagedRecord, itemId: "item-1" });
-    index.put({ ...stagedRecord, itemId: "item-2" });
+    const changeLog = new MemoryChangeLog();
+    await stageItem(index, changeLog, { itemId: "item-2", name: "b.pdf" });
+    await stageItem(index, changeLog, { itemId: "item-1", name: "a.pdf" });
     const { app } = buildApp({
       profiles: [profile()],
       index,
+      changeLog,
       objectStore: objectStoreSpy().objectStore,
     });
 
     const res = await app.request("/files?limit=1");
     const body = (await res.json()) as { files: { itemId: string }[]; nextToken: string | null };
     expect(res.status).toBe(200);
-    expect(body.files.map((f) => f.itemId)).toEqual(["item-1"]);
+    // Appended first, served first — the order is the log's, not itemId's.
+    expect(body.files.map((f) => f.itemId)).toEqual(["item-2"]);
     expect(body.nextToken).not.toBeNull();
 
-    // The feed reflects the index at read time: a new record appears on the next page.
-    index.put({ ...stagedRecord, itemId: "item-3" });
+    // A change logged after this page is served on the next one.
+    await stageItem(index, changeLog, { itemId: "item-3", name: "c.pdf" });
     const next = await app.request(
       `/files?nextToken=${encodeURIComponent(body.nextToken ?? "")}&limit=2`,
     );
@@ -236,17 +312,19 @@ describe("GET /files feed", () => {
       files: { itemId: string }[];
       nextToken: string | null;
     };
-    expect(nextBody.files.map((f) => f.itemId)).toEqual(["item-2", "item-3"]);
+    expect(nextBody.files.map((f) => f.itemId)).toEqual(["item-1", "item-3"]);
   });
 
   it("advances the page when the response cursor is echoed back as nextToken", async () => {
     const index = new MemoryIndex();
-    index.put({ ...stagedRecord, itemId: "item-1" });
-    index.put({ ...stagedRecord, itemId: "item-2" });
-    index.put({ ...stagedRecord, itemId: "item-3" });
+    const changeLog = new MemoryChangeLog();
+    await stageItem(index, changeLog, { itemId: "item-1", name: "a.pdf" });
+    await stageItem(index, changeLog, { itemId: "item-2", name: "b.pdf" });
+    await stageItem(index, changeLog, { itemId: "item-3", name: "c.pdf" });
     const { app } = buildApp({
       profiles: [profile()],
       index,
+      changeLog,
       objectStore: objectStoreSpy().objectStore,
     });
 
@@ -267,27 +345,52 @@ describe("GET /files feed", () => {
     expect(second.status).toBe(200);
     expect(firstBody.files.map((file) => file.itemId)).toEqual(["item-1", "item-2"]);
     expect(secondBody.files.map((file) => file.itemId)).toEqual(["item-3"]);
-    expect(secondBody.nextToken).toBeNull();
+    // The third page reports the cursor caught up, so the client stops asking.
+    const third = await app.request(
+      `/files?limit=2&nextToken=${encodeURIComponent(secondBody.nextToken ?? "")}`,
+    );
+    expect(await third.json()).toEqual({ files: [], nextToken: null });
   });
 
   it("rejects a parameter the feed does not declare, instead of restarting at page 1", async () => {
     const index = new MemoryIndex();
-    index.put({ ...stagedRecord, itemId: "item-1" });
-    index.put({ ...stagedRecord, itemId: "item-2" });
+    const changeLog = new MemoryChangeLog();
+    await stageItem(index, changeLog, { itemId: "item-1" });
     const { app } = buildApp({
       profiles: [profile()],
       index,
+      changeLog,
       objectStore: objectStoreSpy().objectStore,
     });
 
     // `after` is the name this surface used to take: it must be loud now, not stripped.
-    const cursor = encodeFeedCursor({ profileId: "p1", itemId: "item-1" });
+    const cursor = encodeFeedCursor({ profileId: "p1", seq: 1 });
     const res = await app.request(`/files?after=${encodeURIComponent(cursor)}`);
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
       error: "Invalid files query: after is not a supported parameter",
     });
+  });
+
+  it("rejects a cursor from the old itemId-watermark format, so the client resets once", async () => {
+    const { app } = buildApp({
+      profiles: [profile()],
+      index: new MemoryIndex(),
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    // The shape a client stored before the change log existed: base64 of
+    // {profileId, itemId}. It cannot resume a seq-paged feed, so it is a 400 and
+    // the plugin clears it and drains once from the head.
+    const legacy = Buffer.from(
+      JSON.stringify({ profileId: "p1", itemId: "item-1" }),
+      "utf8",
+    ).toString("base64url");
+
+    const res = await app.request(`/files?nextToken=${encodeURIComponent(legacy)}`);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Invalid files cursor" });
   });
 
   it("rejects a cursor bound to a profile the user does not own (auth scoping)", async () => {
@@ -297,7 +400,7 @@ describe("GET /files feed", () => {
       objectStore: objectStoreSpy().objectStore,
     });
 
-    const foreign = encodeFeedCursor({ profileId: "p9", itemId: "item-1" });
+    const foreign = encodeFeedCursor({ profileId: "p9", seq: 1 });
     const res = await app.request(`/files?nextToken=${encodeURIComponent(foreign)}`);
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "Invalid files cursor" });
@@ -310,7 +413,7 @@ describe("GET /files feed", () => {
       objectStore: objectStoreSpy().objectStore,
     });
 
-    const nonActive = encodeFeedCursor({ profileId: "p2", itemId: "item-1" });
+    const nonActive = encodeFeedCursor({ profileId: "p2", seq: 1 });
     const res = await app.request(`/files?nextToken=${encodeURIComponent(nonActive)}`);
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "Invalid files cursor" });

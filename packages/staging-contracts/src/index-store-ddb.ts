@@ -2,32 +2,17 @@ import {
   DeleteCommand,
   GetCommand,
   PutCommand,
-  QueryCommand,
   ScanCommand,
   type DynamoDBDocumentClient,
 } from "@aws-sdk/lib-dynamodb";
 import { stagedRecordSchema, type StagedRecord } from "./record.js";
-import type { FeedPage, StagedIndexStore } from "./index-store.js";
-
-function extractLastEvaluatedItemId(
-  lastEvaluatedKey: { [key: string]: unknown } | undefined,
-): string | undefined {
-  const value = lastEvaluatedKey?.["itemId"];
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "object" && value !== null && "S" in value) {
-    const s = value["S"];
-    return typeof s === "string" ? s : undefined;
-  }
-  return undefined;
-}
+import type { StagedIndexStore } from "./index-store.js";
 
 /**
  * DDB-backed index over staged records: hash {profileId, itemId}, records
- * only after FileStaged applies; removes are idempotent; the feed queries
- * staged rows ordered by itemId with a deterministic cursor (last key).
- * The feed resumes exclusively after the last returned itemId.
+ * only after FileStaged applies; removes are idempotent. There is no feed
+ * query here: the change ORDER a client reads lives in the change log
+ * (`DynamoDBStagedChangeLog`), never in this key.
  *
  * The class names the transport (DynamoDB); the `StagedIndexStore` interface
  * stays the consumer-facing capability, so consumers keep injecting it and
@@ -100,36 +85,5 @@ export class DynamoDBStagedIndexStore implements StagedIndexStore {
         }),
       );
     }
-  }
-
-  async queryFeed(feedOptions: {
-    profileId: string;
-    limit?: number;
-    cursor?: string;
-  }): Promise<FeedPage> {
-    const result = await this.#client.send(
-      new QueryCommand({
-        TableName: this.#tableName,
-        KeyConditionExpression: "profileId = :profileId",
-        ExpressionAttributeValues: { ":profileId": feedOptions.profileId },
-        Limit: feedOptions.limit,
-        ...(feedOptions.cursor === undefined
-          ? {}
-          : {
-              ExclusiveStartKey: {
-                profileId: feedOptions.profileId,
-                itemId: feedOptions.cursor,
-              },
-            }),
-      }),
-    );
-    const records = (result.Items ?? []).map((item) => stagedRecordSchema.parse(item));
-    // DocumentClient returns native values, but stay tolerant of the
-    // marshalled { S } shape — the feed cursor is always a string.
-    const nextItemId = extractLastEvaluatedItemId(result.LastEvaluatedKey);
-    return {
-      records,
-      ...(nextItemId === undefined ? {} : { nextCursor: nextItemId }),
-    };
   }
 }

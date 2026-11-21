@@ -461,6 +461,20 @@ resource "aws_iam_role_policy" "petroglyph_staging_dispatch_policy" {
         Resource = aws_dynamodb_table.staged_records.arn
       },
       {
+        Sid    = "DynamoDBChangeLogAppend"
+        Effect = "Allow"
+        Action = [
+          # The append commits both items as one TransactWriteItems call, which
+          # needs the transaction action as well as the item actions.
+          "dynamodb:TransactWriteItems",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:Query",
+        ]
+        Resource = aws_dynamodb_table.staged_changes.arn
+      },
+      {
         Sid      = "S3DeleteStagedObjects"
         Effect   = "Allow"
         Action   = "s3:DeleteObject"
@@ -655,6 +669,7 @@ resource "aws_iam_role_policy" "petroglyph_staging_delivery_policy" {
         ]
         Resource = [
           aws_dynamodb_table.staged_records.arn,
+          aws_dynamodb_table.staged_changes.arn,
           aws_dynamodb_table.sync_profiles.arn,
         ]
       },

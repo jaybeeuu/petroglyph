@@ -15,6 +15,7 @@ function commandCall(
 function createRecord(overrides: Partial<StagedRecord> = {}): StagedRecord {
   return {
     profileId: "p1",
+    subscriptionId: "subscription-1",
     itemId: "item-1",
     s3Key: "staging/v1/p1/notes/a.pdf",
     relativePath: "notes",
@@ -24,6 +25,24 @@ function createRecord(overrides: Partial<StagedRecord> = {}): StagedRecord {
     status: "staged",
     createdAt: "2026-09-01T00:00:00.000Z",
     ...overrides,
+  };
+}
+
+/**
+ * The row the release before `subscriptionId` shipped wrote: that attribute is
+ * absent, and every row already in the table looks like this.
+ */
+function previousReleaseRow(): { [key: string]: unknown } {
+  return {
+    profileId: "p1",
+    itemId: "item-1",
+    s3Key: "staging/v1/p1/notes/a.pdf",
+    relativePath: "notes",
+    name: "a.pdf",
+    source: "onedrive",
+    mimeType: "application/pdf",
+    status: "staged",
+    createdAt: "2026-09-01T00:00:00.000Z",
   };
 }
 
@@ -65,6 +84,31 @@ describe("DynamoDBStagedIndexStore", () => {
     });
   });
 
+  it("reads a row the previous release wrote without a subscriptionId", async () => {
+    const send = vi.fn().mockResolvedValue({ Item: previousReleaseRow() });
+    const store = new DynamoDBStagedIndexStore({
+      ...options,
+      client: { send } as unknown as DynamoDBDocumentClient,
+    });
+
+    await expect(store.get("p1", "item-1")).resolves.toMatchObject({
+      itemId: "item-1",
+      subscriptionId: "p1",
+    });
+  });
+
+  it("lists a row the previous release wrote without a subscriptionId", async () => {
+    const send = vi.fn().mockResolvedValue({ Items: [previousReleaseRow()] });
+    const store = new DynamoDBStagedIndexStore({
+      ...options,
+      client: { send } as unknown as DynamoDBDocumentClient,
+    });
+
+    await expect(store.listUnderPath("p1", "notes")).resolves.toMatchObject([
+      { itemId: "item-1", subscriptionId: "p1" },
+    ]);
+  });
+
   it("removes a record idempotently", async () => {
     const send = vi.fn().mockResolvedValue({});
     const store = new DynamoDBStagedIndexStore({
@@ -79,36 +123,6 @@ describe("DynamoDBStagedIndexStore", () => {
       TableName: "petroglyph-file-records",
       Key: { profileId: "p1", itemId: "item-1" },
     });
-  });
-
-  it("queries the feed ordered, cursor-paged via ExclusiveStartKey", async () => {
-    const record = createRecord();
-    const send = vi
-      .fn()
-      .mockResolvedValueOnce({
-        Items: [record],
-        LastEvaluatedKey: { profileId: "p1", itemId: "item-1" },
-      })
-      .mockResolvedValueOnce({ Items: [] });
-    const store = new DynamoDBStagedIndexStore({
-      ...options,
-      client: { send } as unknown as DynamoDBDocumentClient,
-    });
-
-    const page1 = await store.queryFeed({ profileId: "p1", limit: 1 });
-    expect(page1.records).toEqual([record]);
-    expect(page1.nextCursor).toBe("item-1");
-
-    const page2 = await store.queryFeed(
-      page1.nextCursor === undefined
-        ? { profileId: "p1", limit: 1 }
-        : { profileId: "p1", limit: 1, cursor: page1.nextCursor },
-    );
-    expect(page2.records).toEqual([]);
-    expect(page2.nextCursor).toBeUndefined();
-
-    const secondInput = commandCall(send, 1).input as { ExclusiveStartKey?: unknown };
-    expect(secondInput.ExclusiveStartKey).toEqual({ profileId: "p1", itemId: "item-1" });
   });
 
   it("lists records under a path and removes them in one sweep", async () => {

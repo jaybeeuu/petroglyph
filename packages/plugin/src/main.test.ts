@@ -1910,6 +1910,45 @@ describe("feed sync", () => {
     );
   });
 
+  it("resets once when the server rejects a cursor from an older internal format", async () => {
+    // A cursor the server minted before the change log existed: base64url of
+    // {profileId, itemId}. The plugin never reads it — it is an opaque string —
+    // so a format change on the server is a 400, and the drain restarts once
+    // from the head of the feed.
+    const legacyCursor = Buffer.from(
+      JSON.stringify({ profileId: "default", itemId: "item-1" }),
+      "utf8",
+    ).toString("base64url");
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      feedCursors: { default: legacyCursor },
+    });
+
+    const requestedUrls: string[] = [];
+    global.fetch = vi.fn((url) => {
+      if (typeof url !== "string" || !url.includes("/files")) {
+        return Promise.resolve({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(new ArrayBuffer(4)),
+        });
+      }
+      requestedUrls.push(url);
+      if (url.includes(`nextToken=${legacyCursor}`)) {
+        return Promise.resolve({ ok: false, status: 400 });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(emptyFeed()) });
+    }) as unknown as typeof fetch;
+
+    await plugin.performSync();
+
+    expect(requestedUrls).toEqual([
+      `https://api.petroglyph.page/files?nextToken=${legacyCursor}`,
+      "https://api.petroglyph.page/files",
+    ]);
+    expect(plugin.data.feedCursors?.["default"]).toBeUndefined();
+  });
+
   it("gives up rather than looping when a cursor is rejected twice", async () => {
     const { plugin } = await makePlugin({
       jwt: "jwt-token",

@@ -5,6 +5,7 @@ import {
   fileStagedEvent,
   type FileDeletedData,
   type FileStagedData,
+  type StagedChangeLog,
   type StagedIndexStore,
   type StagedObjectStore,
 } from "@petroglyph/staging-contracts";
@@ -12,6 +13,8 @@ import { applyDeleted, applyStaged } from "./index-apply.js";
 
 export interface DispatchDependencies {
   index: StagedIndexStore;
+  /** The change log every applied stage and delete appends to. */
+  changeLog: StagedChangeLog;
   objectStore: StagedObjectStore;
   /**
    * Retention applied to newly staged rows, in seconds. Align it with the S3
@@ -71,7 +74,11 @@ export function createDispatchHandler(
       if (stagedResult.success) {
         const staged = stagedResult.data as CloudEvent<FileStagedData>;
         try {
-          await applyStaged(deps.index, staged.data, {
+          await applyStaged({
+            index: deps.index,
+            changeLog: deps.changeLog,
+            changeId: staged.id,
+            data: staged.data,
             ...(deps.ttlSeconds === undefined ? {} : { ttlSeconds: deps.ttlSeconds }),
           });
           log(
@@ -90,7 +97,13 @@ export function createDispatchHandler(
       if (deletedResult.success) {
         const deleted = deletedResult.data as CloudEvent<FileDeletedData>;
         try {
-          await applyDeleted(deps.index, deps.objectStore, deleted.data);
+          await applyDeleted({
+            index: deps.index,
+            objectStore: deps.objectStore,
+            changeLog: deps.changeLog,
+            changeId: deleted.id,
+            data: deleted.data,
+          });
           log(
             `[dispatch] applied petroglyph.file.deleted profileId=${deleted.data.profileId} itemId=${deleted.data.itemId} changeType=${deleted.data.changeType}`,
           );

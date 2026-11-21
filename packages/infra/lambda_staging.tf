@@ -134,6 +134,7 @@ resource "aws_lambda_function" "petroglyph_staging_dispatch" {
   environment {
     variables = {
       FILE_RECORDS_TABLE       = aws_dynamodb_table.staged_records.name
+      STAGED_CHANGES_TABLE     = aws_dynamodb_table.staged_changes.name
       STAGED_PDFS_BUCKET       = aws_s3_bucket.staged_pdfs.id
       STAGED_RETENTION_SECONDS = tostring(var.retention_days * 86400)
     }
@@ -338,6 +339,7 @@ resource "aws_lambda_function" "petroglyph_staging_delivery" {
   environment {
     variables = {
       FILE_RECORDS_TABLE      = aws_dynamodb_table.staged_records.name
+      STAGED_CHANGES_TABLE    = aws_dynamodb_table.staged_changes.name
       SYNC_PROFILES_TABLE     = aws_dynamodb_table.sync_profiles.name
       STAGED_PDFS_BUCKET      = aws_s3_bucket.staged_pdfs.id
       JWT_PUBLIC_KEY_SSM_PATH = aws_ssm_parameter.jwt_public_key.name
