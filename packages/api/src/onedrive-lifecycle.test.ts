@@ -1,4 +1,4 @@
-import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockDbSend = vi.hoisted(() => vi.fn());
@@ -315,7 +315,12 @@ describe("POST /onedrive/lifecycle", () => {
       expect(updateCalls()).toHaveLength(2);
     });
 
-    expect(updateCallsForTable("petroglyph-refresh_tokens-test")).toHaveLength(0);
+    const legacyTableWrites = mockDbSend.mock.calls.filter(
+      ([command]) =>
+        (command instanceof UpdateCommand || command instanceof PutCommand) &&
+        command.input.TableName === "petroglyph-refresh_tokens-test",
+    );
+    expect(legacyTableWrites).toHaveLength(0);
   });
 
   it("marks the user as reconnect_required when token refresh fails", async () => {

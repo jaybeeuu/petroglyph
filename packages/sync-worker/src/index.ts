@@ -302,10 +302,15 @@ async function writeFileRecord(
   );
 }
 
-async function sendIngestMessage(file: GraphDriveFileItem, profileId: string): Promise<void> {
+async function sendIngestMessage(
+  file: GraphDriveFileItem,
+  profileId: string,
+  userId: string,
+): Promise<void> {
   const message = {
     fileId: file.id,
     profileId,
+    userId,
     itemMetadata: {
       id: file.id,
       odataType: file.odataType,
@@ -391,7 +396,7 @@ async function processSyncJob(message: SyncJobMessage): Promise<number> {
       }
 
       await writeFileRecord(file, createdAt, message.profileId);
-      await sendIngestMessage(file, message.profileId);
+      await sendIngestMessage(file, message.profileId, message.userId);
       queued += 1;
     }
 
