@@ -12,4 +12,10 @@ export const feedEntryResponseSchema = z.object({
   mimeType: z.string().min(1),
   s3PresignedUrl: z.string().min(1),
   createdAt: z.string().min(1),
+  /**
+   * The source item's version, so a reader can tell a changed item from an
+   * unchanged one without downloading. Absent when the staged record carries
+   * none, which is every record staged before the field existed.
+   */
+  eTag: z.string().min(1).optional(),
 });

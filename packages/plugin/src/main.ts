@@ -707,9 +707,15 @@ export class PetroglyphPlugin extends Plugin {
   /**
    * Full reset: POST /sync/reset {scope: 'full'} and, when the response confirms
    * the server token was dropped, forget the active profile's cursor AND recorded
-   * versions, so the next sync re-enumerates and re-compares every file. The
-   * server resets one profile, so the local clear covers the same one: the
-   * profile every drain writes under, resolved by {@link resolveProfileId}.
+   * versions, so the next sync re-enumerates and re-compares every file.
+   *
+   * The two scopes do NOT agree off the default profile. The server reset always
+   * targets its own default profile (`packages/api/src/sync-reset.ts`), while the
+   * local clear covers the profile every drain writes under, resolved by
+   * {@link resolveProfileId}. For a user on another profile the server therefore
+   * keeps that profile's delta token and records. Both halves are fail-safe — a
+   * local clear only costs a re-download — so this is a documented asymmetry, not
+   * a coupling. See petroglyph-drck for aligning the two scopes.
    */
   async fullReset(): Promise<void> {
     if (this._data.jwt === undefined) {
@@ -1143,7 +1149,7 @@ export class PetroglyphPlugin extends Plugin {
       }
 
       if (this._data.feedEtags !== undefined) {
-        const profileIds = new Set(profiles.map((p) => p.id));
+        const profileIds = new Set(profiles.map((p) => p.profileId));
         const cleanedEtags: { [profileId: string]: { [itemId: string]: string } } = {};
         for (const [key, val] of Object.entries(this._data.feedEtags)) {
           if (profileIds.has(key)) {

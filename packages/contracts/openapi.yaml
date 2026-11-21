@@ -175,6 +175,9 @@ paths:
                         createdAt:
                           type: string
                           minLength: 1
+                        eTag:
+                          type: string
+                          minLength: 1
                       required:
                         - itemId
                         - name
@@ -333,6 +336,9 @@ paths:
                     type: string
                     minLength: 1
                   createdAt:
+                    type: string
+                    minLength: 1
+                  eTag:
                     type: string
                     minLength: 1
                 required:

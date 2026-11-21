@@ -3478,7 +3478,7 @@ describe("version reconciliation", () => {
     expect(vault.adapter.writeBinary).not.toHaveBeenCalled();
   });
 
-  it("rewrites an item that sorts below the cursor the previous drain reached", async () => {
+  it("rewrites a re-uploaded item on a drain that starts again at the head", async () => {
     const { plugin } = await makePlugin({
       jwt: "jwt-token",
       oneDriveConnected: true,
@@ -3520,8 +3520,9 @@ describe("version reconciliation", () => {
       "https://api.petroglyph.page/files?nextToken=item-z",
     ]);
 
-    // Re-upload: same itemId, new version. The feed serves it from the head,
-    // below the cursor the first drain reached.
+    // Re-upload: same itemId, new version. A completed drain records no cursor
+    // that outlives it, so the next drain starts at the head and is served the
+    // item again.
     version = NEW_VERSION;
     requested.length = 0;
     await plugin.performSync();
