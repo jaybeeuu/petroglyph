@@ -1,7 +1,8 @@
 # API conventions
 
 The response envelope, decided 2026-11-05 (`petroglyph-m0jc.1`). Applies to every
-route on the Petroglyph API, including the staging `/files` surface.
+route on the Petroglyph API, including the staging delivery surface
+(`/profiles/{id}/files`).
 
 ## Payloads are flat
 
