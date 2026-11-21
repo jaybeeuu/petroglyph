@@ -62,7 +62,7 @@ query — the generated spec omits those parameters to match.
 
 Each operation declares the bodies it answers with in `responses`, keyed by HTTP
 status. `defineEndpoint` holds the handler's response to the schema declared for
-that status, after the handler ran. All 21 operations declare `responses` today.
+that status, after the handler ran. All 19 operations declare `responses` today.
 Only a status that writes a body is declared: a 302 redirect and a delete's 204
 carry none, so a schema for them would describe something the handler never
 writes.
@@ -116,6 +116,7 @@ Codes in use:
 | `conflict`           | 409    | the request contradicts current state                |
 | `no_connection`      | 409    | no stored connection for this user/provider          |
 | `reconnect_required` | 409    | the grant is dead; a human must reconnect            |
+| `profile_deleted`    | 410    | the profile is soft-deleted; stop, never prune       |
 | `provider_error`     | 502    | the upstream provider failed                         |
 
 The `unauthorized` row is the target, not what ships today. The shared JWT middleware

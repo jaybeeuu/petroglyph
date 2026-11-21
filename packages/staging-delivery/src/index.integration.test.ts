@@ -20,6 +20,7 @@ const USER_ID = "user-1";
 const ITEM_ID = "item-1";
 const S3_KEY = "staging/v1/p1/notes/a.pdf";
 const PDF_BYTES = new TextEncoder().encode("%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\n%%EOF");
+const DELETED_PROFILE_ID = "p-deleted";
 const PROFILE: SyncProfile = {
   profileId: "p1",
   userId: USER_ID,
@@ -144,6 +145,11 @@ describe("delivery app handler against LocalStack S3 + staged records", () => {
       .sign(privateKey)}`;
 
     await putProfile(dynamo, PROFILES_TABLE, PROFILE);
+    await putProfile(dynamo, PROFILES_TABLE, {
+      ...PROFILE,
+      profileId: DELETED_PROFILE_ID,
+      deletedAt: "2026-11-21T00:00:00.000Z",
+    });
     const index = new DynamoDBStagedIndexStore({ client: dynamo, tableName: FILE_RECORDS_TABLE });
     await index.upsert({
       profileId: "p1",
@@ -165,8 +171,10 @@ describe("delivery app handler against LocalStack S3 + staged records", () => {
     vi.unstubAllEnvs();
   }, 30_000);
 
-  it("GET /files returns the staged feed entry and its presigned URL downloads the real object", async () => {
-    const response = await handler(apiGatewayEvent("GET", "/files", authorization));
+  it("GET /profiles/:id/files returns the staged feed entry and its presigned URL downloads the real object", async () => {
+    const response = await handler(
+      apiGatewayEvent("GET", `/profiles/${PROFILE.profileId}/files`, authorization),
+    );
 
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(response.body) as {
@@ -181,8 +189,10 @@ describe("delivery app handler against LocalStack S3 + staged records", () => {
     expect(new Uint8Array(await downloaded.arrayBuffer())).toEqual(PDF_BYTES);
   }, 60_000);
 
-  it("GET /files/:itemId returns the owned entry and its presigned URL downloads the real object", async () => {
-    const response = await handler(apiGatewayEvent("GET", `/files/${ITEM_ID}`, authorization));
+  it("GET /profiles/:id/files/:itemId returns the owned entry and its presigned URL downloads the real object", async () => {
+    const response = await handler(
+      apiGatewayEvent("GET", `/profiles/${PROFILE.profileId}/files/${ITEM_ID}`, authorization),
+    );
 
     expect(response.statusCode).toBe(200);
     const entry = JSON.parse(response.body) as { itemId: string; s3PresignedUrl: string };
@@ -191,6 +201,19 @@ describe("delivery app handler against LocalStack S3 + staged records", () => {
     const downloaded = await fetch(entry.s3PresignedUrl);
     expect(downloaded.status).toBe(200);
     expect(new Uint8Array(await downloaded.arrayBuffer())).toEqual(PDF_BYTES);
+  }, 60_000);
+
+  it("answers 410 for a soft-deleted profile and 404 for an unknown one", async () => {
+    const deleted = await handler(
+      apiGatewayEvent("GET", `/profiles/${DELETED_PROFILE_ID}/files`, authorization),
+    );
+    expect(deleted.statusCode).toBe(410);
+    expect(JSON.parse(deleted.body)).toMatchObject({ error: { code: "profile_deleted" } });
+
+    const unknown = await handler(
+      apiGatewayEvent("GET", "/profiles/no-such-profile/files", authorization),
+    );
+    expect(unknown.statusCode).toBe(404);
   }, 60_000);
 });
 

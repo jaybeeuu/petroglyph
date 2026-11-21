@@ -5,7 +5,6 @@ import { getAuthCallbackEndpoint } from "./auth-callback.js";
 import { postAuthRefreshEndpoint } from "./auth-refresh.js";
 import type { AppVariables } from "./auth-middleware.js";
 import { getAuthUrlEndpoint } from "./auth-url.js";
-import { getFilesChangesEndpoint } from "./files-changes.js";
 import { getHealthEndpoint } from "./health.js";
 import { bridgeOnedriveCallbackEndpoint, connectOnedriveEndpoint } from "./onedrive-connect.js";
 import { getOnedriveAuthUrlEndpoint } from "./onedrive-auth-url.js";
@@ -15,7 +14,6 @@ import { deleteProfileEndpoint, getProfileEndpoint, putProfileEndpoint } from ".
 import { getStatusEndpoint } from "./status.js";
 import { getSyncJobEndpoint } from "./sync-jobs.js";
 import { resetSyncEndpoint } from "./sync-reset.js";
-import { runSyncEndpoint } from "./sync-run.js";
 import { createSyncTriggerEndpoint, type SyncTriggerDeps } from "./sync-trigger.js";
 
 /** One operation's handler chain: the request validators, then the handler. */
@@ -50,7 +48,6 @@ export function createHandlers(syncTriggerDeps: SyncTriggerDeps): ApiHandlers {
     getAuthCallback: getAuthCallbackEndpoint,
     postAuthRefresh: postAuthRefreshEndpoint,
     getStatus: getStatusEndpoint,
-    getFilesChanges: getFilesChangesEndpoint,
     listProfiles: listProfilesEndpoint,
     createProfile: createProfileEndpoint,
     getProfile: getProfileEndpoint,
@@ -60,8 +57,7 @@ export function createHandlers(syncTriggerDeps: SyncTriggerDeps): ApiHandlers {
     bridgeOnedriveCallback: bridgeOnedriveCallbackEndpoint,
     connectOnedrive: connectOnedriveEndpoint,
     postOnedriveLifecycle: postOnedriveLifecycleEndpoint,
-    postOnedriveSyncTrigger: createSyncTriggerEndpoint(syncTriggerDeps),
-    runSync: runSyncEndpoint,
+    postProfileSyncTrigger: createSyncTriggerEndpoint(syncTriggerDeps),
     resetSync: resetSyncEndpoint,
     getSyncJob: getSyncJobEndpoint,
   };

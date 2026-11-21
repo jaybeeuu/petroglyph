@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** One staged file, as the delivery surface's `/files` feed reports it. */
+/** One staged file, as the delivery surface's files feed reports it. */
 export const feedEntrySchema = z.object({
   itemId: z.string().min(1),
   name: z.string().min(1),
@@ -13,7 +13,7 @@ export const feedEntrySchema = z.object({
 export type FeedEntry = z.infer<typeof feedEntrySchema>;
 
 /**
- * The `/files` page contract. `nextToken` is the opaque page cursor, or null
+ * The profile files page contract. `nextToken` is the opaque page cursor, or null
  * once the feed is exhausted.
  */
 export const filesFeedSchema = z.object({
@@ -23,7 +23,7 @@ export const filesFeedSchema = z.object({
 
 export type FilesFeed = z.infer<typeof filesFeedSchema>;
 
-/** Parses a `/files` response body, or null when it does not match the contract. */
+/** Parses a files-feed response body, or null when it does not match the contract. */
 export function parseFilesFeed(payload: unknown): FilesFeed | null {
   const parsed = filesFeedSchema.safeParse(payload);
   return parsed.success ? parsed.data : null;
