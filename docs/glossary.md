@@ -32,10 +32,10 @@ beads, docs, PRs, and new code — a synonym invented in one place is a concept 
 Two independent flags decide whether a profile runs and whether its files are served.
 
 - `active` selects the profile: its `sourceFolderPath` is the walk's root and its
-  `destinationVaultPath` is where the plugin writes. `POST /profiles` activates the first profile and
-  `PUT /profiles/:id` deactivates the others, so at most one profile is active
-  (`packages/api/src/profiles-crud.ts`); the ingest walk covers the root of every profile that is both
-  `active` and `enabled` (`packages/ingest-onedrive/src/lambda.ts`).
+  `destinationVaultPath` is where the plugin writes. `POST /profiles` activates the first profile
+  (`packages/api/src/profiles.ts`) and `PUT /profiles/:id` deactivates the others, so at most one
+  profile is active (`packages/api/src/profiles-crud.ts`); the ingest walk covers the root of every
+  profile that is both `active` and `enabled` (`packages/ingest-onedrive/src/lambda.ts`).
 - `enabled` marks the profile the delivery feed serves. `GET /files` and `GET /files/{itemId}` scope
   to the first profile that is both `active` and `enabled`.
 
