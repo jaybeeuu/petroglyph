@@ -87,6 +87,9 @@ Onyx Boox Note Air 5C
                                                Obsidian Plugin
 ```
 
+For the per-flow sequence diagrams, both state diagrams and the invariants a reviewer cites, see
+[docs/sync-lifecycle.md](docs/sync-lifecycle.md).
+
 ---
 
 ## Components
