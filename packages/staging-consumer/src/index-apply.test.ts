@@ -167,6 +167,26 @@ describe("applyStaged", () => {
     });
   });
 
+  it("carries the driveItem version onto the record", async () => {
+    const store = memStore();
+
+    await applyStaged(
+      store,
+      { ...staged, eTag: '"{GUID},22"' },
+      { createdAt: "2026-09-01T00:00:00.000Z" },
+    );
+
+    expect(store.records[0]?.eTag).toBe('"{GUID},22"');
+  });
+
+  it("stores no version when the event carries none", async () => {
+    const store = memStore();
+
+    await applyStaged(store, staged, { createdAt: "2026-09-01T00:00:00.000Z" });
+
+    expect(store.records[0]).not.toHaveProperty("eTag");
+  });
+
   it("writes the expiry aligned to the S3 lifecycle when ttlSeconds is configured", async () => {
     const store = memStore();
 

@@ -75,6 +75,24 @@ describe("buildFeed", () => {
     ]);
   });
 
+  it("projects the record's version onto the entry", async () => {
+    const { index } = indexSpy({ records: [{ ...record, eTag: '"{GUID},22"' }] });
+    const { objectStore } = presignSpy();
+
+    const result = await buildFeed({ index, objectStore, profileId: "p1" });
+
+    expect(result.files[0]).toMatchObject({ itemId: "item-1", eTag: '"{GUID},22"' });
+  });
+
+  it("omits the version when the record carries none", async () => {
+    const { index } = indexSpy({ records: [record] });
+    const { objectStore } = presignSpy();
+
+    const result = await buildFeed({ index, objectStore, profileId: "p1" });
+
+    expect(result.files[0]).not.toHaveProperty("eTag");
+  });
+
   it("pages through the index with a limit and passes the next cursor back", async () => {
     const { index, queries } = indexSpy({
       records: [record],

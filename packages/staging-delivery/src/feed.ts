@@ -16,6 +16,11 @@ export interface FeedEntry {
   mimeType: string;
   s3PresignedUrl: string;
   createdAt: string;
+  /**
+   * The source item's version, so a reader can tell "changed" from "unchanged"
+   * without downloading. Absent when the staged record carries none.
+   */
+  eTag?: string;
 }
 
 export interface FeedResult {
@@ -124,5 +129,6 @@ async function entryFromRecord(
     mimeType: record.mimeType,
     s3PresignedUrl,
     createdAt: record.createdAt,
+    ...(record.eTag === undefined ? {} : { eTag: record.eTag }),
   };
 }
