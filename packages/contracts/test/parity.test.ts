@@ -36,7 +36,7 @@ function createFilesRouterSurface(): ReturnType<typeof createFilesRouter> {
       delete: unreachable,
       presignGet: unreachable,
     },
-    listProfiles: unreachable,
+    readProfile: unreachable,
   };
   return createFilesRouter(dependencies);
 }
