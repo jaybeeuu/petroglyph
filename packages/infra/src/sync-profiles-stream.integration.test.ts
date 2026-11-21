@@ -13,8 +13,10 @@ import {
 import {
   DescribeStreamCommand,
   DynamoDBStreamsClient,
+  ExpiredIteratorException,
   GetRecordsCommand,
   GetShardIteratorCommand,
+  type GetRecordsCommandOutput,
   type _Record as DynamoDBStreamRecord,
   type OperationType,
 } from "@aws-sdk/client-dynamodb-streams";
@@ -26,6 +28,28 @@ const CREDENTIALS = { accessKeyId: "test", secretAccessKey: "test" };
 const PORT = 4566;
 const TABLE_NAME = "petroglyph-sync-profiles-stream-int";
 const infraDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * How long a stream record may take to become readable. LocalStack publishes a
+ * record asynchronously, and the CI test job runs every package at once on a
+ * runner that the same load brings to the edge of memory exhaustion: the first
+ * MODIFY record took longer than 18 s there against under a second here. The
+ * wait is a wall-clock deadline rather than a poll count, so a starved runner
+ * gets the same time as an idle one instead of a shorter one.
+ */
+const RECORD_WAIT_BUDGET_MS = 120_000;
+/** Above the wait, so a slow runner reports the wait's message, not a timeout. */
+const RECORD_TEST_TIMEOUT_MS = RECORD_WAIT_BUDGET_MS + 60_000;
+const POLL_INTERVAL_MS = 250;
+/**
+ * The shard iterator is re-created this often. TRIM_HORIZON replays the shard
+ * from its start, so a re-created iterator cannot skip a record that an earlier
+ * one already saw, and an iterator that has stopped yielding new records cannot
+ * hold the wait until the deadline.
+ */
+const ITERATOR_LIFETIME_MS = 10_000;
+/** One GetRecords must not take the whole budget while the service stalls. */
+const POLL_TIMEOUT_MS = 15_000;
 
 /**
  * The stream the deployed table declaration asks DynamoDB to keep, read out of
@@ -93,7 +117,11 @@ function delay(milliseconds: number): Promise<void> {
   });
 }
 
-describe("sync-profiles stream", () => {
+function isAbortedRequest(error: unknown): boolean {
+  return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
+}
+
+describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
   let container: StartedTestContainer;
   let dynamo: DynamoDBClient;
   let streams: DynamoDBStreamsClient;
@@ -153,15 +181,7 @@ describe("sync-profiles stream", () => {
     await container.stop();
   }, 30_000);
 
-  /**
-   * DynamoDB Streams reports no in-process completion signal, so the only way to
-   * await a real record is to poll GetRecords. This polls the real transport; it
-   * does not sleep on a stopwatch.
-   */
-  async function waitForStreamRecord(
-    profileId: string,
-    eventName: OperationType,
-  ): Promise<DynamoDBStreamRecord> {
+  async function openShardIterator(): Promise<string> {
     const { ShardIterator } = await streams.send(
       new GetShardIteratorCommand({
         StreamArn: streamArn,
@@ -172,20 +192,68 @@ describe("sync-profiles stream", () => {
     if (ShardIterator === undefined) {
       throw new Error("GetShardIterator returned no iterator");
     }
-    let iterator = ShardIterator;
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      const page = await streams.send(new GetRecordsCommand({ ShardIterator: iterator }));
-      const match = page.Records?.find(
-        (record) =>
-          record.eventName === eventName && record.dynamodb?.Keys?.["profileId"]?.S === profileId,
-      );
-      if (match !== undefined) {
-        return match;
+    return ShardIterator;
+  }
+
+  /**
+   * DynamoDB Streams reports no in-process completion signal, so the only way to
+   * await a real record is to poll GetRecords. This polls the real transport; it
+   * does not sleep on a stopwatch.
+   */
+  async function waitForStreamRecord(
+    profileId: string,
+    eventName: OperationType,
+  ): Promise<DynamoDBStreamRecord> {
+    const startedAt = Date.now();
+    const deadline = startedAt + RECORD_WAIT_BUDGET_MS;
+    const seen = new Set<string>();
+    let polls = 0;
+    let iterator = await openShardIterator();
+    let iteratorOpenedAt = startedAt;
+
+    while (Date.now() < deadline) {
+      polls += 1;
+      let page: GetRecordsCommandOutput | undefined;
+      try {
+        page = await streams.send(new GetRecordsCommand({ ShardIterator: iterator }), {
+          abortSignal: AbortSignal.timeout(POLL_TIMEOUT_MS),
+        });
+      } catch (error) {
+        if (error instanceof ExpiredIteratorException || isAbortedRequest(error)) {
+          // Start the replay again rather than keep an iterator that no longer
+          // reads: TRIM_HORIZON loses nothing a later poll would have found.
+          iterator = await openShardIterator();
+          iteratorOpenedAt = Date.now();
+          continue;
+        }
+        throw error;
       }
-      iterator = page.NextShardIterator ?? iterator;
-      await delay(250);
+
+      for (const record of page.Records ?? []) {
+        const recordProfileId = record.dynamodb?.Keys?.["profileId"]?.S;
+        if (record.eventName === eventName && recordProfileId === profileId) {
+          return record;
+        }
+        seen.add(`${record.eventName ?? "UNKNOWN"}/${recordProfileId ?? "no-keys"}`);
+      }
+
+      if (
+        page.NextShardIterator === undefined ||
+        Date.now() - iteratorOpenedAt > ITERATOR_LIFETIME_MS
+      ) {
+        iterator = await openShardIterator();
+        iteratorOpenedAt = Date.now();
+      } else {
+        iterator = page.NextShardIterator;
+      }
+      await delay(POLL_INTERVAL_MS);
     }
-    throw new Error(`no ${eventName} stream record was observed for ${profileId}`);
+
+    throw new Error(
+      `no ${eventName} stream record was observed for ${profileId} within ${
+        Date.now() - startedAt
+      } ms and ${polls} polls; records seen: ${seen.size === 0 ? "none" : [...seen].join(", ")}`,
+    );
   }
 
   it("keeps the row as it was before a soft delete on the MODIFY record", async () => {
