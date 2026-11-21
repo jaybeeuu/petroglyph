@@ -71,7 +71,7 @@ sequenceDiagram
 **Today** this is the target, not the code. `onedrive-connect.ts:269-271` also calls
 `registerGraphSubscription` (drive root, `clientState = userId`, id then dropped) and `upsertSyncProfile`
 (`default` profile, `sourceFolderPath: "/"`, `destinationVaultPath: "handwritten"`). Bead
-`petroglyph-bw3p` removes both and is **in flight**: round three, in review.
+`petroglyph-bw3p` removes both and is **in flight**: still in review, not merged.
 
 ## 2. Create a profile — reconcile, subscribe, backfill
 
@@ -171,7 +171,7 @@ sequenceDiagram
   R->>R: an unshared root loses its subscription
 ```
 
-**Today** (`profiles-crud.ts:136-161`) there is no `deletedAt` and no stream on `sync_profiles`. The
+**Today** (`profiles-crud.ts:159-185`) there is no `deletedAt` and no stream on `sync_profiles`. The
 handler hard-deletes the profile row and the legacy `file_records` rows, promotes the newest remaining
 profile to `active`, and answers 204; `staged_records` rows, S3 objects and change-log rows survive as
 unreachable garbage, with the 90-day S3 lifecycle and the row TTL as the only cleanup. There is no job table, no marker
@@ -257,7 +257,8 @@ The things a reviewer checks. Each one is testable against the code named.
 7. **The client's cursor is ours**, opaque, and unaffected by a server-side resync. Holds: the cursor
    is `{ profileId, itemId }`, and a rejected cursor restarts at page one rather than wedging.
 8. **A missed notification is a latency bug, never a data-loss bug.** The 6-hourly sweep and the
-   client's 5-minute poll are independent backstops (`catch-up.ts`, `plugin/src/main.ts:638-646`).
+   client's 5-minute poll are independent backstops (`catch-up.ts`, `plugin/src/main.ts:679-685`,
+   `startSyncPolling`).
 9. **No covering-set or maximal-root logic exists.** Its absence is deliberate: it is Option 2's job
    and the seam that keeps the reversal cheap. A PR that adds one under Option 1 is a defect.
 10. **Nothing outside the vault destination is ever written, and no sync deletes inside it.** Holds
@@ -268,4 +269,4 @@ The things a reviewer checks. Each one is testable against the code named.
 
 At most one profile per user is `active`: activating one deactivates the others, deactivating the
 active profile is a 409, and deleting it promotes the newest remaining profile
-(`profiles-crud.ts:101-161`); `GET /files` scopes to the first profile that is `active` and `enabled`.
+(`profiles-crud.ts:102-185`); `GET /files` scopes to the first profile that is `active` and `enabled`.
