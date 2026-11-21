@@ -214,6 +214,77 @@ describe("GET /files/changes", () => {
     });
   });
 
+  it("serves the live profile's files when the active profile is soft-deleted", async () => {
+    mockDbSend.mockImplementation((command: unknown) => {
+      if (command instanceof QueryCommand) {
+        if (command.input.KeyConditionExpression?.includes("userId")) {
+          return Promise.resolve({
+            Items: [
+              {
+                profileId: "profile-deleted",
+                userId: "user-42",
+                name: "Deleted Profile",
+                sourceFolderPath: "Notes",
+                destinationVaultPath: "vault",
+                pollingIntervalMinutes: 5,
+                enabled: true,
+                active: true,
+                initialSyncEnabled: true,
+                createdAt: "2024-01-01T00:00:00Z",
+                updatedAt: "2024-01-01T00:00:00Z",
+                deletedAt: "2024-02-02T00:00:00Z",
+              },
+              {
+                profileId: "profile-live",
+                userId: "user-42",
+                name: "Live Profile",
+                sourceFolderPath: "Notes",
+                destinationVaultPath: "vault",
+                pollingIntervalMinutes: 5,
+                enabled: true,
+                active: true,
+                initialSyncEnabled: true,
+                createdAt: "2024-01-01T00:00:00Z",
+                updatedAt: "2024-01-01T00:00:00Z",
+              },
+            ],
+          });
+        }
+        if (command.input.KeyConditionExpression?.includes("profileId")) {
+          return Promise.resolve({
+            Items: [
+              {
+                profileId: "profile-live",
+                fileId: "file-live",
+                filename: "live.pdf",
+                createdAt: "2024-01-01T12:00:00.000Z",
+                s3Key: "staging/v1/profile-live/Notes/live.pdf",
+                status: "staged",
+              },
+            ],
+          });
+        }
+      }
+
+      return Promise.reject(new Error("Unexpected DB call"));
+    });
+    mockGetSignedUrl.mockResolvedValue("signed");
+
+    const response = await getChanges("?limit=25");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ files: [{ fileId: "file-live" }] });
+    const fileRecordQuery: unknown = mockDbSend.mock.calls.find(
+      ([command]) =>
+        command instanceof QueryCommand &&
+        command.input.KeyConditionExpression?.includes("profileId"),
+    );
+    expect(
+      (fileRecordQuery as [{ input: { ExpressionAttributeValues: { ":profileId": string } } }])[0]
+        .input.ExpressionAttributeValues,
+    ).toEqual({ ":profileId": "profile-live" });
+  });
+
   it("uses the opaque cursor to continue from the next page", async () => {
     mockDbSend.mockImplementation((command: unknown) => {
       if (command instanceof QueryCommand) {

@@ -25,3 +25,9 @@ await esbuild.build({
   entryPoints: ["src/dispatch-lambda.ts"],
   outfile: "dist/dispatch-lambda.js",
 });
+
+await esbuild.build({
+  ...common,
+  entryPoints: ["src/profile-purge-lambda.ts"],
+  outfile: "dist/profile-purge-lambda.js",
+});

@@ -2,8 +2,9 @@ import { defineOperation } from "../operation.js";
 import { flatErrorSchema } from "../responses/error.js";
 
 /**
- * The handler removes the profile and its records, then answers with no body, so
- * the 204 success is not declared: only the 404 writes a body.
+ * The handler soft-deletes the profile and answers with no body, so no success
+ * schema is declared: only the 404 writes a body. A repeated delete answers 200
+ * again rather than 404, because a retry must not look like a failure.
  */
 export const deleteProfile = defineOperation({
   id: "deleteProfile",

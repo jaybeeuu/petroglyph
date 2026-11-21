@@ -166,6 +166,77 @@ resource "aws_cloudwatch_log_group" "lambda_staging_dispatch" {
 }
 
 # ---------------------------------------------------------------------------
+# Profile purge Lambda: sync_profiles stream → staged rows + staged objects
+# A deleted profile is a soft delete (deletedAt on the row); this janitor owns
+# the cleanup of what the staging domain stores for it. Reuses the
+# staging-consumer artifact (same zip as the forwarder and dispatch).
+# ---------------------------------------------------------------------------
+
+resource "aws_lambda_function" "petroglyph_profile_purge" {
+  count = var.forwarder_zip_s3_bucket != "" ? 1 : 0
+
+  function_name = "petroglyph-profile-purge-${terraform.workspace}"
+
+  s3_bucket = var.forwarder_zip_s3_bucket
+  s3_key    = var.forwarder_zip_s3_key
+
+  runtime = "nodejs24.x"
+  handler = "dist/profile-purge-lambda.handler"
+
+  role    = aws_iam_role.petroglyph_profile_purge_role.arn
+  timeout = 60
+
+  environment {
+    variables = {
+      FILE_RECORDS_TABLE = aws_dynamodb_table.staged_records.name
+      STAGED_PDFS_BUCKET = aws_s3_bucket.staged_pdfs.id
+    }
+  }
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+# The filter is the deletion transition — NewImage carries deletedAt and
+# OldImage does not — so a rename, an edit or a later change to an
+# already-deleted profile never invokes the function. The handler repeats the
+# check, so it stays correct if the filter is ever removed. No retry limit is
+# set: the record is retried until the purge reaches zero, and a purge that hits
+# its object budget deliberately reports a batch item failure to be redelivered.
+resource "aws_lambda_event_source_mapping" "profile_purge_profiles_stream" {
+  count = var.forwarder_zip_s3_bucket != "" ? 1 : 0
+
+  event_source_arn        = aws_dynamodb_table.sync_profiles.stream_arn
+  function_name           = aws_lambda_function.petroglyph_profile_purge[0].arn
+  batch_size              = 10
+  starting_position       = "LATEST"
+  function_response_types = ["ReportBatchItemFailures"]
+
+  filter_criteria {
+    filter {
+      pattern = jsonencode({
+        eventName = ["MODIFY"]
+        dynamodb = {
+          NewImage = { deletedAt = { S = [{ exists = true }] } }
+          OldImage = { deletedAt = { S = [{ exists = false }] } }
+        }
+      })
+    }
+  }
+}
+
+resource "aws_cloudwatch_log_group" "lambda_profile_purge" {
+  count = var.forwarder_zip_s3_bucket != "" ? 1 : 0
+
+  name              = "/aws/lambda/${aws_lambda_function.petroglyph_profile_purge[0].function_name}"
+  retention_in_days = 14
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+# ---------------------------------------------------------------------------
 # OneDrive adapter Lambda (6.5.1.1 flow): delta-trigger FIFO → walk → land →
 # emit to the event log. Same deployment artifact as the webhook receiver
 # (ingest-onedrive zip) but with the dist/lambda.handler entry point.
