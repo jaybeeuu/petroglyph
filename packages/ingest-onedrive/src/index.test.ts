@@ -293,6 +293,7 @@ describe("ingest-onedrive handler", () => {
       JSON.stringify({
         fileId: "file-123",
         profileId: "default",
+        userId: "expected-secret",
         itemMetadata: {
           id: "file-123",
           odataType: "#Microsoft.Graph.DriveItem",

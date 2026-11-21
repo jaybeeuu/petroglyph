@@ -1,15 +1,12 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import {
-  DynamoDBDocumentClient,
-  GetCommand,
-  PutCommand,
-  UpdateCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { SQSBatchResponse, SQSEvent, SQSRecord } from "aws-lambda";
+import { DynamoDBTokenStore, OAuthTokenResolver } from "@petroglyph/core";
+import type { TokenRequestOutcome } from "@petroglyph/core";
 import { z } from "zod";
 
-const TEN_MINUTES_MS = 10 * 60 * 1000;
+const ONEDRIVE_PROVIDER = "onedrive";
 
 let cachedS3Client: S3Client | undefined;
 
@@ -48,6 +45,11 @@ const driveFolderSchema = z.object({
 export const ingestQueueMessageSchema = z.object({
   fileId: z.string().min(1),
   profileId: z.string().min(1),
+  /**
+   * The connection the file belongs to. The token vault is keyed (userId,
+   * provider), so the processor cannot resolve a grant without it.
+   */
+  userId: z.string().min(1),
   itemMetadata: z.object({
     id: z.string().min(1),
     odataType: z.string().min(1),
@@ -68,9 +70,9 @@ const driveItemSchema = z.object({
 });
 
 /**
- * The token lifecycle now lives in @petroglyph/core (token-resolver).
- *
- * @deprecated Deprecated in 6ra.6.1. Do not modify. Dies with the processor at 5.2.3.
+ * The Microsoft token endpoint's success payload. The refresh request itself
+ * stays here because core's resolver takes the transport as a callback; core
+ * owns the rotation, the CAS write and the sticky reconnect flag.
  */
 const tokenResponseSchema = z.object({
   access_token: z.string().min(1),
@@ -78,17 +80,13 @@ const tokenResponseSchema = z.object({
   expires_in: z.number().positive(),
 });
 
+const tokenErrorSchema = z.object({ error: z.string().min(1) });
+
 type GraphDriveItem = z.infer<typeof driveItemSchema>;
 type IngestQueueMessage = z.infer<typeof ingestQueueMessageSchema>;
 
-interface OneDriveParams {
-  accessToken: string;
-  expirySeconds: number;
-  refreshToken: string;
-}
-
-function refreshTokensTable(): string {
-  return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
+function tokenVaultsTableName(): string {
+  return process.env["TOKEN_VAULTS_TABLE"] ?? "petroglyph-token-vaults-default";
 }
 
 function stagedBucketName(): string {
@@ -126,66 +124,19 @@ function buildS3Key(filename: string, parentPath: string): string {
   return [stagedPdfPrefix(), ...extractOneDriveParentPath(parentPath), filename].join("/");
 }
 
-function parseOneDriveParams(value: unknown, userId: string): OneDriveParams {
-  if (typeof value !== "object" || value === null) {
-    throw new Error(`OneDrive token record missing for user ${userId}`);
-  }
-  const item = value as { [key: string]: unknown };
-  if (typeof item["accessToken"] !== "string" || item["accessToken"].length === 0) {
-    throw new Error(`OneDrive accessToken missing for user ${userId}`);
-  }
-  if (typeof item["refreshToken"] !== "string" || item["refreshToken"].length === 0) {
-    throw new Error(`OneDrive refreshToken missing for user ${userId}`);
-  }
-  if (typeof item["expirySeconds"] !== "number") {
-    throw new Error(`OneDrive expirySeconds missing for user ${userId}`);
-  }
-
-  return {
-    accessToken: item["accessToken"],
-    refreshToken: item["refreshToken"],
-    expirySeconds: item["expirySeconds"],
-  };
-}
-
-async function readOneDriveParams(userId: string): Promise<OneDriveParams> {
-  const result = await docClient().send(
-    new GetCommand({
-      TableName: refreshTokensTable(),
-      Key: { tokenHash: userId },
-    }),
-  );
-
-  return parseOneDriveParams(result.Item, userId);
-}
-
-async function persistRefreshedTokens(
-  userId: string,
-  accessToken: string,
-  refreshToken: string,
-  expiresIn: number,
-): Promise<void> {
-  const expirySeconds = Math.floor(Date.now() / 1000) + expiresIn;
-  await docClient().send(
-    new UpdateCommand({
-      TableName: refreshTokensTable(),
-      Key: { tokenHash: userId },
-      UpdateExpression:
-        "SET accessToken = :accessToken, refreshToken = :refreshToken, expirySeconds = :expirySeconds, updatedAt = :updatedAt",
-      ExpressionAttributeValues: {
-        ":accessToken": accessToken,
-        ":refreshToken": refreshToken,
-        ":expirySeconds": expirySeconds,
-        ":updatedAt": new Date().toISOString(),
-      },
-    }),
-  );
-}
-
-async function refreshOneDriveAccessToken(userId: string, refreshToken: string): Promise<string> {
+/**
+ * The only place this Lambda speaks OAuth to Microsoft. Core's resolver owns the
+ * rotation: a successful answer is a CAS write on the vault row the adapter
+ * reads, and a dead grant persists `reconnectRequired` instead of a new token.
+ */
+async function requestMicrosoftTokens(refreshToken: string): Promise<TokenRequestOutcome> {
   const clientId = process.env["MICROSOFT_CLIENT_ID"];
   if (!clientId) {
     throw new Error("MICROSOFT_CLIENT_ID env var not set");
+  }
+  const clientSecret = process.env["MICROSOFT_CLIENT_SECRET"];
+  if (!clientSecret) {
+    throw new Error("MICROSOFT_CLIENT_SECRET env var not set");
   }
 
   const response = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
@@ -195,38 +146,53 @@ async function refreshOneDriveAccessToken(userId: string, refreshToken: string):
     },
     body: new URLSearchParams({
       client_id: clientId,
+      client_secret: clientSecret,
       grant_type: "refresh_token",
       refresh_token: refreshToken,
       scope: "files.readwrite offline_access",
     }).toString(),
   });
 
+  const body: unknown = await response.json();
+
   if (!response.ok) {
+    const failure = tokenErrorSchema.safeParse(body);
+    if (failure.success && failure.data.error === "invalid_grant") {
+      return { kind: "grant-invalid" };
+    }
     throw new Error(`Microsoft token refresh failed: ${response.status} ${response.statusText}`);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy token copy, dies at 5.2.3
-  const parsedResponse = tokenResponseSchema.parse(await response.json());
+  const tokens = tokenResponseSchema.parse(body);
+  return {
+    kind: "success",
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    expiresIn: tokens.expires_in,
+  };
+}
 
-  await persistRefreshedTokens(
-    userId,
-    parsedResponse.access_token,
-    parsedResponse.refresh_token,
-    parsedResponse.expires_in,
-  );
+let cachedTokenResolver: OAuthTokenResolver | undefined;
 
-  return parsedResponse.access_token;
+/**
+ * The connection-keyed resolver over the token vault — the store the OneDrive
+ * adapter also reads, so a rotation here is the token the adapter next sends.
+ */
+function tokenResolver(): OAuthTokenResolver {
+  cachedTokenResolver ??= new OAuthTokenResolver({
+    store: new DynamoDBTokenStore({ client: docClient(), tableName: tokenVaultsTableName() }),
+    now: () => Math.floor(Date.now() / 1000),
+    requestTokens: requestMicrosoftTokens,
+  });
+  return cachedTokenResolver;
 }
 
 async function resolveOneDriveAccessToken(userId: string): Promise<string> {
-  const params = await readOneDriveParams(userId);
-  const millisecondsUntilExpiry = params.expirySeconds * 1000 - Date.now();
-
-  if (millisecondsUntilExpiry > TEN_MINUTES_MS) {
-    return params.accessToken;
+  const outcome = await tokenResolver().resolveAccessToken(userId, ONEDRIVE_PROVIDER);
+  if (outcome.kind !== "success") {
+    throw new Error(`OneDrive grant for user ${userId} requires reconnect`);
   }
-
-  return refreshOneDriveAccessToken(userId, params.refreshToken);
+  return outcome.accessToken;
 }
 
 async function fetchDriveItem(resource: string, accessToken: string): Promise<GraphDriveItem> {
@@ -296,7 +262,7 @@ async function writeFileRecord(
 
 async function processRecord(record: SQSRecord): Promise<void> {
   const message = ingestQueueMessageSchema.parse(JSON.parse(record.body) as unknown);
-  const accessToken = await resolveOneDriveAccessToken(message.profileId);
+  const accessToken = await resolveOneDriveAccessToken(message.userId);
   const driveItem = await resolveDriveItem(message, accessToken);
 
   if (!isPdfDriveItem(driveItem)) {

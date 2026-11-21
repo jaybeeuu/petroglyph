@@ -1,10 +1,12 @@
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { SQSBatchResponse, SQSEvent, SQSRecord } from "aws-lambda";
+import { DynamoDBTokenStore, OAuthTokenResolver } from "@petroglyph/core";
+import type { TokenRequestOutcome } from "@petroglyph/core";
 import { z } from "zod";
 import { docClient } from "./db.js";
 
-const TEN_MINUTES_MS = 10 * 60 * 1000;
+const ONEDRIVE_PROVIDER = "onedrive";
 
 // TTL durations for sync_jobs records, in epoch seconds (DynamoDB TTL expects
 // seconds since epoch). queued jobs are chopped by TTL after 5 minutes as the
@@ -40,6 +42,10 @@ function syncJobsTableName(): string {
   return process.env["SYNC_JOBS_TABLE"] ?? "petroglyph-sync-jobs-default";
 }
 
+function tokenVaultsTableName(): string {
+  return process.env["TOKEN_VAULTS_TABLE"] ?? "petroglyph-token-vaults-default";
+}
+
 function ingestQueueUrl(): string {
   const url = process.env["INGEST_QUEUE_URL"];
   if (!url) {
@@ -49,13 +55,17 @@ function ingestQueueUrl(): string {
 }
 
 /**
- * The token lifecycle now lives in @petroglyph/core (token-resolver).
- *
- * @deprecated Deprecated in 6ra.6.1. Do not modify. Dies with the sync-worker at 5.2.3.
+ * The Microsoft token endpoint's payloads. The request itself stays here because
+ * core's resolver takes the transport as a callback; core owns the rotation, the
+ * CAS write and the sticky reconnect flag.
  */
-function refreshTokensTableName(): string {
-  return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh-tokens-default";
-}
+const tokenResponseSchema = z.object({
+  access_token: z.string().min(1),
+  refresh_token: z.string().min(1),
+  expires_in: z.number().positive(),
+});
+
+const tokenErrorSchema = z.object({ error: z.string().min(1) });
 
 export const syncJobMessageSchema = z.object({
   jobId: z.string().min(1),
@@ -84,52 +94,23 @@ interface UnknownRecord {
   [key: string]: unknown;
 }
 
-interface OneDriveTokens {
-  accessToken: string;
-  refreshToken: string;
-  expirySeconds: number;
-}
-
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function readOneDriveTokens(userId: string): Promise<OneDriveTokens> {
-  const result = await docClient().send(
-    new GetCommand({
-      // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy token copy, dies at 5.2.3
-      TableName: refreshTokensTableName(),
-      Key: { tokenHash: userId },
-    }),
-  );
-
-  const item = result.Item;
-  if (!item || typeof item !== "object") {
-    throw new Error(`OneDrive token record missing for user ${userId}`);
-  }
-
-  const record = item as { [key: string]: unknown };
-  const accessToken = record["accessToken"];
-  const refreshToken = record["refreshToken"];
-  const expirySeconds = record["expirySeconds"];
-
-  if (typeof accessToken !== "string" || accessToken.length === 0) {
-    throw new Error(`OneDrive accessToken missing for user ${userId}`);
-  }
-  if (typeof refreshToken !== "string" || refreshToken.length === 0) {
-    throw new Error(`OneDrive refreshToken missing for user ${userId}`);
-  }
-  if (typeof expirySeconds !== "number") {
-    throw new Error(`OneDrive expirySeconds missing for user ${userId}`);
-  }
-
-  return { accessToken, refreshToken, expirySeconds };
-}
-
-async function refreshOneDriveAccessToken(userId: string, refreshToken: string): Promise<string> {
+/**
+ * The only place this Lambda speaks OAuth to Microsoft. Core's resolver owns the
+ * rotation: a successful answer is a CAS write on the vault row the adapter
+ * reads, and a dead grant persists `reconnectRequired` instead of a new token.
+ */
+async function requestMicrosoftTokens(refreshToken: string): Promise<TokenRequestOutcome> {
   const clientId = process.env["MICROSOFT_CLIENT_ID"];
   if (!clientId) {
     throw new Error("MICROSOFT_CLIENT_ID env var not set");
+  }
+  const clientSecret = process.env["MICROSOFT_CLIENT_SECRET"];
+  if (!clientSecret) {
+    throw new Error("MICROSOFT_CLIENT_SECRET env var not set");
   }
 
   const response = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
@@ -139,51 +120,53 @@ async function refreshOneDriveAccessToken(userId: string, refreshToken: string):
     },
     body: new URLSearchParams({
       client_id: clientId,
+      client_secret: clientSecret,
       grant_type: "refresh_token",
       refresh_token: refreshToken,
       scope: "files.readwrite offline_access",
     }).toString(),
   });
 
+  const body: unknown = await response.json();
+
   if (!response.ok) {
+    const failure = tokenErrorSchema.safeParse(body);
+    if (failure.success && failure.data.error === "invalid_grant") {
+      return { kind: "grant-invalid" };
+    }
     throw new Error(`Microsoft token refresh failed: ${response.status} ${response.statusText}`);
   }
 
-  const data = (await response.json()) as {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
+  const tokens = tokenResponseSchema.parse(body);
+  return {
+    kind: "success",
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    expiresIn: tokens.expires_in,
   };
+}
 
-  const expirySeconds = Math.floor(Date.now() / 1000) + data.expires_in;
-  await docClient().send(
-    new UpdateCommand({
-      // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy token copy, dies at 5.2.3
-      TableName: refreshTokensTableName(),
-      Key: { tokenHash: userId },
-      UpdateExpression:
-        "SET accessToken = :accessToken, refreshToken = :refreshToken, expirySeconds = :expirySeconds, updatedAt = :updatedAt",
-      ExpressionAttributeValues: {
-        ":accessToken": data.access_token,
-        ":refreshToken": data.refresh_token,
-        ":expirySeconds": expirySeconds,
-        ":updatedAt": new Date().toISOString(),
-      },
-    }),
-  );
+let cachedTokenResolver: OAuthTokenResolver | undefined;
 
-  return data.access_token;
+/**
+ * The connection-keyed resolver over the token vault — the store the OneDrive
+ * adapter also reads, so a rotation here is the token the adapter next sends.
+ */
+function tokenResolver(): OAuthTokenResolver {
+  cachedTokenResolver ??= new OAuthTokenResolver({
+    store: new DynamoDBTokenStore({ client: docClient(), tableName: tokenVaultsTableName() }),
+    now: () => Math.floor(Date.now() / 1000),
+    requestTokens: requestMicrosoftTokens,
+  });
+  return cachedTokenResolver;
 }
 
 async function resolveOneDriveAccessToken(userId: string): Promise<string> {
-  const tokens = await readOneDriveTokens(userId);
-  const millisecondsUntilExpiry = tokens.expirySeconds * 1000 - Date.now();
-
-  if (millisecondsUntilExpiry > TEN_MINUTES_MS) {
-    return tokens.accessToken;
+  const outcome = await tokenResolver().resolveAccessToken(userId, ONEDRIVE_PROVIDER);
+  if (outcome.kind !== "success") {
+    throw new Error(`OneDrive grant for user ${userId} requires reconnect`);
   }
-
-  return refreshOneDriveAccessToken(userId, tokens.refreshToken);
+  return outcome.accessToken;
 }
 
 async function readDeltaToken(profileId: string): Promise<string | undefined> {

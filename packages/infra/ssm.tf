@@ -6,6 +6,13 @@ data "aws_ssm_parameter" "onedrive_client_id" {
   name = aws_ssm_parameter.onedrive_client_id.name
 }
 
+# The client secret is the second half of the OAuth token exchange. The processor
+# and sync-worker refresh through the token vault, so both need it at plan time
+# for the same reason as the client id.
+data "aws_ssm_parameter" "onedrive_client_secret" {
+  name = aws_ssm_parameter.onedrive_client_secret.name
+}
+
 resource "aws_ssm_parameter" "github_client_id" {
   name  = "${local.ssm_parameter_prefix}/github/client-id"
   type  = "SecureString"
