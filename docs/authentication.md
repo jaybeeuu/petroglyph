@@ -346,6 +346,8 @@ interface SyncProfile {
 
 Profiles can be created, edited, and deleted from the plugin's Obsidian settings panel. Each operation calls the corresponding API endpoint (`POST /profiles`, `PATCH /profiles/:id`, `DELETE /profiles/:id`) and then refreshes the local state via `loadProfiles()`.
 
+A connected user with no profile is a normal state, because connect establishes the connection only. The settings panel and a manual sync both show `No profiles yet - create one to start syncing`, and the plugin syncs nothing until the user creates a profile.
+
 On deletion, `activeProfileId` is cleared locally _before_ `loadProfiles()` is called. This ordering is deliberate: `loadProfiles()` uses the locally-stored ID as a fallback when the API returns no `active: true` profile, so clearing it first ensures the deleted profile is not silently re-applied by the fallback path.
 
 ### Device Behaviour
@@ -362,14 +364,14 @@ On deletion, `activeProfileId` is cleared locally _before_ `loadProfiles()` is c
 
 ### `users`
 
-| Attribute                  | Type        | Description                                                                                                                  |
-| -------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `userId`                   | String (PK) | GitHub user ID                                                                                                               |
-| `githubUsername`           | String      | GitHub login name                                                                                                            |
-| `oneDriveStatus`           | String      | `connected` \| `reconnect_required` \| `never_connected`                                                                     |
-| `hasProfile`               | Boolean     | `true` while the user has at least one `sync_profiles` row; `POST /profiles` sets it and deleting the last profile clears it |
-| `oneDriveDisconnectReason` | String?     | `expired` \| `revoked` \| `error`                                                                                            |
-| `createdAt`                | String      | ISO 8601                                                                                                                     |
+| Attribute                  | Type        | Description                                                                                                                                                                                              |
+| -------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `userId`                   | String (PK) | GitHub user ID                                                                                                                                                                                           |
+| `githubUsername`           | String      | GitHub login name                                                                                                                                                                                        |
+| `oneDriveStatus`           | String      | Stored values are `connected` and `reconnect_required`. `GET /status` derives `never_connected` from an absent connection and `connected_no_profile` when `hasProfile` is not `true`; it stores neither. |
+| `hasProfile`               | Boolean     | `true` while the user has at least one `sync_profiles` row; `POST /profiles` sets it and deleting the last profile clears it                                                                             |
+| `oneDriveDisconnectReason` | String?     | `expired` \| `revoked` \| `error`                                                                                                                                                                        |
+| `createdAt`                | String      | ISO 8601                                                                                                                                                                                                 |
 
 ### `refresh_tokens`
 
