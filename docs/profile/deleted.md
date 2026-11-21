@@ -20,15 +20,17 @@ The row is retained for audit. There is no undelete path through the API.
 `getProfile` returns `null` for a soft-deleted row and `listProfiles` drops soft-deleted rows.
 Every reader composes those two functions, so no caller can forget:
 
-| Reader                                    | Path                                                                                |
-| ----------------------------------------- | ----------------------------------------------------------------------------------- |
-| `GET /profiles`                           | `listProfiles`                                                                      |
-| `GET`/`PUT /profiles/:id`                 | `getProfile` → `404`                                                                |
-| `DELETE /profiles/:id`                    | `readProfileRow` → `200` when already deleted                                       |
-| `GET /files/changes` active-profile scope | `listProfiles`                                                                      |
-| `GET /files` (delivery feed)              | `listProfiles`                                                                      |
-| profile creation's `isFirst` check        | `listProfiles`, so a deleted profile cannot suppress `active: true` on the next one |
-| the ingest walk's profile list            | `listProfiles`                                                                      |
+| Reader                                    | Path                                                                                 |
+| ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| `GET /profiles`                           | `listProfiles`                                                                       |
+| `GET`/`PUT /profiles/:id`                 | `getProfile` → `404`                                                                 |
+| `DELETE /profiles/:id`                    | `readProfileRow` → `200` when already deleted                                        |
+| `GET /files/changes` active-profile scope | `listProfiles`                                                                       |
+| `GET /files` (delivery feed)              | `listProfiles`                                                                       |
+| `POST /sync/run` active-profile scope     | `listProfiles`                                                                       |
+| `GET /status`                             | raw row + `isProfileDeleted`, because it reads the out-of-schema `oneDriveConnected` |
+| profile creation's `isFirst` check        | `listProfiles`, so a deleted profile cannot suppress `active: true` on the next one  |
+| the ingest walk's profile list            | `listProfiles`                                                                       |
 
 ## Unreachability comes before cleanup
 
@@ -84,8 +86,10 @@ same keys. Deleting a row first would strand an object with nothing left to name
 
 The delete uses the stored `s3Key`, as every other reader does. Before deleting, the janitor checks
 that the key sits under `deriveStagingPrefix({profileId})` — the single prefix function in
-`packages/staging-contracts/src/keys.ts`. A key that does not match is logged and skipped, so a
-corrupt row can never delete another profile's object.
+`packages/staging-contracts/src/keys.ts`. A key that does not match is logged and its object is left
+alone, so a corrupt row can never delete another profile's object. The row is deleted anyway: it is
+unreachable garbage, and the layout version is part of the key, so a version bump alone puts every
+older row in that state. Keeping the row would stop the pass from ever reaching zero.
 
 ## At least once, and idempotent
 

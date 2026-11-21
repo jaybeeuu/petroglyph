@@ -157,9 +157,11 @@ describe("purgeStagedStorageForProfile", () => {
 
     await purgeStagedStorageForProfile(fixture, "p1");
 
-    expect(fixture.operations).toEqual([]);
+    // The object is never touched, but the row still goes: it is unreachable
+    // garbage, and leaving it would keep the pass short of zero for ever.
+    expect(fixture.operations).toEqual(["delete-row:item-1"]);
     expect(fixture.objectKeys()).toEqual([foreignKey]);
-    expect(fixture.remainingRows("p1")).toHaveLength(1);
+    expect(fixture.remainingRows("p1")).toEqual([]);
   });
 
   it("stops at the object budget and the next pass reaches zero", async () => {

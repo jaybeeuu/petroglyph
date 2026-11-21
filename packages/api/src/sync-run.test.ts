@@ -58,7 +58,7 @@ describe("POST /sync/run", () => {
     });
   }
 
-  function mockOneDriveDb(): void {
+  function mockOneDriveDb(profileOverrides: { [field: string]: unknown } = {}): void {
     mockDbSend.mockImplementation((command: unknown) => {
       if (command instanceof GetCommand) {
         return Promise.resolve({ Item: undefined });
@@ -83,6 +83,7 @@ describe("POST /sync/run", () => {
                 initialSyncEnabled: true,
                 createdAt: "2026-01-01T00:00:00Z",
                 updatedAt: "2026-01-01T00:00:00Z",
+                ...profileOverrides,
               },
             ],
           });
@@ -198,5 +199,17 @@ describe("POST /sync/run", () => {
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: string };
     expect(body.error).toBe("No active profile configured");
+  });
+
+  it("does not dispatch a sync when the active profile is soft-deleted", async () => {
+    mockOneDriveDb({ deletedAt: "2026-11-20T00:00:00Z" });
+
+    const response = await postSyncRun();
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBe("No active profile configured");
+    const putCalls = mockDbSend.mock.calls.filter(([command]) => command instanceof PutCommand);
+    expect(putCalls).toHaveLength(0);
   });
 });

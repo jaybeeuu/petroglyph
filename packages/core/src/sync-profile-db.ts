@@ -3,6 +3,18 @@ import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { syncProfileSchema } from "./sync-profile.js";
 import type { SyncProfile } from "./sync-profile.js";
 
+/**
+ * True when a profile row carries a deletion timestamp, whether the caller holds
+ * a parsed profile or the raw item. `getProfile` and `listProfiles` apply it so
+ * no caller can forget; a reader that must see an attribute outside
+ * {@link syncProfileSchema} — `GET /status` reads the connect path's
+ * `oneDriveConnected` — reads the raw row and asks this function, so the
+ * exclusion still comes from this module.
+ */
+export function isProfileDeleted(row: { readonly deletedAt?: unknown }): boolean {
+  return row.deletedAt !== undefined;
+}
+
 export async function getProfile(
   client: DynamoDBDocumentClient,
   tableName: string,
@@ -11,7 +23,7 @@ export async function getProfile(
 ): Promise<SyncProfile | null> {
   const row = await readProfileRow(client, tableName, userId, profileId);
 
-  return row === null || row.deletedAt !== undefined ? null : row;
+  return row === null || isProfileDeleted(row) ? null : row;
 }
 
 /**
@@ -67,7 +79,7 @@ export async function listProfiles(
 
   return items
     .map((item) => syncProfileSchema.parse(item))
-    .filter((profile) => profile.deletedAt === undefined);
+    .filter((profile) => !isProfileDeleted(profile));
 }
 
 /**
