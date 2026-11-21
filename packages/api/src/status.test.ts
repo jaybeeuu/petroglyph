@@ -201,6 +201,30 @@ describe("GET /status", () => {
       expect(body.oneDriveStatus).toBe("connected");
     });
 
+    it("reports never_connected when the SyncProfile row carries deletedAt", async () => {
+      mockStatusReads({
+        syncProfileItem: {
+          userId: "user-42",
+          profileId: "default",
+          oneDriveConnected: true,
+          deletedAt: "2026-11-20T00:00:00Z",
+        },
+      });
+      const token = await makeValidToken();
+
+      const res = await app.request("/status", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        oneDrive: { connected: boolean };
+        oneDriveStatus: string;
+      };
+      expect(body.oneDrive.connected).toBe(false);
+      expect(body.oneDriveStatus).toBe("never_connected");
+    });
+
     it("normalizes disconnected from the user record to reconnect_required", async () => {
       mockStatusReads({
         syncProfileItem: {

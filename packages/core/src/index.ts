@@ -3,6 +3,7 @@ export type { SyncProfile } from "./sync-profile.js";
 export { normalizeSourceFolderPath } from "./source-folder-path.js";
 export {
   getProfile,
+  isProfileDeleted,
   readProfileRow,
   listProfiles,
   putProfile,

@@ -36,8 +36,10 @@ export interface ProfilePurgeOptions {
  *
  * Keys come from the record, as every other reader takes them, and are only
  * deleted when they sit under {@link deriveStagingPrefix} for this profile: a
- * row that names another profile's object is logged and skipped rather than
- * followed.
+ * row that names another profile's object is logged, its object is left alone,
+ * and the row is deleted anyway. The row is unreachable garbage either way, and
+ * keeping it would hold the pass short of zero for ever — the layout version is
+ * part of the key, so a version bump alone puts every older row in this state.
  *
  * Idempotent: a missing object, a missing row and an empty page are all success,
  * so a redelivered stream record re-runs the same keyed deletes.
@@ -67,8 +69,9 @@ export async function purgeStagedStorageForProfile(
       }
       if (!record.s3Key.startsWith(prefix)) {
         log(
-          `[profile-purge] staged key outside ${prefix} for ${profileId}, not deleting: ${record.s3Key}`,
+          `[profile-purge] staged key outside ${prefix} for ${profileId}, deleting the row only: ${record.s3Key}`,
         );
+        await options.index.remove(profileId, record.itemId);
         continue;
       }
       await options.objectStore.delete(record.s3Key);
