@@ -464,6 +464,9 @@ resource "aws_iam_role_policy" "petroglyph_staging_dispatch_policy" {
         Sid    = "DynamoDBChangeLogAppend"
         Effect = "Allow"
         Action = [
+          # The append commits both items as one TransactWriteItems call, which
+          # needs the transaction action as well as the item actions.
+          "dynamodb:TransactWriteItems",
           "dynamodb:PutItem",
           "dynamodb:DeleteItem",
           "dynamodb:UpdateItem",
