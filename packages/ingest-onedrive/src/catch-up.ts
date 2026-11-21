@@ -2,7 +2,7 @@ import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { createDeltaTriggerSend, type DeltaTrigger } from "@petroglyph/contracts";
-import { DynamoDBTokenStore } from "./tokens/token-store-ddb.js";
+import { DynamoDBTokenStore } from "@petroglyph/core";
 
 /**
  * SQS keeps a deduplication id for five minutes from the send, and no longer.

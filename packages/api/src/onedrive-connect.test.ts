@@ -323,42 +323,20 @@ describe("POST /onedrive/connect", () => {
     expect(res.status).toBe(502);
   });
 
-  // ── Behaviour 6: tokens stored in SSM ───────────────────────────────────
+  // ── Behaviour 6: the vault is the only writer ──────────────────────────
 
-  it("stores access token, refresh token, and expiry in DynamoDB refresh_tokens table", async () => {
+  it("writes no OneDrive token to the legacy refresh_tokens table", async () => {
     setupDynamoMock(makeStateItem());
     setupFetchMock();
 
-    const before = Math.floor(Date.now() / 1000);
     await postConnect({ code: VALID_CODE, state: VALID_STATE });
-    const after = Math.floor(Date.now() / 1000);
 
-    const updateCalls = mockDbSend.mock.calls.filter(([cmd]) => cmd instanceof UpdateCommand);
-    const [tokenCmd] = updateCalls[0] as [
-      {
-        input: {
-          TableName: string;
-          Key: { tokenHash: string };
-          UpdateExpression: string;
-          ExpressionAttributeValues: {
-            ":accessToken": string;
-            ":refreshToken": string;
-            ":expirySeconds": number;
-            ":now": string;
-          };
-        };
-      },
-    ];
-
-    expect(tokenCmd.input.TableName).toBe("petroglyph-refresh_tokens-test");
-    expect(tokenCmd.input.Key.tokenHash).toBe(USER_ID);
-    expect(tokenCmd.input.ExpressionAttributeValues[":accessToken"]).toBe(MS_ACCESS_TOKEN);
-    expect(tokenCmd.input.ExpressionAttributeValues[":refreshToken"]).toBe(MS_REFRESH_TOKEN);
-
-    const expirySeconds = tokenCmd.input.ExpressionAttributeValues[":expirySeconds"];
-    expect(expirySeconds).toBeGreaterThanOrEqual(before + MS_EXPIRES_IN);
-    expect(expirySeconds).toBeLessThanOrEqual(after + MS_EXPIRES_IN);
-    expect(typeof tokenCmd.input.ExpressionAttributeValues[":now"]).toBe("string");
+    const legacyTokenWrites = mockDbSend.mock.calls.filter(
+      ([cmd]) =>
+        (cmd instanceof UpdateCommand || cmd instanceof PutCommand) &&
+        cmd.input.TableName === "petroglyph-refresh_tokens-test",
+    );
+    expect(legacyTokenWrites).toHaveLength(0);
   });
 
   // ── Behaviour 6b: connection token vault seeded ─────────────────────────
@@ -467,16 +445,10 @@ describe("POST /onedrive/connect", () => {
     await postConnect({ code: VALID_CODE, state: VALID_STATE });
 
     const updateCalls = mockDbSend.mock.calls.filter(([cmd]) => cmd instanceof UpdateCommand);
-    expect(updateCalls).toHaveLength(3); // tokens + sync profile + markConnected
-
-    // token store
-    const [tokenCmd] = updateCalls[0] as [
-      { input: { TableName: string; Key: { tokenHash: string } } },
-    ];
-    expect(tokenCmd.input.TableName).toBe("petroglyph-refresh_tokens-test");
+    expect(updateCalls).toHaveLength(2); // sync profile + markConnected
 
     // sync profile
-    const [syncProfileCmd] = updateCalls[1] as [
+    const [syncProfileCmd] = updateCalls[0] as [
       {
         input: {
           TableName: string;
@@ -506,7 +478,7 @@ describe("POST /onedrive/connect", () => {
     expect(syncProfileCmd.input.UpdateExpression).toContain("pollingIntervalMinutes");
 
     // markConnected
-    const [userCmd] = updateCalls[2] as [
+    const [userCmd] = updateCalls[1] as [
       {
         input: {
           TableName: string;

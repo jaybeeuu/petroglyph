@@ -1,8 +1,8 @@
 import { GetCommand, PutCommand, ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { tokenRecordSchema } from "@petroglyph/core";
-import type { TokenRecord, TokenStore } from "@petroglyph/core";
 import { z } from "zod";
+import { tokenRecordSchema } from "./token-store.js";
+import type { TokenRecord, TokenStore } from "./token-store.js";
 
 export { tokenRecordSchema };
 

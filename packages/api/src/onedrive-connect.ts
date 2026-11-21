@@ -114,30 +114,6 @@ async function exchangeCodeForTokens(
   return parseMicrosoftTokenResponse(await response.json());
 }
 
-async function storeTokensInDynamoDB(
-  userId: string,
-  accessToken: string,
-  refreshToken: string,
-  expiresIn: number,
-): Promise<void> {
-  const expirySeconds = Math.floor(Date.now() / 1000) + expiresIn;
-
-  await docClient().send(
-    new UpdateCommand({
-      TableName: refreshTokensTable(),
-      Key: { tokenHash: userId },
-      UpdateExpression:
-        "SET accessToken = :accessToken, refreshToken = :refreshToken, expirySeconds = :expirySeconds, updatedAt = :now",
-      ExpressionAttributeValues: {
-        ":accessToken": accessToken,
-        ":refreshToken": refreshToken,
-        ":expirySeconds": expirySeconds,
-        ":now": new Date().toISOString(),
-      },
-    }),
-  );
-}
-
 async function upsertSyncProfile(userId: string): Promise<void> {
   const now = new Date().toISOString();
   await docClient().send(
@@ -252,13 +228,6 @@ export const connectOnedriveEndpoint = defineEndpoint(
     }
 
     console.info("[onedrive-connect] Microsoft token exchange succeeded", { userId });
-    await storeTokensInDynamoDB(
-      userId,
-      tokens.access_token,
-      tokens.refresh_token,
-      tokens.expires_in,
-    );
-    console.info("[onedrive-connect] Stored Microsoft tokens in DynamoDB", { userId });
     await writeInitialConnectionTokens(docClient(), {
       userId,
       accessToken: tokens.access_token,

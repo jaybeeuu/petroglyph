@@ -1,5 +1,5 @@
-import { GetCommand, PutCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { tokenRecordSchema, type TokenRecord } from "@petroglyph/core";
+import { GetCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBTokenStore, tokenRecordSchema, type TokenRecord } from "@petroglyph/core";
 
 /** The provider half of the connection key — OneDrive is the only adapter today. */
 export const ONEDRIVE_PROVIDER = "onedrive";
@@ -16,15 +16,21 @@ export interface InitialConnectionTokens {
 }
 
 /**
+ * The connection-keyed vault store. One class writes a connection's refresh
+ * token, and the OneDrive adapter resolves its grant through the same class, so
+ * a rotation is visible to every reader.
+ */
+export function connectionTokenStore(client: DynamoDBDocumentClient): DynamoDBTokenStore {
+  return new DynamoDBTokenStore({ client, tableName: tokenVaultsTableName() });
+}
+
+/**
  * Seeds the connection-keyed token vault from an OAuth consent.
  *
  * The OneDrive adapter resolves the grant from this row; without it a consent
  * is invisible to the data path and every resolve fast-fails as
  * `reconnectRequired`. A blind put is correct here: `/connect` is the only
  * bootstrap writer, and the row it writes clears any sticky reconnect flag.
- *
- * The legacy `refresh_tokens` record is written alongside this one until
- * Delivery 3 retires the old copies.
  */
 export async function writeInitialConnectionTokens(
   client: DynamoDBDocumentClient,
@@ -39,12 +45,7 @@ export async function writeInitialConnectionTokens(
     reconnectRequired: false,
   });
 
-  await client.send(
-    new PutCommand({
-      TableName: tokenVaultsTableName(),
-      Item: { userId: tokens.userId, provider: ONEDRIVE_PROVIDER, ...record },
-    }),
-  );
+  await connectionTokenStore(client).write(tokens.userId, ONEDRIVE_PROVIDER, record);
 }
 
 /**
