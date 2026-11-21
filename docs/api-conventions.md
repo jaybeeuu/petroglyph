@@ -23,6 +23,17 @@ back verbatim as `?nextToken=`; never parse it, never derive it. `nextToken` kee
 its name — it is already implemented, the token is opaque, and renaming it to
 `next_page_token` would be a client change for no gain.
 
+For the `/files` feed the token carries the last `seq` the client read from the staging
+change log, not a provider token and not an `itemId`. Three consequences follow:
+
+- A re-staged file appends a new `seq`, so a client behind that `seq` is served the
+  file again. A deleted file advances the token without being served.
+- No response returns a OneDrive `deltaLink`, a `nextLink`, or an item `eTag` as a
+  cursor. A server-side delta reset therefore leaves every client token valid.
+- A token this release cannot decode, including one minted before the change log,
+  answers `400` with `Invalid files cursor`. The client restarts the drain once
+  from the head; the reset happens once and no client migrates.
+
 ## `meta` is reserved
 
 `meta` is for cross-cutting data only — request correlation, deprecation notices.

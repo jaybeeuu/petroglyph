@@ -20,11 +20,15 @@ beads, docs, PRs, and new code — a synonym invented in one place is a concept 
 | **Profile**            | A sync job: source provider + source directory + destination directory, running over one connection, with `active`/`enabled`. | Keyed `profileId` (`{profileId, userId, source, active, enabled, config?}`); emits events with `source: onedrive://profiles/<profileId>`. Multiple profiles share one connection's tokens.                                                            |
 | **Source folder path** | The provider folder a profile syncs from, stored as `sourceFolderPath`.                                                       | Stored in canonical form — no leading or trailing slash, no repeated slashes (`/notes/a/` → `notes/a`). `/` is the whole drive, `""` is rejected; a leading slash can never match a delta `relativePath`, which is always relative to the drive root. |
 | **Grant**              | The OAuth credential (access + refresh + expiry) held for a connection.                                                       | Microsoft rotates refresh tokens on **every** refresh — a rotated-out copy is dead (`invalid_grant`). Tokens are keyed by connection, never per profile.                                                                                              |
+| **Change log**         | The append-only record of every stage and every delete for a sync unit, in `seq` order.                                       | Owns the order the `/files` feed serves. A re-staged item appends a new row, so a client behind the cursor is served it again. A delete row advances the cursor and is not served, because removing a vault file is still undecided.                  |
+| **Seq**                | One change's monotonic position in a sync unit's change log.                                                                  | Allocated from a per-profile counter, so a late or retried change always lands last. A redelivery reuses its change id and appends nothing, so it consumes no `seq`. The feed cursor is the last `seq` a client read.                                 |
+| **Sync unit**          | Whatever one change log and one `seq` series belong to.                                                                       | A profile today; every row also carries `subscriptionId`, so the unit can become a subscription later as a key change.                                                                                                                                |
 
 ## Sentence checks
 
 - A **user** holds a **connection** to a **provider**; the connection owns the **grant**.
 - A **profile** is a scheduled job over one connection; it never holds tokens.
+- A **profile** is a **sync unit**, so it owns one **change log**; the provider's delta token is never a client cursor.
 - `userId` is Petroglyph-internal; a provider account id is a different namespace.
 
 ## Profile selection
