@@ -76,6 +76,15 @@ resource "aws_dynamodb_table" "sync_profiles" {
     type = "S"
   }
 
+  # The profile row is the only desired state (decision 5), so its stream record
+  # is the trigger: an INSERT publishes the need for a subscription, and a
+  # MODIFY on a soft delete publishes the need to remove it and purge what it
+  # staged. NEW_AND_OLD_IMAGES is required, not cosmetic — the soft-delete
+  # filter reads the old image to tell a change from a deletion, and the purge
+  # reads the pre-change row for the source root.
+  stream_enabled   = true
+  stream_view_type = "NEW_AND_OLD_IMAGES"
+
   tags = {
     environment = terraform.workspace
   }
