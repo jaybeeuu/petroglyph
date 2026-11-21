@@ -36,19 +36,20 @@ export type FeedDrainFailure =
   | "network"
   | "stalled"
   | "destination"
+  | "deleted"
   | "files";
 
 /** Failures whose notice does not depend on how many files failed. */
 type FeedFailure = Exclude<FeedDrainFailure, "files">;
 
-/** Outcome of draining the `/files` feed: how many files synced, and how many failed. */
+/** Outcome of draining a profile's files feed: how many files synced, and how many failed. */
 export type FeedDrain = { synced: number; failed: number } & (
   | { ok: true }
   | { ok: false; reason: FeedDrainFailure }
 );
 
 /**
- * What POST /onedrive/sync-trigger means for the sync. "failed" is a request the
+ * What POST /profiles/:id/sync-trigger means for the sync. "failed" is a request the
  * plugin could not complete or could not read; the drain still runs because the
  * server may have walked OneDrive anyway. "refused" carries the server's own
  * message and stops the sync. "stop" means the request was never made.
@@ -79,6 +80,9 @@ export const SYNC_RECHECK_DELAY_MS = 2500;
  * target: a slow drain pushes the whole wait past it.
  */
 export const SYNC_RECHECK_ATTEMPTS = 2;
+
+/** Shown when a profile-scoped route answers `410`: stop, never prune. */
+const PROFILE_DELETED_NOTICE = "Sync stopped: this profile was deleted";
 
 /** Shown when the trigger was accepted but no file arrived before the cap. */
 const SYNC_REQUESTED_NOTICE = "Sync requested - new files will arrive on the next poll";
@@ -135,6 +139,7 @@ const FEED_FAILURE_NOTICES: { [reason in FeedFailure]: string } = {
   network: "Sync failed: network or server error",
   stalled: "Sync failed: files feed did not finish",
   destination: "Sync failed: destination path is not inside the vault",
+  deleted: PROFILE_DELETED_NOTICE,
 };
 
 /** The notice shown when some files failed to download or write. */
@@ -230,7 +235,7 @@ export class PetroglyphPlugin extends Plugin {
     }
   }
   /**
-   * Manually sync the vault: POST /onedrive/sync-trigger, then drain GET /files
+   * Manually sync the vault: POST /profiles/:id/sync-trigger, then drain GET /profiles/:id/files
    * from the stored cursor and report the outcome. The trigger only enqueues one
    * OneDrive walk, so a document saved a moment ago is usually not in the feed
    * yet: when the first drain staged nothing, the feed is drained again a couple
@@ -316,7 +321,7 @@ export class PetroglyphPlugin extends Plugin {
   }
 
   /**
-   * POST /onedrive/sync-trigger asks the server to enqueue one OneDrive walk.
+   * POST /profiles/:id/sync-trigger asks the server to enqueue one OneDrive walk.
    * The trigger is only a bell: "failed" means the request was not completed or
    * not understood, and the feed is still worth draining. "refused" carries the
    * server's own message and stops the sync; "stop" means it was not attempted.
@@ -325,7 +330,7 @@ export class PetroglyphPlugin extends Plugin {
     const jwt = this._data.jwt;
     if (jwt === undefined) return { kind: "stop" };
 
-    const url = `${this._data.apiBaseUrl}/onedrive/sync-trigger`;
+    const url = `${this._data.apiBaseUrl}/profiles/${this.resolveProfileId()}/sync-trigger`;
     let response: Response;
     try {
       response = await fetch(url, {
@@ -343,6 +348,10 @@ export class PetroglyphPlugin extends Plugin {
       // Keyed on the status: the shared JWT middleware still answers a flat
       // `{ "error": "UNAUTHORIZED" }` with no `code` to branch on.
       return { kind: "refused", message: "Not connected. Cannot sync." };
+    }
+    if (response.status === 410) {
+      // A deleted profile has no route that still works: stop, never walk again.
+      return { kind: "refused", message: PROFILE_DELETED_NOTICE };
     }
     if (response.status === 409) {
       const refusal = await this.readTriggerRefusal(response);
@@ -403,7 +412,7 @@ export class PetroglyphPlugin extends Plugin {
   }
 
   /**
-   * Pages GET /files from the profile's stored cursor until the feed is
+   * Pages GET /profiles/:id/files from the profile's stored cursor until the feed is
    * exhausted, writing each entry into the vault. A page whose files failed
    * does not advance the cursor, so the next poll retries those files. A cursor
    * the feed rejects (400) is stale: it is cleared and the drain restarts once
@@ -432,7 +441,7 @@ export class PetroglyphPlugin extends Plugin {
     for (let page = 0; ; page += 1) {
       if (page >= MAX_FEED_PAGES) return { ok: false, reason: "stalled", synced, failed };
 
-      const url = new URL(`${this._data.apiBaseUrl}/files`);
+      const url = new URL(`${this._data.apiBaseUrl}/profiles/${profileId}/files`);
       if (cursor !== undefined) url.searchParams.set("nextToken", cursor);
 
       let response: Response;
@@ -449,6 +458,13 @@ export class PetroglyphPlugin extends Plugin {
         await this.saveFeedCursor(profileId, undefined);
         cursor = undefined;
         continue;
+      }
+      if (response.status === 410) {
+        // Stop, never prune: an empty page and a deleted profile must not look
+        // the same, or the prune step would empty the vault. The cursor stays
+        // where it is, so nothing the plugin wrote is forgotten.
+        this.logFeedFailure("deleted", `status ${String(response.status)}`);
+        return { ok: false, reason: "deleted", synced, failed };
       }
       if (!response.ok) {
         this.logFeedFailure("rejected", `status ${String(response.status)}`);

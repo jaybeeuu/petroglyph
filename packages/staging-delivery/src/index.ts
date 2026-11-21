@@ -1,4 +1,4 @@
-import { listProfiles } from "@petroglyph/core";
+import { getProfile } from "@petroglyph/core";
 import { DynamoDBStagedIndexStore, S3StagedObjectStore } from "@petroglyph/staging-contracts";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -38,7 +38,7 @@ export function createApp(): Hono {
       allowHeaders: ["Authorization", "Content-Type"],
     }),
   );
-  app.use("/files/*", authMiddleware);
+  app.use("/profiles/*", authMiddleware);
 
   app.route(
     "/",
@@ -51,7 +51,8 @@ export function createApp(): Hono {
         bucket: stagedBucketName(),
         region: process.env["AWS_REGION"] ?? "eu-west-2",
       }),
-      listProfiles: (userId) => listProfiles(docClient(), syncProfilesTableName(), userId),
+      readProfile: (userId, profileId) =>
+        getProfile(docClient(), syncProfilesTableName(), userId, profileId),
     }),
   );
   return app;

@@ -64,8 +64,8 @@ output "event_log_stream_arn" {
 }
 
 output "files_feed_url" {
-  description = "The /files delivery surface URL"
-  value       = "${aws_apigatewayv2_api.petroglyph_api.api_endpoint}/files"
+  description = "The base URL of the profile-scoped files delivery surface: <feed>/profiles/{id}/files"
+  value       = "${aws_apigatewayv2_api.petroglyph_api.api_endpoint}/profiles/{id}/files"
 }
 
 output "graph_stub_function_url" {

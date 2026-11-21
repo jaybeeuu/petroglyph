@@ -29,16 +29,22 @@ beads, docs, PRs, and new code — a synonym invented in one place is a concept 
 
 ## Profile selection
 
-Two independent flags decide whether a profile runs and whether its files are served.
+Two stored flags answer two different questions.
 
-- `active` marks the profile the scheduler and the manual sync path run. The legacy `/files/changes`
-  and `POST /sync/run` paths select on `active` alone.
-- `enabled` marks the profile the delivery feed serves. `GET /files` and `GET /files/{itemId}` scope
-  to the first profile that is both `active` and `enabled`.
+- `active` marks the profile the legacy catch-up sweep walks. Exactly one profile per user is active;
+  profile create and update maintain it. No files or sync route reads it any more.
+- `enabled` marks the profile the delivery feed serves.
 
-An active but disabled profile is skipped, so it cannot blank the feed for a later profile that
-qualifies. When no profile qualifies, `GET /files` returns `{ files: [], nextToken: null }` and the
-download returns `404`.
+Every files and sync request names its profile in the path — `GET /profiles/{id}/files`,
+`GET /profiles/{id}/files/{itemId}`, `POST /profiles/{id}/sync-trigger` — so the server resolves the
+named row and never picks one. The answer separates the three cases a client must tell apart:
+
+- an unknown profile, or one the caller does not own, answers `404`
+- a profile carrying `deletedAt` answers `410 profile_deleted`, from the moment the field is written
+- a disabled profile answers `{ files: [], nextToken: null }` on the list and `404` on the download
+
+`410` is not an empty page. A client that pruned on an empty feed would delete every file it had
+written for a profile that is gone, so a deleted profile must never look empty.
 
 ## Keyed-by facts
 

@@ -7,6 +7,7 @@ import {
 } from "@aws-sdk/client-sqs";
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { deltaTriggerSchema, type DeltaTrigger } from "@petroglyph/contracts";
+import { getProfile, putProfile } from "@petroglyph/core";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,6 +19,7 @@ import { readConnection, tokenVaultsTableName } from "./token-vault.js";
 const REGION = "eu-west-2";
 const CREDENTIALS = { accessKeyId: "test", secretAccessKey: "test" };
 const ACCOUNT_ID = "000000000000";
+const PROFILES_TABLE = "petroglyph-sync-profiles-sync-trigger";
 
 /** One bell as the queue hands it back, parsed by the consumer's own schema. */
 interface QueuedBell {
@@ -30,10 +32,18 @@ interface ErrorEnvelope {
   error: { code: string; message: string };
 }
 
-describe("POST /onedrive/sync-trigger against LocalStack DynamoDB + FIFO SQS", () => {
+/** The profile row a request names. Only the id and the deletion marker matter here. */
+interface ProfileRow {
+  userId: string;
+  profileId: string;
+  deletedAt?: string;
+}
+
+describe("POST /profiles/{id}/sync-trigger against LocalStack DynamoDB + FIFO SQS", () => {
   let container: StartedTestContainer;
   let endpoint: string;
   let dynamo: DynamoDBClient;
+  let documents: DynamoDBDocumentClient;
   let sqs: SQSClient;
   let queueUrl: string;
   let privateKey: CryptoKey;
@@ -53,6 +63,7 @@ describe("POST /onedrive/sync-trigger against LocalStack DynamoDB + FIFO SQS", (
 
     endpoint = `http://localhost:${container.getMappedPort(4566)}`;
     dynamo = new DynamoDBClient({ region: REGION, endpoint, credentials: CREDENTIALS });
+    documents = DynamoDBDocumentClient.from(dynamo);
     sqs = new SQSClient({ region: REGION, endpoint, credentials: CREDENTIALS });
 
     await dynamo.send(
@@ -65,6 +76,20 @@ describe("POST /onedrive/sync-trigger against LocalStack DynamoDB + FIFO SQS", (
         AttributeDefinitions: [
           { AttributeName: "userId", AttributeType: "S" },
           { AttributeName: "provider", AttributeType: "S" },
+        ],
+        BillingMode: "PAY_PER_REQUEST",
+      }),
+    );
+    await dynamo.send(
+      new CreateTableCommand({
+        TableName: PROFILES_TABLE,
+        KeySchema: [
+          { AttributeName: "userId", KeyType: "HASH" },
+          { AttributeName: "profileId", KeyType: "RANGE" },
+        ],
+        AttributeDefinitions: [
+          { AttributeName: "userId", AttributeType: "S" },
+          { AttributeName: "profileId", AttributeType: "S" },
         ],
         BillingMode: "PAY_PER_REQUEST",
       }),
@@ -100,11 +125,11 @@ describe("POST /onedrive/sync-trigger against LocalStack DynamoDB + FIFO SQS", (
     vi.unstubAllGlobals();
   });
 
-  /** The app under test: real vault reads and real FIFO sends, no Graph anywhere. */
+  /** The app under test: real vault and profile reads, real FIFO sends, no Graph anywhere. */
   function createSyncTriggerApp(): ReturnType<typeof createApp> {
     return createApp({
-      readConnection: (userId, provider) =>
-        readConnection(DynamoDBDocumentClient.from(dynamo), userId, provider),
+      readProfile: (userId, profileId) => getProfile(documents, PROFILES_TABLE, userId, profileId),
+      readConnection: (userId, provider) => readConnection(documents, userId, provider),
       enqueueDeltaTrigger: createSyncTriggerEnqueuer(sqs, () => queueUrl),
     });
   }
@@ -127,7 +152,7 @@ describe("POST /onedrive/sync-trigger against LocalStack DynamoDB + FIFO SQS", (
       reconnectRequired: false,
     },
   ): Promise<void> {
-    await DynamoDBDocumentClient.from(dynamo).send(
+    await documents.send(
       new PutCommand({
         TableName: tokenVaultsTableName(),
         Item: {
@@ -143,8 +168,26 @@ describe("POST /onedrive/sync-trigger against LocalStack DynamoDB + FIFO SQS", (
     );
   }
 
-  async function post(userId: string): Promise<Response> {
-    return createSyncTriggerApp().request("/onedrive/sync-trigger", {
+  /** A stored profile, as `POST /profiles` writes it, or a soft-deleted one. */
+  async function storeProfile(row: ProfileRow): Promise<void> {
+    await putProfile(documents, PROFILES_TABLE, {
+      profileId: row.profileId,
+      userId: row.userId,
+      name: "Main",
+      sourceFolderPath: "notes",
+      destinationVaultPath: "Inbox",
+      pollingIntervalMinutes: 5,
+      enabled: true,
+      active: true,
+      initialSyncEnabled: true,
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      ...(row.deletedAt === undefined ? {} : { deletedAt: row.deletedAt }),
+    });
+  }
+
+  async function post(userId: string, profileId = "profile-1"): Promise<Response> {
+    return createSyncTriggerApp().request(`/profiles/${profileId}/sync-trigger`, {
       method: "POST",
       headers: { Authorization: `Bearer ${await makeToken(userId)}` },
     });
@@ -177,6 +220,7 @@ describe("POST /onedrive/sync-trigger against LocalStack DynamoDB + FIFO SQS", (
   }
 
   it("answers 202 and enqueues one bell addressed to the connection's FIFO group", async () => {
+    await storeProfile({ userId: "user-42", profileId: "profile-1" });
     await storeConnection({ userId: "user-42", reconnectRequired: false });
 
     const response = await post("user-42");
@@ -192,6 +236,7 @@ describe("POST /onedrive/sync-trigger against LocalStack DynamoDB + FIFO SQS", (
   }, 60_000);
 
   it("collapses a second Sync Now inside the dedupe window into the bell already queued", async () => {
+    await storeProfile({ userId: "user-double-click", profileId: "profile-1" });
     await storeConnection({ userId: "user-double-click", reconnectRequired: false });
 
     const first = await post("user-double-click");
@@ -206,7 +251,37 @@ describe("POST /onedrive/sync-trigger against LocalStack DynamoDB + FIFO SQS", (
     ]);
   }, 60_000);
 
+  it("answers 410 with profile_deleted and enqueues nothing once the profile is soft-deleted", async () => {
+    await storeProfile({
+      userId: "user-deleted-profile",
+      profileId: "profile-deleted",
+      deletedAt: "2026-11-21T00:00:00.000Z",
+    });
+    await storeConnection({ userId: "user-deleted-profile", reconnectRequired: false });
+
+    const response = await post("user-deleted-profile", "profile-deleted");
+    const body = (await response.json()) as ErrorEnvelope;
+
+    expect(response.status).toBe(410);
+    expect(body.error.code).toBe("profile_deleted");
+    expect(await drainBells()).toStrictEqual([]);
+  }, 60_000);
+
+  it("answers 404 for a profile the caller does not own and enqueues nothing", async () => {
+    await storeProfile({ userId: "user-someone-else", profileId: "profile-1" });
+    await storeConnection({ userId: "user-unknown-profile", reconnectRequired: false });
+
+    const response = await post("user-unknown-profile", "profile-1");
+    const body = (await response.json()) as ErrorEnvelope;
+
+    expect(response.status).toBe(404);
+    expect(body.error.code).toBe("not_found");
+    expect(await drainBells()).toStrictEqual([]);
+  }, 60_000);
+
   it("refuses with no_connection and enqueues nothing when onboarding stored no connection", async () => {
+    await storeProfile({ userId: "user-never-onboarded", profileId: "profile-1" });
+
     const response = await post("user-never-onboarded");
     const body = (await response.json()) as ErrorEnvelope;
 
@@ -217,6 +292,7 @@ describe("POST /onedrive/sync-trigger against LocalStack DynamoDB + FIFO SQS", (
   }, 60_000);
 
   it("refuses with reconnect_required and enqueues nothing when the grant is dead", async () => {
+    await storeProfile({ userId: "user-dead-grant", profileId: "profile-1" });
     await storeConnection({ userId: "user-dead-grant", reconnectRequired: true });
 
     const response = await post("user-dead-grant");
@@ -229,9 +305,10 @@ describe("POST /onedrive/sync-trigger against LocalStack DynamoDB + FIFO SQS", (
   }, 60_000);
 
   it("rejects a request without a JWT and enqueues nothing", async () => {
+    await storeProfile({ userId: "user-42", profileId: "profile-1" });
     await storeConnection({ userId: "user-42", reconnectRequired: false });
 
-    const response = await createSyncTriggerApp().request("/onedrive/sync-trigger", {
+    const response = await createSyncTriggerApp().request("/profiles/profile-1/sync-trigger", {
       method: "POST",
     });
 
@@ -240,6 +317,7 @@ describe("POST /onedrive/sync-trigger against LocalStack DynamoDB + FIFO SQS", (
   }, 60_000);
 
   it("never reaches Microsoft, so a Sync Now cannot walk OneDrive from the API", async () => {
+    await storeProfile({ userId: "user-no-graph", profileId: "profile-1" });
     await storeConnection({ userId: "user-no-graph", reconnectRequired: false });
     const fetchStub = vi.fn(() => {
       throw new Error("Sync Now must not call Microsoft: the adapter owns the walk.");

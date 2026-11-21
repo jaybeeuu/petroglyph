@@ -154,14 +154,14 @@ function stubSyncFetch(profile: {
     },
   ];
   return vi.fn((url: string) => {
-    if (url.includes("/profiles")) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(profiles) });
-    }
     if (url.includes("/files")) {
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({ files: profile.files, nextToken: null }),
       });
+    }
+    if (url.includes("/profiles")) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(profiles) });
     }
     return Promise.resolve({
       ok: true,
@@ -227,7 +227,7 @@ function stubTriggerFetch(
 ): { files: string[] } {
   const files: string[] = [];
   global.fetch = vi.fn((url: string) => {
-    if (url.endsWith("/onedrive/sync-trigger")) return Promise.resolve(trigger);
+    if (url.endsWith("/sync-trigger")) return Promise.resolve(trigger);
     if (url.includes("/files")) files.push(url);
     return answer(url);
   }) as unknown as typeof fetch;
@@ -1147,14 +1147,17 @@ describe("syncNow", () => {
 
     await runSync(plugin);
 
-    expect(global.fetch).toHaveBeenCalledWith("https://api.petroglyph.page/onedrive/sync-trigger", {
-      method: "POST",
-      headers: { Authorization: "Bearer jwt-token" },
-    });
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.petroglyph.page/profiles/default/sync-trigger",
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer jwt-token" },
+      },
+    );
     const urls = (global.fetch as Mock).mock.calls.map(([url]) => url as string);
     expect(urls.slice(0, 2)).toEqual([
-      "https://api.petroglyph.page/onedrive/sync-trigger",
-      "https://api.petroglyph.page/files",
+      "https://api.petroglyph.page/profiles/default/sync-trigger",
+      "https://api.petroglyph.page/profiles/default/files",
     ]);
   });
 
@@ -1196,6 +1199,21 @@ describe("syncNow", () => {
     await plugin.syncNow();
 
     expect(Notice).toHaveBeenCalledWith("Not connected. Cannot sync.");
+    expect(recorder.files).toEqual([]);
+  });
+
+  it("stops without draining when the profile is deleted, so a deleted profile is never emptied", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const recorder = stubTriggerFetch(
+      statusResponse(410, {
+        error: { code: "profile_deleted", message: "This profile has been deleted." },
+      }),
+      () => Promise.resolve(jsonResponse(emptyFeed())),
+    );
+
+    await plugin.syncNow();
+
+    expect(Notice).toHaveBeenCalledWith("Sync stopped: this profile was deleted");
     expect(recorder.files).toEqual([]);
   });
 
@@ -1299,7 +1317,7 @@ describe("syncNow", () => {
     const files: string[] = [];
     let answerTrigger: (response: Response) => void = () => undefined;
     global.fetch = vi.fn((url: string) => {
-      if (url.endsWith("/onedrive/sync-trigger")) {
+      if (url.endsWith("/sync-trigger")) {
         return new Promise<Response>((resolve) => {
           answerTrigger = resolve;
         });
@@ -1328,7 +1346,7 @@ describe("syncNow", () => {
     const files: string[] = [];
     let answerDrain: (response: Response) => void = () => undefined;
     global.fetch = vi.fn((url: string) => {
-      if (url.endsWith("/onedrive/sync-trigger")) return Promise.resolve(queuedTrigger());
+      if (url.endsWith("/sync-trigger")) return Promise.resolve(queuedTrigger());
       if (url.includes("/files")) {
         files.push(url);
         return new Promise<Response>((resolve) => {
@@ -1477,7 +1495,7 @@ describe("syncNow", () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
     const files: string[] = [];
     global.fetch = vi.fn((url: string) => {
-      if (url.endsWith("/onedrive/sync-trigger")) return Promise.reject(new Error("offline"));
+      if (url.endsWith("/sync-trigger")) return Promise.reject(new Error("offline"));
       files.push(url);
       return Promise.resolve(jsonResponse(emptyFeed()));
     }) as unknown as typeof fetch;
@@ -1821,7 +1839,7 @@ describe("feed sync", () => {
     await plugin.performSync();
 
     expect(global.fetch).toHaveBeenCalledWith(
-      "https://api.petroglyph.page/files?nextToken=page-2-cursor",
+      "https://api.petroglyph.page/profiles/default/files?nextToken=page-2-cursor",
       expect.anything(),
     );
     expect(mockVault.adapter.writeBinary).toHaveBeenCalledTimes(2);
@@ -1842,7 +1860,7 @@ describe("feed sync", () => {
     await plugin.performSync();
 
     expect(global.fetch).toHaveBeenCalledWith(
-      "https://api.petroglyph.page/files?nextToken=after-p2",
+      "https://api.petroglyph.page/profiles/p2/files?nextToken=after-p2",
       expect.anything(),
     );
   });
@@ -1901,8 +1919,8 @@ describe("feed sync", () => {
     await plugin.performSync();
 
     expect(requestedUrls).toEqual([
-      "https://api.petroglyph.page/files?nextToken=stale-cursor",
-      "https://api.petroglyph.page/files",
+      "https://api.petroglyph.page/profiles/default/files?nextToken=stale-cursor",
+      "https://api.petroglyph.page/profiles/default/files",
     ]);
     expect(mockVault.adapter.writeBinary).toHaveBeenCalledWith(
       "handwritten/note.pdf",
@@ -1941,7 +1959,9 @@ describe("feed sync", () => {
 
     await plugin.performSync();
 
-    expect(requestedUrls).toEqual(["https://api.petroglyph.page/files?nextToken=cursor-1"]);
+    expect(requestedUrls).toEqual([
+      "https://api.petroglyph.page/profiles/default/files?nextToken=cursor-1",
+    ]);
   });
 
   it("clears the stored cursor once the feed is exhausted", async () => {
@@ -1991,6 +2011,28 @@ describe("feed sync", () => {
     await plugin.performSync();
 
     expect(plugin.data.feedCursors?.["default"]).toBe("page-2-cursor");
+  });
+
+  it("stops on a 410, keeps the stored cursor and says the profile was deleted", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      feedCursors: { default: "cursor-1" },
+    });
+    let feedRequests = 0;
+    stubTriggerFetch(queuedTrigger(), (url) => {
+      if (!url.includes("/files")) return Promise.resolve(bytesResponse());
+      feedRequests += 1;
+      return Promise.resolve(failureResponse(410));
+    });
+
+    await plugin.syncNow();
+
+    // A deleted profile is not an empty one: the drain stops, says why, and
+    // leaves the cursor where it was so nothing already written is forgotten.
+    expect(Notice).toHaveBeenCalledWith("Sync stopped: this profile was deleted");
+    expect(feedRequests).toBe(1);
+    expect(plugin.data.feedCursors?.["default"]).toBe("cursor-1");
   });
 
   it("gives up when the feed cursor never advances", async () => {
@@ -2308,7 +2350,7 @@ describe("failed downloads", () => {
 
     await plugin.performSync();
 
-    expect(filesRequests).toEqual(["https://api.petroglyph.page/files"]);
+    expect(filesRequests).toEqual(["https://api.petroglyph.page/profiles/default/files"]);
     expect(plugin.data.feedCursors?.["default"]).toBeUndefined();
   });
 
@@ -3160,7 +3202,10 @@ describe("diagnostics log", () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
 
     global.fetch = vi.fn((url) => {
-      if (typeof url === "string" && url.startsWith("https://api.petroglyph.page/files")) {
+      if (
+        typeof url === "string" &&
+        url.startsWith("https://api.petroglyph.page/profiles/default/files")
+      ) {
         return Promise.resolve({
           ok: true,
           json: () =>

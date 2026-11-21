@@ -10,22 +10,22 @@ import type {
 import { createFilesRouter, type FilesRouterVariables } from "./app.js";
 import { encodeFeedCursor } from "./cursor.js";
 
-const baseProfile: SyncProfile = {
-  profileId: "p1",
-  userId: "user-1",
-  name: "Main",
-  sourceFolderPath: "notes",
-  destinationVaultPath: "Inbox",
-  pollingIntervalMinutes: 5,
-  enabled: true,
-  active: true,
-  initialSyncEnabled: true,
-  createdAt: "2026-09-01T00:00:00.000Z",
-  updatedAt: "2026-09-01T00:00:00.000Z",
-};
-
-function profile(overrides: Partial<SyncProfile> = {}): SyncProfile {
-  return { ...baseProfile, ...overrides };
+/** A profile the caller owns, with only the fields a delivery test cares about set. */
+function createProfile(overrides: Partial<SyncProfile> = {}): SyncProfile {
+  return {
+    profileId: "p1",
+    userId: "user-1",
+    name: "Main",
+    sourceFolderPath: "notes",
+    destinationVaultPath: "Inbox",
+    pollingIntervalMinutes: 5,
+    enabled: true,
+    active: true,
+    initialSyncEnabled: true,
+    createdAt: "2026-09-01T00:00:00.000Z",
+    updatedAt: "2026-09-01T00:00:00.000Z",
+    ...overrides,
+  };
 }
 
 const stagedRecord: StagedRecord = {
@@ -115,10 +115,15 @@ function objectStoreSpy(): {
 
 function buildApp(options: {
   profiles: SyncProfile[];
-  index: MemoryIndex;
+  index: StagedIndexStore;
   objectStore: StagedObjectStore;
-}): { app: Hono<{ Variables: FilesRouterVariables }>; listProfiles: ReturnType<typeof vi.fn> } {
-  const listProfiles = vi.fn().mockResolvedValue(options.profiles.map((p) => ({ ...p })));
+}): { app: Hono<{ Variables: FilesRouterVariables }>; readProfile: ReturnType<typeof vi.fn> } {
+  const readProfile = vi.fn((userId: string, profileId: string) => {
+    const found = options.profiles.find(
+      (candidate) => candidate.userId === userId && candidate.profileId === profileId,
+    );
+    return Promise.resolve(found === undefined ? null : { ...found });
+  });
   const app = new Hono<{ Variables: FilesRouterVariables }>();
   app.use("*", async (c, next) => {
     c.set("userId", "user-1");
@@ -126,102 +131,102 @@ function buildApp(options: {
   });
   app.route(
     "/",
-    createFilesRouter({ index: options.index, objectStore: options.objectStore, listProfiles }),
+    createFilesRouter({ index: options.index, objectStore: options.objectStore, readProfile }),
   );
-  return { app, listProfiles };
+  return { app, readProfile };
 }
 
-describe("GET /files feed", () => {
+describe("GET /profiles/:id/files feed", () => {
   it("answers 500 instead of a page that violates the contract the operation declares", async () => {
     const index = new MemoryIndex();
     // The feed entry schema requires a non-empty name, so this page is one the
     // registry forbids; in `report` mode it fails the run instead of shipping.
     index.put({ ...stagedRecord, name: "" });
     const { app } = buildApp({
-      profiles: [profile()],
+      profiles: [createProfile()],
       index,
       objectStore: objectStoreSpy().objectStore,
     });
 
-    const res = await app.request("/files");
+    const res = await app.request("/profiles/p1/files");
     expect(res.status).toBe(500);
     expect(await res.json()).toMatchObject({ error: { code: "response_contract_mismatch" } });
   });
 
-  it("returns an empty feed when the user has no active profile (M8 read-back)", async () => {
-    const { app } = buildApp({
-      profiles: [profile({ active: false })],
-      index: new MemoryIndex(),
-      objectStore: objectStoreSpy().objectStore,
-    });
-
-    const res = await app.request("/files");
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ files: [], nextToken: null });
-  });
-
-  it("returns an empty feed when the active profile is not sync-enabled (M8, read-only)", async () => {
+  it("serves the profile named in the path, not a profile found by a flag", async () => {
     const index = new MemoryIndex();
-    index.put(stagedRecord);
-    const { app, listProfiles } = buildApp({
-      profiles: [Object.freeze(profile({ enabled: false }))],
+    index.put({ ...stagedRecord, profileId: "p1", itemId: "item-1" });
+    index.put({ ...stagedRecord, profileId: "p2", itemId: "item-2" });
+    const { app, readProfile } = buildApp({
+      profiles: [createProfile({ profileId: "p1" }), createProfile({ profileId: "p2" })],
       index,
       objectStore: objectStoreSpy().objectStore,
     });
 
-    const res = await app.request("/files");
+    const res = await app.request("/profiles/p2/files");
+    const body = (await res.json()) as { files: { itemId: string }[] };
+
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ files: [], nextToken: null });
-    // READ-ONLY: the record was read back as-is; the profile record was never written.
-    expect(index.records.size).toBe(1);
-    expect(listProfiles).toHaveBeenCalledWith("user-1");
+    expect(body.files.map((file) => file.itemId)).toEqual(["item-2"]);
+    expect(readProfile).toHaveBeenCalledWith("user-1", "p2");
   });
 
-  it("returns an empty feed when no profile is both active and sync-enabled", async () => {
+  it("answers 404 for a profile the caller does not own, and lists nothing from any other", async () => {
     const index = new MemoryIndex();
     index.put(stagedRecord);
     const { app } = buildApp({
-      // Neither candidate qualifies: the first is disabled, the second is inactive.
-      profiles: [
-        profile({ profileId: "p1", enabled: false }),
-        profile({ profileId: "p2", active: false }),
-      ],
+      profiles: [createProfile()],
       index,
       objectStore: objectStoreSpy().objectStore,
     });
 
-    const res = await app.request("/files");
+    const res = await app.request("/profiles/unknown-profile/files");
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "Profile not found" });
+  });
+
+  it("answers 410 with a branchable code once the profile is soft-deleted", async () => {
+    const index = new MemoryIndex();
+    index.put(stagedRecord);
+    const { app } = buildApp({
+      profiles: [createProfile({ deletedAt: "2026-11-21T00:00:00.000Z" })],
+      index,
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    const res = await app.request("/profiles/p1/files");
+
+    expect(res.status).toBe(410);
+    expect(await res.json()).toMatchObject({ error: { code: "profile_deleted" } });
+  });
+
+  it("serves an empty feed when the named profile is disabled", async () => {
+    const index = new MemoryIndex();
+    index.put(stagedRecord);
+    const { app } = buildApp({
+      profiles: [createProfile({ enabled: false })],
+      index,
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    const res = await app.request("/profiles/p1/files");
+
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ files: [], nextToken: null });
   });
 
-  it("serves the active+enabled profile when an earlier active profile is disabled", async () => {
-    const index = new MemoryIndex();
-    index.put({ ...stagedRecord, profileId: "p2", itemId: "item-1" });
-    const { app } = buildApp({
-      // Listed first, so a scan-order-dependent pick would blank the feed.
-      profiles: [profile({ profileId: "p1", enabled: false }), profile({ profileId: "p2" })],
-      index,
-      objectStore: objectStoreSpy().objectStore,
-    });
-
-    const res = await app.request("/files");
-    const body = (await res.json()) as { files: { itemId: string }[]; nextToken: string | null };
-    expect(res.status).toBe(200);
-    expect(body.files.map((file) => file.itemId)).toEqual(["item-1"]);
-  });
-
-  it("serves the active profile's staged records with cursor paging (M1, M7 monitor semantics)", async () => {
+  it("pages a profile's staged records with the cursor the response returned", async () => {
     const index = new MemoryIndex();
     index.put({ ...stagedRecord, itemId: "item-1" });
     index.put({ ...stagedRecord, itemId: "item-2" });
     const { app } = buildApp({
-      profiles: [profile()],
+      profiles: [createProfile()],
       index,
       objectStore: objectStoreSpy().objectStore,
     });
 
-    const res = await app.request("/files?limit=1");
+    const res = await app.request("/profiles/p1/files?limit=1");
     const body = (await res.json()) as { files: { itemId: string }[]; nextToken: string | null };
     expect(res.status).toBe(200);
     expect(body.files.map((f) => f.itemId)).toEqual(["item-1"]);
@@ -230,7 +235,7 @@ describe("GET /files feed", () => {
     // The feed reflects the index at read time: a new record appears on the next page.
     index.put({ ...stagedRecord, itemId: "item-3" });
     const next = await app.request(
-      `/files?nextToken=${encodeURIComponent(body.nextToken ?? "")}&limit=2`,
+      `/profiles/p1/files?nextToken=${encodeURIComponent(body.nextToken ?? "")}&limit=2`,
     );
     const nextBody = (await next.json()) as {
       files: { itemId: string }[];
@@ -239,50 +244,18 @@ describe("GET /files feed", () => {
     expect(nextBody.files.map((f) => f.itemId)).toEqual(["item-2", "item-3"]);
   });
 
-  it("advances the page when the response cursor is echoed back as nextToken", async () => {
-    const index = new MemoryIndex();
-    index.put({ ...stagedRecord, itemId: "item-1" });
-    index.put({ ...stagedRecord, itemId: "item-2" });
-    index.put({ ...stagedRecord, itemId: "item-3" });
-    const { app } = buildApp({
-      profiles: [profile()],
-      index,
-      objectStore: objectStoreSpy().objectStore,
-    });
-
-    const first = await app.request("/files?limit=2");
-    const firstBody = (await first.json()) as {
-      files: { itemId: string }[];
-      nextToken: string | null;
-    };
-    const cursor = firstBody.nextToken;
-    if (cursor === null) throw new Error("expected the first page to offer a next page");
-
-    const second = await app.request(`/files?limit=2&nextToken=${encodeURIComponent(cursor)}`);
-    const secondBody = (await second.json()) as {
-      files: { itemId: string }[];
-      nextToken: string | null;
-    };
-
-    expect(second.status).toBe(200);
-    expect(firstBody.files.map((file) => file.itemId)).toEqual(["item-1", "item-2"]);
-    expect(secondBody.files.map((file) => file.itemId)).toEqual(["item-3"]);
-    expect(secondBody.nextToken).toBeNull();
-  });
-
   it("rejects a parameter the feed does not declare, instead of restarting at page 1", async () => {
     const index = new MemoryIndex();
     index.put({ ...stagedRecord, itemId: "item-1" });
-    index.put({ ...stagedRecord, itemId: "item-2" });
     const { app } = buildApp({
-      profiles: [profile()],
+      profiles: [createProfile()],
       index,
       objectStore: objectStoreSpy().objectStore,
     });
 
     // `after` is the name this surface used to take: it must be loud now, not stripped.
     const cursor = encodeFeedCursor({ profileId: "p1", itemId: "item-1" });
-    const res = await app.request(`/files?after=${encodeURIComponent(cursor)}`);
+    const res = await app.request(`/profiles/p1/files?after=${encodeURIComponent(cursor)}`);
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
@@ -290,82 +263,55 @@ describe("GET /files feed", () => {
     });
   });
 
-  it("rejects a cursor bound to a profile the user does not own (auth scoping)", async () => {
+  it("rejects a cursor bound to a profile other than the one in the path", async () => {
+    const index = new MemoryIndex();
+    index.put({ ...stagedRecord, profileId: "p2" });
     const { app } = buildApp({
-      profiles: [profile()],
-      index: new MemoryIndex(),
+      profiles: [createProfile({ profileId: "p1" }), createProfile({ profileId: "p2" })],
+      index,
       objectStore: objectStoreSpy().objectStore,
     });
 
-    const foreign = encodeFeedCursor({ profileId: "p9", itemId: "item-1" });
-    const res = await app.request(`/files?nextToken=${encodeURIComponent(foreign)}`);
+    const foreign = encodeFeedCursor({ profileId: "p2", itemId: "item-1" });
+    const res = await app.request(`/profiles/p1/files?nextToken=${encodeURIComponent(foreign)}`);
+
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "Invalid files cursor" });
   });
 
-  it("rejects a cursor pinned to a non-active owned profile (active-profile scoping)", async () => {
+  it("names the field and its constraint when the feed query is invalid", async () => {
     const { app } = buildApp({
-      profiles: [profile(), profile({ profileId: "p2", active: false })],
+      profiles: [createProfile()],
       index: new MemoryIndex(),
       objectStore: objectStoreSpy().objectStore,
     });
 
-    const nonActive = encodeFeedCursor({ profileId: "p2", itemId: "item-1" });
-    const res = await app.request(`/files?nextToken=${encodeURIComponent(nonActive)}`);
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "Invalid files cursor" });
-  });
-
-  it("names the limit field when the feed limit is out of range", async () => {
-    const { app } = buildApp({
-      profiles: [profile()],
-      index: new MemoryIndex(),
-      objectStore: objectStoreSpy().objectStore,
-    });
-
-    const res = await app.request("/files?limit=0");
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({
+    const limit = await app.request("/profiles/p1/files?limit=0");
+    expect(limit.status).toBe(400);
+    expect(await limit.json()).toEqual({
       error: "Invalid files query: limit must be an integer between 1 and 100",
     });
-  });
 
-  it("names the nextToken field when the cursor is malformed", async () => {
-    const { app } = buildApp({
-      profiles: [profile()],
-      index: new MemoryIndex(),
-      objectStore: objectStoreSpy().objectStore,
-    });
-
-    const res = await app.request("/files?nextToken=");
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({
+    const cursor = await app.request("/profiles/p1/files?nextToken=");
+    expect(cursor.status).toBe(400);
+    expect(await cursor.json()).toEqual({
       error: "Invalid files query: nextToken must be a non-empty string",
     });
-  });
 
-  it("rejects a malformed cursor and an out-of-range limit", async () => {
-    const { app } = buildApp({
-      profiles: [profile()],
-      index: new MemoryIndex(),
-      objectStore: objectStoreSpy().objectStore,
-    });
-
-    expect((await app.request("/files?nextToken=not-a-cursor")).status).toBe(400);
-    expect((await app.request("/files?limit=0")).status).toBe(400);
-    expect((await app.request("/files?limit=101")).status).toBe(400);
-    expect((await app.request("/files?limit=abc")).status).toBe(400);
+    expect((await app.request("/profiles/p1/files?nextToken=not-a-cursor")).status).toBe(400);
+    expect((await app.request("/profiles/p1/files?limit=abc")).status).toBe(400);
   });
 });
 
-describe("GET /files/:itemId download", () => {
-  it("resolves an owned staged record to a presigned entry (M5)", async () => {
+describe("GET /profiles/:id/files/:itemId download", () => {
+  it("resolves an owned staged record to a presigned entry", async () => {
     const index = new MemoryIndex();
     index.put(stagedRecord);
     const { objectStore, presigned } = objectStoreSpy();
-    const { app } = buildApp({ profiles: [profile()], index, objectStore });
+    const { app } = buildApp({ profiles: [createProfile()], index, objectStore });
 
-    const res = await app.request("/files/item-1");
+    const res = await app.request("/profiles/p1/files/item-1");
+
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       itemId: "item-1",
@@ -375,81 +321,83 @@ describe("GET /files/:itemId download", () => {
     expect(presigned).toEqual([{ key: "staging/v1/p1/notes/a.pdf" }]);
   });
 
-  it("returns 404 when the record belongs to another user's profile (M5)", async () => {
-    const index = new MemoryIndex();
-    index.put({ ...stagedRecord, profileId: "p-other" });
-    const { app } = buildApp({
-      profiles: [profile()],
-      index,
-      objectStore: objectStoreSpy().objectStore,
-    });
-
-    const res = await app.request("/files/item-1");
-    expect(res.status).toBe(404);
-  });
-
-  it("returns 404 for a deleted record and for an unknown user (M2, M6)", async () => {
-    const index = new MemoryIndex();
-    index.put(stagedRecord);
-    const { app } = buildApp({
-      profiles: [profile()],
-      index,
-      objectStore: objectStoreSpy().objectStore,
-    });
-
-    expect((await app.request("/files/missing-item")).status).toBe(404);
-
-    await index.remove("p1", "item-1");
-    expect((await app.request("/files/item-1")).status).toBe(404);
-
-    const noProfiles = buildApp({ profiles: [], index, objectStore: objectStoreSpy().objectStore });
-    expect((await noProfiles.app.request("/files/item-1")).status).toBe(404);
-  });
-
-  it("returns 404 when the record is under a non-active owned profile (active-profile scoping)", async () => {
-    const index = new MemoryIndex();
-    index.put({ ...stagedRecord, profileId: "p2" });
-    const { app } = buildApp({
-      profiles: [profile(), profile({ profileId: "p2", active: false })],
-      index,
-      objectStore: objectStoreSpy().objectStore,
-    });
-
-    const res = await app.request("/files/item-1");
-    expect(res.status).toBe(404);
-  });
-
-  it("returns 404 when the active profile is not sync-enabled (consistent with the feed gate)", async () => {
-    const index = new MemoryIndex();
-    index.put(stagedRecord);
-    const { app } = buildApp({
-      profiles: [profile({ enabled: false })],
-      index,
-      objectStore: objectStoreSpy().objectStore,
-    });
-
-    const res = await app.request("/files/item-1");
-    expect(res.status).toBe(404);
-  });
-
-  it("resolves the item under the active profile when owned profiles share an itemId", async () => {
+  it("resolves the item under the profile named in the path when two share an itemId", async () => {
     const index = new MemoryIndex();
     index.put({ ...stagedRecord, profileId: "p2", s3Key: "staging/v1/p2/notes/a.pdf" });
     index.put({ ...stagedRecord, profileId: "p1", s3Key: "staging/v1/p1/notes/a.pdf" });
     const { objectStore, presigned } = objectStoreSpy();
     const { app } = buildApp({
-      // Non-active profile listed first: resolution must follow the active
-      // profile, not profile order.
-      profiles: [profile({ profileId: "p2", active: false }), profile()],
+      profiles: [createProfile({ profileId: "p2" }), createProfile({ profileId: "p1" })],
       index,
       objectStore,
     });
 
-    const res = await app.request("/files/item-1");
+    const res = await app.request("/profiles/p1/files/item-1");
+
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       s3PresignedUrl: "https://presigned.example/staging/v1/p1/notes/a.pdf",
     });
     expect(presigned).toEqual([{ key: "staging/v1/p1/notes/a.pdf" }]);
+  });
+
+  it("answers 404 for a record another profile owns, or one that is gone", async () => {
+    const index = new MemoryIndex();
+    index.put({ ...stagedRecord, profileId: "p-other" });
+    const { app } = buildApp({
+      profiles: [createProfile()],
+      index,
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    expect((await app.request("/profiles/p1/files/item-1")).status).toBe(404);
+
+    index.put(stagedRecord);
+    await index.remove("p1", "item-1");
+    expect((await app.request("/profiles/p1/files/item-1")).status).toBe(404);
+  });
+
+  it("answers 404 for a profile the caller does not own", async () => {
+    const index = new MemoryIndex();
+    index.put(stagedRecord);
+    const { app } = buildApp({
+      profiles: [createProfile()],
+      index,
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    const res = await app.request("/profiles/unknown-profile/files/item-1");
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "File not found" });
+  });
+
+  it("answers 410 once the profile is soft-deleted", async () => {
+    const index = new MemoryIndex();
+    index.put(stagedRecord);
+    const { app } = buildApp({
+      profiles: [createProfile({ deletedAt: "2026-11-21T00:00:00.000Z" })],
+      index,
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    const res = await app.request("/profiles/p1/files/item-1");
+
+    expect(res.status).toBe(410);
+    expect(await res.json()).toMatchObject({ error: { code: "profile_deleted" } });
+  });
+
+  it("answers 404 when the named profile is disabled", async () => {
+    const index = new MemoryIndex();
+    index.put(stagedRecord);
+    const { app } = buildApp({
+      profiles: [createProfile({ enabled: false })],
+      index,
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    const res = await app.request("/profiles/p1/files/item-1");
+
+    expect(res.status).toBe(404);
   });
 });

@@ -362,7 +362,7 @@ resource "aws_apigatewayv2_route" "files_get" {
   count = var.staging_delivery_zip_s3_bucket != "" ? 1 : 0
 
   api_id    = aws_apigatewayv2_api.petroglyph_api.id
-  route_key = "GET /files"
+  route_key = "GET /profiles/{id}/files"
   target    = "integrations/${aws_apigatewayv2_integration.petroglyph_staging_delivery[0].id}"
 }
 
@@ -370,7 +370,7 @@ resource "aws_apigatewayv2_route" "files_item_get" {
   count = var.staging_delivery_zip_s3_bucket != "" ? 1 : 0
 
   api_id    = aws_apigatewayv2_api.petroglyph_api.id
-  route_key = "GET /files/{itemId}"
+  route_key = "GET /profiles/{id}/files/{itemId}"
   target    = "integrations/${aws_apigatewayv2_integration.petroglyph_staging_delivery[0].id}"
 }
 
@@ -381,7 +381,7 @@ resource "aws_lambda_permission" "api_gateway_staging_delivery_feed" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.petroglyph_staging_delivery[0].function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${local.api_execution_arn}/*/*/files"
+  source_arn    = "${local.api_execution_arn}/*/*/profiles/*/files"
 }
 
 resource "aws_lambda_permission" "api_gateway_staging_delivery_item" {
@@ -391,7 +391,7 @@ resource "aws_lambda_permission" "api_gateway_staging_delivery_item" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.petroglyph_staging_delivery[0].function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${local.api_execution_arn}/*/*/files/*"
+  source_arn    = "${local.api_execution_arn}/*/*/profiles/*/files/*"
 }
 
 resource "aws_cloudwatch_log_group" "lambda_staging_delivery" {
