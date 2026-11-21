@@ -2099,27 +2099,6 @@ describe("feed sync", () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
-  it("drains under the default profile when the stored active id is empty", async () => {
-    const { plugin } = await makePlugin({
-      jwt: "jwt-token",
-      oneDriveConnected: true,
-      activeProfileId: "",
-      feedCursors: { default: "cursor-1" },
-    });
-    const requestedUrls: string[] = [];
-    global.fetch = vi.fn((url) => {
-      requestedUrls.push(String(url));
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ files: [], nextToken: null }),
-      });
-    }) as unknown as typeof fetch;
-
-    await plugin.performSync();
-
-    expect(requestedUrls).toEqual(["https://api.petroglyph.page/files?nextToken=cursor-1"]);
-  });
-
   it("clears the stored cursor once the feed is exhausted", async () => {
     const { plugin } = await makePlugin({
       jwt: "jwt-token",

@@ -437,7 +437,7 @@ describe("profiles CRUD handlers", () => {
       mockGetProfile.mockResolvedValue(deletedProfile);
       mockDeleteProfile.mockResolvedValue(undefined);
       mockListProfiles.mockResolvedValue([newerProfile]);
-      mockPutProfile.mockResolvedValue(undefined);
+      mockUpdateProfile.mockResolvedValue(undefined);
       // The users row an update needs is not there: DynamoDB rejects the write.
       mockDbSend.mockImplementation((command: unknown) => {
         const tableName = (command as { input?: { TableName?: string } }).input?.TableName;
@@ -453,10 +453,13 @@ describe("profiles CRUD handlers", () => {
       const response = await request("DELETE", "/profiles/profile-1");
 
       expect(response.status).toBe(204);
-      expect(mockPutProfile.mock.calls[0]?.[2]).toMatchObject({
-        profileId: "profile-3",
-        active: true,
-      });
+      expect(mockUpdateProfile).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+        expect.any(String),
+        "profile-3",
+        expect.objectContaining({ active: true }),
+      );
     });
 
     it("deletes file_records for the profile", async () => {
