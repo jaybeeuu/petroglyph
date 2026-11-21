@@ -14,8 +14,10 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1024.0",
     "@types/jszip": "^3.4.1",
     "jszip": "^3.10.1",
+    "testcontainers": "^10.17.0",
     "yaml": "2.8.3"
   }
 }

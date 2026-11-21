@@ -15,6 +15,62 @@ function readInfraFile(name: string): string {
   return readFileSync(resolve(infraDirectory, name), "utf8");
 }
 
+interface DeployPolicyStatement {
+  Sid?: string | undefined;
+  Resource?: string | readonly string[] | undefined;
+}
+
+interface DeployPolicyDocument {
+  Statement?: readonly DeployPolicyStatement[] | undefined;
+}
+
+/** Table names `DynamoDbProjectTables` grants, read out of the policy document bootstrap.sh builds. */
+function readGrantedTableNames(): string[] {
+  const heredoc = /POLICY_DOC_ALL=\$\(cat << EOF\n([\s\S]*?)\nEOF\n\)/.exec(
+    readScript("bootstrap.sh"),
+  );
+  const policyDocument = heredoc?.[1];
+  if (policyDocument === undefined) {
+    throw new Error("bootstrap.sh builds no POLICY_DOC_ALL document");
+  }
+
+  const policy = JSON.parse(policyDocument) as DeployPolicyDocument;
+  const statement = policy.Statement?.find(
+    (candidate) => candidate.Sid === "DynamoDbProjectTables",
+  );
+  if (statement === undefined) {
+    throw new Error("the deploy policy has no DynamoDbProjectTables statement");
+  }
+
+  const resources = statement.Resource;
+  const arns = typeof resources === "string" ? [resources] : (resources ?? []);
+  const tableNames: string[] = [];
+  for (const arn of arns) {
+    const tableName =
+      /^arn:aws:dynamodb:eu-west-2:\$\{ACCOUNT_ID\}:table\/(?<tableName>[^/]+)$/.exec(arn)
+        ?.groups?.["tableName"];
+    if (tableName !== undefined) {
+      tableNames.push(tableName);
+    }
+  }
+  return tableNames;
+}
+
+/** Table names dynamodb.tf declares, named for the workspace the deploy role applies. */
+function readDeclaredTableNames(): string[] {
+  const terraform = readInfraFile("dynamodb.tf");
+  const tableNames: string[] = [];
+  for (const declaration of terraform.matchAll(
+    /resource "aws_dynamodb_table" "[a-z_]+" \{\n\s*name\s*=\s*"([^"]+)"/g,
+  )) {
+    const tableName = declaration[1];
+    if (tableName !== undefined) {
+      tableNames.push(tableName.replaceAll("${terraform.workspace}", "${DEPLOY_ENVIRONMENT}"));
+    }
+  }
+  return tableNames;
+}
+
 describe("infra script workflow split", () => {
   describe("bootstrap.sh", () => {
     it("creates the Terraform state bucket", () => {
@@ -63,6 +119,17 @@ describe("infra script workflow split", () => {
       expect(script).toMatch(/for DEPLOY_ENVIRONMENT in production qa; do/);
       expect(script).toMatch(/petroglyph-github-actions-deploy-\$\{DEPLOY_ENVIRONMENT\}/);
       expect(script).toMatch(/environment:\$\{DEPLOY_ENVIRONMENT\}/);
+    });
+
+    // The deploy role applies the DynamoDB resources, so a table it cannot reach
+    // fails `terraform apply` and blocks the deploy. Compare the two lists rather
+    // than restating them, so a new table cannot land without its ARN.
+    it("grants the deploy role every DynamoDB table terraform declares", () => {
+      const declaredTableNames = readDeclaredTableNames();
+      const grantedTableNames = readGrantedTableNames();
+
+      expect(declaredTableNames.length).toBeGreaterThan(0);
+      expect(declaredTableNames.filter((name) => !grantedTableNames.includes(name))).toEqual([]);
     });
 
     it("scopes the plan role's SSM read to the namespaced production parameter", () => {
