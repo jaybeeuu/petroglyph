@@ -1,15 +1,26 @@
-import {
-  DeleteCommand,
-  GetCommand,
-  PutCommand,
-  QueryCommand,
-  UpdateCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { syncProfileSchema } from "./sync-profile.js";
 import type { SyncProfile } from "./sync-profile.js";
 
 export async function getProfile(
+  client: DynamoDBDocumentClient,
+  tableName: string,
+  userId: string,
+  profileId: string,
+): Promise<SyncProfile | null> {
+  const row = await readProfileRow(client, tableName, userId, profileId);
+
+  return row === null || row.deletedAt !== undefined ? null : row;
+}
+
+/**
+ * Reads the profile row as stored, including a soft-deleted one. Only the delete
+ * path needs it: it must tell "never existed" (404) from "already deleted"
+ * (idempotent 200). Every other reader uses {@link getProfile}, which excludes a
+ * deleted profile.
+ */
+export async function readProfileRow(
   client: DynamoDBDocumentClient,
   tableName: string,
   userId: string,
@@ -54,7 +65,9 @@ export async function listProfiles(
     lastEvaluatedKey = result.LastEvaluatedKey;
   } while (lastEvaluatedKey !== undefined);
 
-  return items.map((item) => syncProfileSchema.parse(item));
+  return items
+    .map((item) => syncProfileSchema.parse(item))
+    .filter((profile) => profile.deletedAt === undefined);
 }
 
 /**
@@ -147,16 +160,17 @@ export async function updateProfile(
   );
 }
 
-export async function deleteProfile(
+/**
+ * Takes the profile out of service: `deletedAt` is set and the row is kept for
+ * audit. The row change is also the purge intent — the profiles stream delivers
+ * it to the janitor, so this command writes nothing else.
+ */
+export async function softDeleteProfile(
   client: DynamoDBDocumentClient,
   tableName: string,
   userId: string,
   profileId: string,
+  deletedAt: string,
 ): Promise<void> {
-  await client.send(
-    new DeleteCommand({
-      TableName: tableName,
-      Key: { userId, profileId },
-    }),
-  );
+  await updateProfile(client, tableName, userId, profileId, { deletedAt, updatedAt: deletedAt });
 }

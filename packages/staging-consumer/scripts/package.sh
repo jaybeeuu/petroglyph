@@ -17,6 +17,7 @@ output = sys.argv[2]
 with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zf:
     zf.write(os.path.join(package_dir, 'dist', 'lambda.js'), 'dist/lambda.js')
     zf.write(os.path.join(package_dir, 'dist', 'dispatch-lambda.js'), 'dist/dispatch-lambda.js')
+    zf.write(os.path.join(package_dir, 'dist', 'profile-purge-lambda.js'), 'dist/profile-purge-lambda.js')
     zf.write(os.path.join(package_dir, 'package.json'), 'package.json')
 " "$PACKAGE_DIR" "$OUTPUT"
 

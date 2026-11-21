@@ -192,10 +192,59 @@ describe("profiles CRUD against LocalStack DynamoDB", () => {
 
     const response = await request("DELETE", "/profiles/profile-active", undefined, userId);
 
-    expect(response.status).toBe(204);
+    expect(response.status).toBe(200);
     const promoted = await readStoredProfile("profile-newest", userId);
     expect(promoted["active"]).toBe(true);
     expect(promoted["oneDriveConnected"]).toBe(true);
+  });
+
+  it("soft-deletes the row and hides the profile from every read", async () => {
+    const userId = "user-soft-delete";
+    await putStoredProfile({ profileId: "profile-gone", active: false }, userId);
+
+    const response = await request("DELETE", "/profiles/profile-gone", undefined, userId);
+
+    expect(response.status).toBe(200);
+    const stored = await readStoredProfile("profile-gone", userId);
+    expect(stored["deletedAt"]).toEqual(expect.any(String));
+    expect((await request("GET", "/profiles/profile-gone", undefined, userId)).status).toBe(404);
+    expect(
+      (await request("PUT", "/profiles/profile-gone", { name: "Renamed" }, userId)).status,
+    ).toBe(404);
+    const listed = (await (await request("GET", "/profiles", undefined, userId)).json()) as {
+      profileId: string;
+    }[];
+    expect(listed.map((profile) => profile.profileId)).not.toContain("profile-gone");
+  });
+
+  it("answers 200 to a second DELETE of the same profile", async () => {
+    const userId = "user-delete-twice";
+    await putStoredProfile({ profileId: "profile-twice", active: false }, userId);
+
+    expect((await request("DELETE", "/profiles/profile-twice", undefined, userId)).status).toBe(
+      200,
+    );
+    expect((await request("DELETE", "/profiles/profile-twice", undefined, userId)).status).toBe(
+      200,
+    );
+  });
+
+  it("keeps a deleted profile from suppressing active on the next created profile", async () => {
+    const userId = "user-first-after-delete";
+    await putStoredProfile({ profileId: "profile-deleted" }, userId);
+    await request("DELETE", "/profiles/profile-deleted", undefined, userId);
+
+    const response = await request(
+      "POST",
+      "/profiles",
+      { name: "Second", sourceFolderPath: "Notes", destinationVaultPath: "vault" },
+      userId,
+    );
+
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { profileId: string };
+    const stored = await readStoredProfile(created.profileId, userId);
+    expect(stored).toMatchObject({ active: true });
   });
 
   it("refuses a profile update when the row is not there instead of writing a partial row", async () => {

@@ -76,6 +76,14 @@ resource "aws_dynamodb_table" "sync_profiles" {
     type = "S"
   }
 
+  # A profile delete is a soft delete: the row keeps deletedAt and that row
+  # change IS the purge intent. NEW_AND_OLD_IMAGES is required because the
+  # janitor must see that deletedAt was absent before (a NEW_IMAGE-only stream
+  # cannot show an attribute was added), so a rename or an edit never starts a
+  # purge. Changing StreamViewType is an in-place stream-spec update.
+  stream_enabled   = true
+  stream_view_type = "NEW_AND_OLD_IMAGES"
+
   tags = {
     environment = terraform.workspace
   }

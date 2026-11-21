@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import {
-  deleteProfile,
   getProfile,
   listProfiles,
   putProfile,
+  readProfileRow,
+  softDeleteProfile,
   updateProfile,
 } from "./sync-profile-db.js";
 import type { SyncProfile } from "./sync-profile.js";
@@ -41,6 +42,14 @@ describe("getProfile", () => {
     expect(result).toBeNull();
   });
 
+  it("returns null when the profile is soft-deleted", async () => {
+    const client = makeClient(() => ({
+      Item: { ...testProfile, deletedAt: "2024-03-03T00:00:00.000Z" },
+    }));
+    const result = await getProfile(client, TABLE_NAME, "user-1", "prof-1");
+    expect(result).toBeNull();
+  });
+
   it("sends GetCommand with correct keys", async () => {
     const client = makeClient(() => ({ Item: testProfile }));
     await getProfile(client, TABLE_NAME, "user-1", "prof-1");
@@ -59,6 +68,16 @@ describe("listProfiles", () => {
     const client = makeClient(() => ({ Items: [testProfile] }));
     const result = await listProfiles(client, TABLE_NAME, "user-1");
     expect(result).toEqual([testProfile]);
+  });
+
+  it("drops a soft-deleted profile from the list", async () => {
+    const deleted: SyncProfile = { ...testProfile, deletedAt: "2024-03-03T00:00:00.000Z" };
+    const live: SyncProfile = { ...testProfile, profileId: "prof-2" };
+    const client = makeClient(() => ({ Items: [deleted, live] }));
+
+    const result = await listProfiles(client, TABLE_NAME, "user-1");
+
+    expect(result).toEqual([live]);
   });
 
   it("returns empty array when no profiles exist", async () => {
@@ -172,15 +191,35 @@ describe("updateProfile", () => {
   });
 });
 
-describe("deleteProfile", () => {
-  it("sends DeleteCommand with correct keys", async () => {
+describe("readProfileRow", () => {
+  it("returns a soft-deleted row, so the delete path can tell it from a missing one", async () => {
+    const deleted: SyncProfile = { ...testProfile, deletedAt: "2024-03-03T00:00:00.000Z" };
+    const client = makeClient(() => ({ Item: deleted }));
+
+    const result = await readProfileRow(client, TABLE_NAME, "user-1", "prof-1");
+
+    expect(result).toEqual(deleted);
+  });
+});
+
+describe("softDeleteProfile", () => {
+  it("sets deletedAt and updatedAt on the existing row instead of deleting it", async () => {
     const client = makeClient(() => ({}));
-    await deleteProfile(client, TABLE_NAME, "user-1", "prof-1");
+
+    await softDeleteProfile(client, TABLE_NAME, "user-1", "prof-1", "2024-03-03T00:00:00.000Z");
+
     const { send } = client as unknown as { send: ReturnType<typeof vi.fn> };
     const call = send.mock.calls[0] as [{ input: unknown }];
     expect(call[0].input).toEqual({
       TableName: TABLE_NAME,
       Key: { userId: "user-1", profileId: "prof-1" },
+      UpdateExpression: "SET #attribute0 = :value0, #attribute1 = :value1",
+      ConditionExpression: "attribute_exists(userId)",
+      ExpressionAttributeNames: { "#attribute0": "deletedAt", "#attribute1": "updatedAt" },
+      ExpressionAttributeValues: {
+        ":value0": "2024-03-03T00:00:00.000Z",
+        ":value1": "2024-03-03T00:00:00.000Z",
+      },
     });
   });
 });

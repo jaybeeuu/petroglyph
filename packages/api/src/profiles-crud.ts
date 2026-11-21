@@ -10,8 +10,9 @@ import {
   getProfile,
   listProfiles,
   normalizeSourceFolderPath,
+  readProfileRow,
+  softDeleteProfile,
   updateProfile,
-  deleteProfile,
 } from "@petroglyph/core";
 import type { SyncProfile } from "@petroglyph/core";
 import type { AppContext } from "./auth-middleware.js";
@@ -161,11 +162,25 @@ export const deleteProfileEndpoint = defineEndpoint(
   async (_input, c: AppContext) => {
     const userId = c.get("userId");
     const profileId = c.req.param("id") ?? "";
-    const existing = await getProfile(docClient(), syncProfilesTableName(), userId, profileId);
+    // The raw row, not getProfile: a profile that is already deleted answers 200
+    // again rather than 404, and nothing is purged a second time.
+    const existing = await readProfileRow(docClient(), syncProfilesTableName(), userId, profileId);
     if (existing === null || existing.userId !== userId) {
       return c.json({ error: "Profile not found" }, 404);
     }
-    await deleteProfile(docClient(), syncProfilesTableName(), userId, profileId);
+    if (existing.deletedAt !== undefined) {
+      return new Response(null, { status: 200 });
+    }
+    // Soft delete: the row keeps the intent and the profiles stream carries it
+    // to the janitor, which purges the staged rows and their objects.
+    await softDeleteProfile(
+      docClient(),
+      syncProfilesTableName(),
+      userId,
+      profileId,
+      new Date().toISOString(),
+    );
+    // Legacy carve-out: the old processor's records are still cascaded here.
     await deleteFileRecordsForProfile(profileId);
     if (existing.active) {
       const remaining = await listProfiles(docClient(), syncProfilesTableName(), userId);
@@ -180,6 +195,6 @@ export const deleteProfileEndpoint = defineEndpoint(
         });
       }
     }
-    return new Response(null, { status: 204 });
+    return new Response(null, { status: 200 });
   },
 );
