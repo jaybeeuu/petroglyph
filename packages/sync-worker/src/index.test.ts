@@ -192,6 +192,46 @@ describe("sync-worker handler", () => {
     );
     expect(deltaTokenPut).toBeDefined();
   });
+  it("sends an ingest message carrying the keys the processor requires", async () => {
+    mockDocSend.mockImplementation((command: unknown) => {
+      if (command instanceof GetCommand) {
+        return Promise.resolve(
+          command.input.TableName === "petroglyph-token-vaults-test"
+            ? { Item: mockTokenRecord() }
+            : { Item: undefined },
+        );
+      }
+      return Promise.resolve({});
+    });
+    mockSqsSend.mockResolvedValue({});
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          value: [{ id: "pdf-1", name: "notes.pdf", file: { mimeType: "application/pdf" } }],
+          "@odata.deltaLink":
+            "https://graph.microsoft.com/v1.0/me/drive/root:/OnyxBoox:/delta?token=delta-token-1",
+        }),
+    });
+    await handler(
+      makeEvent({
+        jobId: "job-ingest-body",
+        profileId: "profile-456",
+        sourceFolderPath: "OnyxBoox",
+        userId: "user-42",
+      }),
+    );
+    const [ingestSend] = mockSqsSend.mock.calls[0] as [{ input: { MessageBody: string } }];
+    const body = JSON.parse(ingestSend.input.MessageBody) as { [key: string]: unknown };
+    // The processor's ingestQueueMessageSchema requires userId to resolve the
+    // connection's grant from the token vault.
+    expect(Object.keys(body).sort()).toEqual(["fileId", "itemMetadata", "profileId", "userId"]);
+    expect(body).toMatchObject({
+      fileId: "pdf-1",
+      profileId: "profile-456",
+      userId: "user-42",
+    });
+  });
 
   it("updates job status to failed when Graph API fails", async () => {
     mockDocSend.mockImplementation((command: unknown) => {
