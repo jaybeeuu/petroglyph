@@ -7,6 +7,7 @@ import {
   PutItemCommand,
   QueryCommand,
   type AttributeDefinition,
+  type BillingMode,
   type GlobalSecondaryIndex,
   type KeySchemaElement,
   type ProjectionType,
@@ -37,6 +38,7 @@ interface DeclaredSecondaryIndex {
 interface DeclaredTable {
   readonly hashKey: string;
   readonly rangeKey?: string | undefined;
+  readonly billingMode: BillingMode;
   readonly attributes: readonly { readonly name: string; readonly type: ScalarAttributeType }[];
   readonly secondaryIndexes: readonly DeclaredSecondaryIndex[];
 }
@@ -106,6 +108,13 @@ function parseProjectionType(value: string, owner: string): ProjectionType {
   throw new Error(`the ${owner} declaration uses projection type ${value}`);
 }
 
+function parseBillingMode(value: string, owner: string): BillingMode {
+  if (value === "PAY_PER_REQUEST" || value === "PROVISIONED") {
+    return value;
+  }
+  throw new Error(`the ${owner} declaration uses billing mode ${value}`);
+}
+
 function readDeclaredTable(): DeclaredTable {
   const block = readResourceBlock(
     readFileSync(resolve(INFRA_DIRECTORY, "dynamodb.tf"), "utf8"),
@@ -115,6 +124,10 @@ function readDeclaredTable(): DeclaredTable {
   return {
     hashKey: requireProperty(block, "hash_key", "graph_subscriptions"),
     rangeKey: readProperty(block, "range_key"),
+    billingMode: parseBillingMode(
+      requireProperty(block, "billing_mode", "graph_subscriptions"),
+      "graph_subscriptions",
+    ),
     attributes: readNestedBlocks(block, "attribute").map((attributeBlock) => ({
       name: requireProperty(attributeBlock, "name", "graph_subscriptions attribute"),
       type: parseAttributeType(
@@ -187,7 +200,7 @@ describe("subscription registry table", () => {
     await dynamo.send(
       new CreateTableCommand({
         TableName: TABLE_NAME,
-        BillingMode: "PAY_PER_REQUEST",
+        BillingMode: declared.billingMode,
         KeySchema: keySchema(declared.hashKey, declared.rangeKey),
         AttributeDefinitions: attributeDefinitions(declared.attributes),
         GlobalSecondaryIndexes: declared.secondaryIndexes.map(toGlobalSecondaryIndex),
@@ -245,6 +258,7 @@ describe("subscription registry table", () => {
           provider: { S: "onedrive" },
           subscriptionId: { S: "subscription-b" },
           expiry: { N: "5000" },
+          root: { S: "/drives/d/root:/Notes" },
         },
       }),
     );
@@ -259,25 +273,41 @@ describe("subscription registry table", () => {
     );
 
     expect(found.Items).toHaveLength(1);
-    expect(found.Items?.[0]).toMatchObject({ profileId: { S: "profile-b" } });
+    // `root` is a key of neither the table nor the index, so it comes back only
+    // because the index projects every attribute.
+    expect(found.Items?.[0]).toMatchObject({
+      profileId: { S: "profile-b" },
+      root: { S: "/drives/d/root:/Notes" },
+    });
   }, 30_000);
 
   it("returns only the subscriptions expiring inside the renewal horizon", async () => {
     // The expiry index partitions by provider, so this test's rows own their
     // own partition and the earlier tests' rows stay out of the window query.
-    const rows: readonly (readonly [string, string, string])[] = [
-      ["profile-inside", "subscription-inside", "1000"],
-      ["profile-outside", "subscription-outside", "5000"],
+    const rows = [
+      {
+        profileId: "profile-inside",
+        subscriptionId: "subscription-inside",
+        expiry: "1000",
+        root: "/drives/d/root:/Notes",
+      },
+      {
+        profileId: "profile-outside",
+        subscriptionId: "subscription-outside",
+        expiry: "5000",
+        root: "/drives/d/root:/Archive",
+      },
     ];
-    for (const [profileId, subscriptionId, expiry] of rows) {
+    for (const row of rows) {
       await dynamo.send(
         new PutItemCommand({
           TableName: TABLE_NAME,
           Item: {
-            profileId: { S: profileId },
+            profileId: { S: row.profileId },
             provider: { S: "onedrive-renewal" },
-            subscriptionId: { S: subscriptionId },
-            expiry: { N: expiry },
+            subscriptionId: { S: row.subscriptionId },
+            expiry: { N: row.expiry },
+            root: { S: row.root },
           },
         }),
       );
@@ -296,6 +326,12 @@ describe("subscription registry table", () => {
       }),
     );
 
-    expect(expiring.Items?.map((item) => item["profileId"])).toEqual([{ S: "profile-inside" }]);
+    expect(expiring.Items).toHaveLength(1);
+    // `root` is a key of neither the table nor the index, so it comes back only
+    // because the index projects every attribute.
+    expect(expiring.Items?.[0]).toMatchObject({
+      profileId: { S: "profile-inside" },
+      root: { S: "/drives/d/root:/Notes" },
+    });
   }, 30_000);
 });

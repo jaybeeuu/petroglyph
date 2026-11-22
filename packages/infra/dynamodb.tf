@@ -99,9 +99,10 @@ resource "aws_dynamodb_table" "sync_profiles" {
 # * the webhook and lifecycle notifications arrive holding a subscriptionId and
 #   nothing else, so `subscriptionId-index` answers them;
 # * the hourly renewer asks which rows expire inside a 24-hour horizon, so
-#   `expiry-index` serves a range query on the epoch seconds in `expiry`.
-#   `provider` is the partition key because every row carries it (it is the
-#   table's sort key) and the renewer must see every state.
+#   `expiry-index` ranges over the epoch seconds in `expiry`. Its partition key
+#   is `provider` — the table's sort key, so every row carries it — and the
+#   renewer issues one query per provider. A hash-only GSI on `expiry` could
+#   not answer a window query, and one query cannot span every provider.
 
 resource "aws_dynamodb_table" "graph_subscriptions" {
   name         = "petroglyph-graph-subscriptions-${terraform.workspace}"
