@@ -127,6 +127,10 @@ Every JWT-protected route inherits it, including routes that otherwise follow th
 so a client must branch on the 401 status until that middleware returns
 `{ "error": { "code": "unauthorized", "message": … } }`.
 
+`profile_deleted` reaches a client from the profile-scoped files and sync-trigger routes. `PUT /profiles/:id`
+answers `410` with the legacy flat `{ "error": "This profile has been deleted." }` instead, so branch
+on the status there until that route returns the envelope.
+
 This is RFC 9457-compatible in spirit (`code` ≈ `type`, `message` ≈ `title`).
 Moving to `application/problem+json` later is mechanical, and worth doing only if
 a third-party consumer appears.
