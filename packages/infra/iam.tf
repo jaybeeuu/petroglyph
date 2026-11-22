@@ -480,6 +480,89 @@ resource "aws_iam_role_policy" "petroglyph_staging_dispatch_policy" {
 }
 
 # ---------------------------------------------------------------------------
+# Profile purge role: sync_profiles stream read → staged_records delete →
+# staged object delete under the staging prefix. The profile domain keeps the
+# row (soft delete); this role deletes only storage the staging domain owns.
+# ---------------------------------------------------------------------------
+
+resource "aws_iam_role" "petroglyph_profile_purge_role" {
+  name               = "petroglyph-profile-purge-${terraform.workspace}"
+  assume_role_policy = local.lambda_assume_role_policy
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
+resource "aws_iam_role_policy" "petroglyph_profile_purge_policy" {
+  name = "petroglyph-profile-purge-policy"
+  role = aws_iam_role.petroglyph_profile_purge_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "DynamoDBReadProfilesStream"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:DescribeStream",
+          "dynamodb:GetRecords",
+          "dynamodb:GetShardIterator",
+          "dynamodb:ListStreams",
+        ]
+        Resource = [
+          aws_dynamodb_table.sync_profiles.arn,
+          "${aws_dynamodb_table.sync_profiles.arn}/stream/*",
+        ]
+      },
+      {
+        Sid    = "DynamoDBDeleteStagedRecords"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:Query",
+          "dynamodb:DeleteItem",
+        ]
+        Resource = aws_dynamodb_table.staged_records.arn
+      },
+      {
+        # The layout root, not the layout version: the version segment lives
+        # inside staging/, so a layout bump (v1 -> v2) does not widen or break
+        # this grant. DeleteObject is what the purge calls; ListBucket is
+        # scoped to the same prefix by condition so the capability cannot read
+        # outside the staging layout.
+        Sid      = "S3DeleteStagedObjects"
+        Effect   = "Allow"
+        Action   = "s3:DeleteObject"
+        Resource = "${local.staged_bucket_arn}/staging/*"
+      },
+      {
+        Sid      = "S3ListStagingPrefix"
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = local.staged_bucket_arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              "staging/",
+              "staging/*",
+            ]
+          }
+        }
+      },
+      {
+        Sid    = "CloudWatchLogsWrite"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "${local.lambda_log_group_arn_prefix}/petroglyph-profile-purge-${terraform.workspace}:*"
+      },
+    ]
+  })
+}
+
+# ---------------------------------------------------------------------------
 # OneDrive adapter role (6.5.1.1): vault + delta state + profiles + event log,
 # S3 put for landing, delta-trigger queue read, onedrive SSM secrets
 # ---------------------------------------------------------------------------

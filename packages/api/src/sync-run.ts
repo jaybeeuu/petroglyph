@@ -1,6 +1,5 @@
-import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { syncProfileSchema } from "@petroglyph/core";
-import type { SyncProfile } from "@petroglyph/core";
+import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import { listProfiles } from "@petroglyph/core";
 import { defineEndpoint } from "@petroglyph/contracts/hono";
 import { runSync } from "@petroglyph/contracts/operations";
 import type { AppContext } from "./auth-middleware.js";
@@ -15,28 +14,16 @@ function syncJobsTableName(): string {
   return process.env["SYNC_JOBS_TABLE"] ?? "petroglyph-sync-jobs-default";
 }
 
-function parseSyncProfile(item: unknown): SyncProfile | null {
-  const parsed = syncProfileSchema.safeParse(item);
-  return parsed.success ? parsed.data : null;
-}
-
 async function findActiveProfile(
   userId: string,
 ): Promise<{ sourceFolderPath: string; profileId: string } | null> {
   try {
-    const result = await docClient().send(
-      new QueryCommand({
-        TableName: syncProfilesTableName(),
-        KeyConditionExpression: "userId = :userId",
-        ExpressionAttributeValues: { ":userId": userId },
-      }),
-    );
+    // The store drops a soft-deleted profile, so this reader cannot dispatch a
+    // sync for one. Parse failures come back as an error and answer "no active
+    // profile" rather than walking a half-read row.
+    const profiles = await listProfiles(docClient(), syncProfilesTableName(), userId);
 
-    const profiles = (result.Items ?? [])
-      .map(parseSyncProfile)
-      .filter((p): p is SyncProfile => p !== null);
-
-    const active = profiles.find((p) => p.active);
+    const active = profiles.find((profile) => profile.active);
     if (active) {
       return { sourceFolderPath: active.sourceFolderPath, profileId: active.profileId };
     }

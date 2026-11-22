@@ -138,11 +138,11 @@ The plugin periodically calls `GET /status` to determine the current connection 
 }
 ```
 
-| Field                | Type    | Description                                                                                                                                                                                       |
-| -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                                      |
-| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                                         |
-| `oneDrive.connected` | boolean | `true` if the user has an active OneDrive connection (`active === true` on the `sync_profiles` DynamoDB record); `false` if the record is absent, the field is false, or a DynamoDB error occurs. |
+| Field                | Type    | Description                                                                                                                                                                                                                    |
+| -------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `github.connected`   | boolean | Always `true` for an authenticated request — the JWT proves GitHub identity.                                                                                                                                                   |
+| `github.username`    | string  | The GitHub login extracted from the JWT `username` claim.                                                                                                                                                                      |
+| `oneDrive.connected` | boolean | `true` if the user has an active OneDrive connection (`active === true` on the `sync_profiles` DynamoDB record); `false` if the record is absent, the field is false, the profile is soft-deleted, or a DynamoDB error occurs. |
 
 Unauthenticated requests (missing or invalid JWT) return `401 { "error": "UNAUTHORIZED" }` from the auth middleware before the handler is reached.
 
@@ -419,6 +419,7 @@ The adapter's per-connection Graph delta state (Delivery 1), superseding the per
 | `active`                 | Boolean     | `true` once OneDrive is connected and the profile is live                                                  |
 | `createdAt`              | String      | ISO 8601                                                                                                   |
 | `updatedAt`              | String      | ISO 8601                                                                                                   |
+| `deletedAt`              | String      | ISO 8601; set by a delete. The row is kept and readers exclude it ([deleted.md](profile/deleted.md))       |
 
 `userId` as partition key means all profiles for a user are co-located, making list-by-user the primary key query rather than a GSI scan. Source and destination are stored as flat string fields rather than nested maps — the current single-provider design doesn't require the extra indirection.
 

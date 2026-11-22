@@ -12,6 +12,12 @@ export const syncProfileSchema = z.object({
   initialSyncEnabled: z.boolean().default(true),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
+  /**
+   * Set when the user deletes the profile. The row is retained for audit, so
+   * every reader must exclude it: `getProfile` answers null and `listProfiles`
+   * drops the row, which is the single filter no caller can forget.
+   */
+  deletedAt: z.string().min(1).optional(),
 });
 
 export type SyncProfile = z.infer<typeof syncProfileSchema>;

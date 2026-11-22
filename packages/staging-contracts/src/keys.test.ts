@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { deriveStagingKey } from "./keys.js";
+import { deriveStagingKey, deriveStagingPrefix } from "./keys.js";
+
+describe("deriveStagingPrefix", () => {
+  it("derives staging/v1/<profileId>/ as the profile's own subtree", () => {
+    expect(deriveStagingPrefix({ profileId: "p1" })).toBe("staging/v1/p1/");
+  });
+
+  it("ends at a segment boundary, so one profile's prefix never matches another's keys", () => {
+    const prefix = deriveStagingPrefix({ profileId: "p1" });
+    const otherKey = deriveStagingKey({ profileId: "p10", relativePath: "a", name: "note.pdf" });
+    expect(otherKey.startsWith(prefix)).toBe(false);
+  });
+
+  it("rejects an unsafe profileId", () => {
+    expect(() => deriveStagingPrefix({ profileId: "" })).toThrow();
+    expect(() => deriveStagingPrefix({ profileId: "../p1" })).toThrow();
+  });
+});
 
 describe("deriveStagingKey", () => {
   it("derives staging/v1/<profileId>/<relativePath>/<name> with the layout version in the key", () => {

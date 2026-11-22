@@ -1,4 +1,5 @@
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
+import { isProfileDeleted } from "@petroglyph/core";
 import { defineEndpoint } from "@petroglyph/contracts/hono";
 import { getStatus } from "@petroglyph/contracts/operations";
 import type { AppContext } from "./auth-middleware.js";
@@ -50,6 +51,13 @@ function parseSyncProfileStatus(item: unknown): SyncProfileStatus {
   }
 
   const value = item as { [key: string]: unknown };
+  // A soft-deleted profile is not connected to anything. The row is read raw
+  // because `oneDriveConnected` is outside the profile schema, so `getProfile`
+  // cannot carry it; the exclusion itself still comes from the store.
+  if (isProfileDeleted(value)) {
+    return { exists: false, oneDriveConnected: false };
+  }
+
   return {
     exists: true,
     oneDriveConnected: value["oneDriveConnected"] === true,

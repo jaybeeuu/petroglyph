@@ -20,11 +20,14 @@ beads, docs, PRs, and new code — a synonym invented in one place is a concept 
 | **Profile**            | A sync job: source provider + source directory + destination directory, running over one connection, with `active`/`enabled`. | Keyed `profileId` (`{profileId, userId, source, active, enabled, config?}`); emits events with `source: onedrive://profiles/<profileId>`. Multiple profiles share one connection's tokens.                                                            |
 | **Source folder path** | The provider folder a profile syncs from, stored as `sourceFolderPath`.                                                       | Stored in canonical form — no leading or trailing slash, no repeated slashes (`/notes/a/` → `notes/a`). `/` is the whole drive, `""` is rejected; a leading slash can never match a delta `relativePath`, which is always relative to the drive root. |
 | **Grant**              | The OAuth credential (access + refresh + expiry) held for a connection.                                                       | Microsoft rotates refresh tokens on **every** refresh — a rotated-out copy is dead (`invalid_grant`). Tokens are keyed by connection, never per profile.                                                                                              |
+| **Deleted profile**    | A profile whose row carries `deletedAt`. The row is kept for audit and excluded by `getProfile` and `listProfiles`.           | Soft delete only — there is no undelete. Removal from service happens in the request; the cleanup happens afterwards ([profile/deleted.md](profile/deleted.md)).                                                                                      |
+| **Janitor**            | The staging-domain component that deletes what its domain stores for one profile, keyed by `profileId`.                       | Today the profile-purge Lambda: staged rows and their S3 objects. It never deletes a user's vault, a connection's grant, or a Graph subscription.                                                                                                     |
 
 ## Sentence checks
 
 - A **user** holds a **connection** to a **provider**; the connection owns the **grant**.
 - A **profile** is a scheduled job over one connection; it never holds tokens.
+- Deleting a **profile** soft-deletes it; the **janitor** then purges what Petroglyph staged for it, and the user's vault copy stays.
 - `userId` is Petroglyph-internal; a provider account id is a different namespace.
 
 ## Profile selection
