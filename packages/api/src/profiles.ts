@@ -30,7 +30,6 @@ export const createProfileEndpoint = defineEndpoint(
       userId,
       name: input.body.name,
       sourceFolderPath: normalizeSourceFolderPath(input.body.sourceFolderPath),
-      destinationVaultPath: input.body.destinationVaultPath,
       pollingIntervalMinutes: input.body.pollingIntervalMinutes ?? 5,
       enabled: input.body.enabled ?? true,
       active: isFirst,

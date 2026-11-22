@@ -96,7 +96,6 @@ function makeProfile(overrides: Partial<SyncProfile> = {}): SyncProfile {
     userId: CONNECTION.userId,
     name: "Notes",
     sourceFolderPath: "notes",
-    destinationVaultPath: "notes",
     pollingIntervalMinutes: 5,
     enabled: true,
     active: true,

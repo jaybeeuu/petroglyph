@@ -5,12 +5,12 @@ import { syncProfileResponseSchema } from "../responses/sync-profile.js";
 /**
  * The body of a new profile. `sourceFolderPath` is only checked for presence
  * here: the canonical form (no leading slash, no repeated slashes) is the sync
- * walker's rule, so the handler normalises it with the domain helper.
+ * walker's rule, so the handler normalises it with the domain helper. Where the
+ * files land is the plugin's own state, so no destination is sent.
  */
 export const createProfileBodySchema = z.object({
   name: z.string().min(1),
   sourceFolderPath: z.string().min(1),
-  destinationVaultPath: z.string().min(1),
   pollingIntervalMinutes: z.number().int().positive().optional(),
   enabled: z.boolean().optional(),
 });

@@ -95,7 +95,6 @@ describe("staging delivery auth middleware", () => {
         userId: "user-123",
         name: "Main",
         sourceFolderPath: "notes",
-        destinationVaultPath: "Inbox",
         pollingIntervalMinutes: 5,
         enabled: true,
         active: true,

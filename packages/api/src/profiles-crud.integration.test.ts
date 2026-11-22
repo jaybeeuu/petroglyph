@@ -154,7 +154,7 @@ describe("profiles CRUD against LocalStack DynamoDB", () => {
     const response = await request(
       "POST",
       "/profiles",
-      { name: "Created", sourceFolderPath: "/Notes", destinationVaultPath: "vault" },
+      { name: "Created", sourceFolderPath: "/Notes" },
       newUserId,
     );
 
@@ -165,12 +165,13 @@ describe("profiles CRUD against LocalStack DynamoDB", () => {
       userId: newUserId,
       name: "Created",
       sourceFolderPath: "Notes",
-      destinationVaultPath: "vault",
       pollingIntervalMinutes: 5,
       enabled: true,
       active: true,
       initialSyncEnabled: true,
     });
+    // The destination is the plugin's own state, so the row carries none.
+    expect(stored).not.toHaveProperty("destinationVaultPath");
     expect(stored["createdAt"]).toEqual(expect.any(String));
   });
 
@@ -216,7 +217,6 @@ describe("profiles CRUD against LocalStack DynamoDB", () => {
       userId: "user-put",
       name: "Put directly",
       sourceFolderPath: "Notes",
-      destinationVaultPath: "vault",
       pollingIntervalMinutes: 5,
       enabled: true,
       active: true,
@@ -256,7 +256,6 @@ describe("profiles CRUD against LocalStack DynamoDB", () => {
           userId,
           name: "A profile",
           sourceFolderPath: "Notes",
-          destinationVaultPath: "vault",
           pollingIntervalMinutes: 5,
           enabled: true,
           active: true,

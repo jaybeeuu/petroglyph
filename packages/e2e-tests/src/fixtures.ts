@@ -19,7 +19,6 @@ export function createSmokeProfile(now: string): SyncProfile {
     userId: SMOKE_USER_ID,
     name: "Deployed smoke",
     sourceFolderPath: SMOKE_RELATIVE_PATH,
-    destinationVaultPath: "Petroglyph/Smoke",
     pollingIntervalMinutes: 5,
     enabled: true,
     active: true,

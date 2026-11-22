@@ -12,6 +12,7 @@ import {
   revealInOs,
 } from "./log.js";
 import { PetroglyphSettingTab } from "./settings.js";
+import { parseStoredProfiles } from "./types.js";
 import type { PluginData, SyncProfile } from "./types.js";
 import { hasStringProp, isRecord } from "./validate.js";
 
@@ -130,6 +131,11 @@ export function readErrorMessage(body: unknown): string | null {
   if (text === "") return null;
   if (!screamingSnakeCode.test(text)) return text;
   return ERROR_CODE_MESSAGES[text] ?? null;
+}
+
+/** The profile id a create answered with, or undefined when the body carries none. */
+function readProfileId(body: unknown): string | undefined {
+  return isRecord(body) && hasStringProp(body, "profileId") ? body.profileId : undefined;
 }
 
 /** The notice a failed drain shows when the user asked for it explicitly. */
@@ -1012,6 +1018,10 @@ export class PetroglyphPlugin extends Plugin {
       if (hasStringProp(raw, "activeProfileId")) {
         saved.activeProfileId = raw.activeProfileId;
       }
+      // The destination a profile syncs into is plugin state, so the saved
+      // profiles are what restore it; the server never sends one back.
+      const savedProfiles = parseStoredProfiles(raw["profiles"]);
+      if (savedProfiles !== undefined) saved.profiles = savedProfiles;
     }
     this._data = { ...DEFAULT_DATA, ...saved };
   }
@@ -1025,16 +1035,24 @@ export class PetroglyphPlugin extends Plugin {
       if (!response.ok) return;
       const body: unknown = await response.json();
       if (!Array.isArray(body)) return;
-      const profiles = body.filter(isRecord).map(
-        (p): SyncProfile => ({
-          profileId: typeof p["profileId"] === "string" ? p["profileId"] : "",
+      // The server owns the name and source path; the destination is plugin
+      // state, so a profile it lists keeps the one already stored here.
+      const storedDestinations = new Map(
+        (this._data.profiles ?? []).map((profile) => [
+          profile.profileId,
+          profile.destinationVaultPath,
+        ]),
+      );
+      const profiles = body.filter(isRecord).map((p): SyncProfile => {
+        const profileId = typeof p["profileId"] === "string" ? p["profileId"] : "";
+        return {
+          profileId,
           name: typeof p["name"] === "string" ? p["name"] : "",
           sourceFolderPath: typeof p["sourceFolderPath"] === "string" ? p["sourceFolderPath"] : "",
-          destinationVaultPath:
-            typeof p["destinationVaultPath"] === "string" ? p["destinationVaultPath"] : "",
+          destinationVaultPath: storedDestinations.get(profileId) ?? "",
           active: p["active"] === true,
-        }),
-      );
+        };
+      });
       const activeFromApi = profiles.find((p) => p.active);
       const activeProfileId =
         activeFromApi !== undefined ? activeFromApi.profileId : this._data.activeProfileId;
@@ -1118,11 +1136,24 @@ export class PetroglyphPlugin extends Plugin {
           Authorization: `Bearer ${this._data.jwt}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ name: data.name, sourceFolderPath: data.sourceFolderPath }),
       });
       if (!response.ok) {
         new Notice(await this.failureNotice("Failed to create profile", response));
         return;
+      }
+      // The request carries no destination, so the plugin records the one the
+      // user typed against the profile the server just created. A body with no
+      // id leaves that profile on the `handwritten` root until it is edited.
+      const created: unknown = await response.json().catch(() => undefined);
+      const profileId = readProfileId(created);
+      if (profileId !== undefined) {
+        this.storeProfile({
+          profileId,
+          name: data.name,
+          sourceFolderPath: data.sourceFolderPath,
+          destinationVaultPath: data.destinationVaultPath,
+        });
       }
       await this.loadProfiles();
     } catch {
@@ -1135,23 +1166,48 @@ export class PetroglyphPlugin extends Plugin {
     updates: Partial<Pick<SyncProfile, "name" | "sourceFolderPath" | "destinationVaultPath">>,
   ): Promise<void> {
     if (this._data.jwt === undefined) return;
+    // The destination never reaches the server: it is plugin state, written to
+    // plugin data below. Everything else in the update is the server's.
+    const { destinationVaultPath, ...serverUpdates } = updates;
     try {
-      const response = await fetch(`${this._data.apiBaseUrl}/profiles/${profileId}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${this._data.jwt}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(updates),
-      });
-      if (!response.ok) {
-        new Notice(await this.failureNotice("Failed to edit profile", response));
-        return;
+      if (Object.keys(serverUpdates).length > 0) {
+        const response = await fetch(`${this._data.apiBaseUrl}/profiles/${profileId}`, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${this._data.jwt}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(serverUpdates),
+        });
+        if (!response.ok) {
+          new Notice(await this.failureNotice("Failed to edit profile", response));
+          return;
+        }
+      }
+      if (destinationVaultPath !== undefined) {
+        const stored = this._data.profiles?.find((profile) => profile.profileId === profileId);
+        if (stored !== undefined) {
+          this.storeProfile({ ...stored, destinationVaultPath });
+          await this.savePluginData();
+        }
       }
       await this.loadProfiles();
     } catch {
       new Notice("Failed to edit profile: network error");
     }
+  }
+
+  /**
+   * Records a profile in the plugin's own copy of the list. The destination is
+   * the plugin's state: the server neither accepts nor returns one, so this copy
+   * is its only home and `loadProfiles` reads it back by id.
+   */
+  private storeProfile(profile: SyncProfile): void {
+    const stored = this._data.profiles ?? [];
+    const profiles = stored.some((candidate) => candidate.profileId === profile.profileId)
+      ? stored.map((candidate) => (candidate.profileId === profile.profileId ? profile : candidate))
+      : [...stored, profile];
+    this._data = { ...this._data, profiles };
   }
 
   async deleteProfile(profileId: string): Promise<void> {
