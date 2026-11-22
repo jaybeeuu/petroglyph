@@ -55,7 +55,11 @@ written for a profile that is gone, so a deleted profile must never look empty.
   connection.
 - **Subscription registry keyed `(profileId, provider)` = one Graph subscription per profile.** It is
   the only record of that subscription — root, folder `itemId`, `subscriptionId`, `deltaLink`,
-  `clientState` secret, `expiry` and state — so the profile row holds no Graph state. Both indexes
+  `clientState` secret, `expiry` and state — so the profile row holds no Graph state. Its shape is
+  `subscriptionRegistryItemSchema` (`@petroglyph/contracts`), a union on `subscriptionState` over
+  `pending`, `active` and `failed`; only an `active` row must carry `subscriptionId`,
+  `clientStateSecret` and `expiry`. A **stale** subscription is not a state — a delta token rejected
+  with `410` belongs to the walk — and a **removed** subscription is a deleted row. Both indexes
   project ALL because a notification names a `subscriptionId` and nothing else, and the renewer
   reads a time window; either lookup returns `root` and `clientState`, so a recreate needs no
   profile read.
