@@ -90,6 +90,64 @@ resource "aws_dynamodb_table" "sync_profiles" {
   }
 }
 
+# Subscription registry (profile flows, decision 4): one Graph subscription per
+# profile, keyed {profileId, provider}. Graph state — root, folder itemId,
+# subscriptionId, deltaLink, clientState secret, expiry and subscriptionState —
+# lives here and never on the profile row. Two access patterns drive the two
+# indexes:
+#
+# * the webhook and lifecycle notifications arrive holding a subscriptionId and
+#   nothing else, so `subscriptionId-index` answers them;
+# * the hourly renewer asks which rows expire inside a 24-hour horizon, so
+#   `expiry-index` ranges over the epoch seconds in `expiry`. Its partition key
+#   is `provider` — the table's sort key, so every row carries it — and the
+#   renewer issues one query per provider. A hash-only GSI on `expiry` could
+#   not answer a window query, and one query cannot span every provider.
+
+resource "aws_dynamodb_table" "graph_subscriptions" {
+  name         = "petroglyph-graph-subscriptions-${terraform.workspace}"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "profileId"
+  range_key    = "provider"
+
+  attribute {
+    name = "profileId"
+    type = "S"
+  }
+
+  attribute {
+    name = "provider"
+    type = "S"
+  }
+
+  attribute {
+    name = "subscriptionId"
+    type = "S"
+  }
+
+  attribute {
+    name = "expiry"
+    type = "N"
+  }
+
+  global_secondary_index {
+    name            = "subscriptionId-index"
+    hash_key        = "subscriptionId"
+    projection_type = "ALL"
+  }
+
+  global_secondary_index {
+    name            = "expiry-index"
+    hash_key        = "provider"
+    range_key       = "expiry"
+    projection_type = "ALL"
+  }
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
 resource "aws_dynamodb_table" "file_records" {
   name         = "petroglyph-file-records-${terraform.workspace}"
   billing_mode = "PAY_PER_REQUEST"

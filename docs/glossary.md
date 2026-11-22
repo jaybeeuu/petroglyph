@@ -47,6 +47,12 @@ download returns `404`.
   fast-fail together. Per-profile token copies would rot under Microsoft's refresh-token rotation.
 - **Events are per profile** (`onedrive://profiles/<profileId>`) — events are per job, tokens per
   connection.
+- **Subscription registry keyed `(profileId, provider)` = one Graph subscription per profile.** It is
+  the only record of that subscription — root, folder `itemId`, `subscriptionId`, `deltaLink`,
+  `clientState` secret, `expiry` and state — so the profile row holds no Graph state. Both indexes
+  project ALL because a notification names a `subscriptionId` and nothing else, and the renewer
+  reads a time window; either lookup returns `root` and `clientState`, so a recreate needs no
+  profile read.
 - **`reconnectRequired` is sticky** until `/onedrive/connect` rewrites the tokens, and
   `resolveAccessToken` never returns an expired token.
 
