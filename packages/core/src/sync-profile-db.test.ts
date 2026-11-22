@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import {
-  deleteProfile,
   getProfile,
   listProfiles,
   putProfile,
+  softDeleteProfile,
   updateProfile,
 } from "./sync-profile-db.js";
 import type { SyncProfile } from "./sync-profile.js";
@@ -33,6 +33,23 @@ describe("getProfile", () => {
     const client = makeClient(() => ({ Item: testProfile }));
     const result = await getProfile(client, TABLE_NAME, "user-1", "prof-1");
     expect(result).toEqual(testProfile);
+  });
+
+  it("keeps the purge completion marker a purge wrote", async () => {
+    const client = makeClient(() => ({
+      Item: {
+        ...testProfile,
+        deletedAt: "2024-03-03T00:00:00.000Z",
+        purgedAt: "2024-03-03T01:00:00.000Z",
+      },
+    }));
+
+    const result = await getProfile(client, TABLE_NAME, "user-1", "prof-1");
+
+    expect(result).toMatchObject({
+      deletedAt: "2024-03-03T00:00:00.000Z",
+      purgedAt: "2024-03-03T01:00:00.000Z",
+    });
   });
 
   it("returns null when item not found", async () => {
@@ -75,6 +92,7 @@ describe("listProfiles", () => {
     expect(call[0].input).toEqual({
       TableName: TABLE_NAME,
       KeyConditionExpression: "userId = :userId",
+      FilterExpression: "attribute_not_exists(deletedAt)",
       ExpressionAttributeValues: { ":userId": "user-1" },
       ExclusiveStartKey: undefined,
     });
@@ -130,7 +148,7 @@ describe("updateProfile", () => {
       TableName: TABLE_NAME,
       Key: { userId: "user-1", profileId: "prof-1" },
       UpdateExpression: "SET #attribute0 = :value0, #attribute1 = :value1",
-      ConditionExpression: "attribute_exists(userId)",
+      ConditionExpression: "attribute_exists(userId) AND attribute_not_exists(deletedAt)",
       ExpressionAttributeNames: { "#attribute0": "name", "#attribute1": "updatedAt" },
       ExpressionAttributeValues: { ":value0": "Renamed", ":value1": "2024-02-02T00:00:00.000Z" },
     });
@@ -147,7 +165,7 @@ describe("updateProfile", () => {
       TableName: TABLE_NAME,
       Key: { userId: "user-1", profileId: "prof-1" },
       UpdateExpression: "REMOVE #attribute0",
-      ConditionExpression: "attribute_exists(userId)",
+      ConditionExpression: "attribute_exists(userId) AND attribute_not_exists(deletedAt)",
       ExpressionAttributeNames: { "#attribute0": "enabled" },
     });
   });
@@ -159,7 +177,9 @@ describe("updateProfile", () => {
 
     const { send } = client as unknown as { send: ReturnType<typeof vi.fn> };
     const call = send.mock.calls[0] as [{ input: { ConditionExpression?: string } }];
-    expect(call[0].input.ConditionExpression).toBe("attribute_exists(userId)");
+    expect(call[0].input.ConditionExpression).toBe(
+      "attribute_exists(userId) AND attribute_not_exists(deletedAt)",
+    );
   });
 
   it("sends no command when no attribute is named", async () => {
@@ -172,15 +192,68 @@ describe("updateProfile", () => {
   });
 });
 
-describe("deleteProfile", () => {
-  it("sends DeleteCommand with correct keys", async () => {
+describe("softDeleteProfile", () => {
+  const DELETED_AT = "2024-03-03T00:00:00.000Z";
+
+  it("sets deletedAt on a profile that is not deleted yet", async () => {
     const client = makeClient(() => ({}));
-    await deleteProfile(client, TABLE_NAME, "user-1", "prof-1");
+
+    const outcome = await softDeleteProfile(client, TABLE_NAME, "user-1", "prof-1", DELETED_AT);
+
+    expect(outcome).toBe("deleted");
     const { send } = client as unknown as { send: ReturnType<typeof vi.fn> };
     const call = send.mock.calls[0] as [{ input: unknown }];
     expect(call[0].input).toEqual({
       TableName: TABLE_NAME,
       Key: { userId: "user-1", profileId: "prof-1" },
+      UpdateExpression: "SET #attribute0 = :value0",
+      ConditionExpression: "attribute_exists(userId) AND attribute_not_exists(deletedAt)",
+      ExpressionAttributeNames: { "#attribute0": "deletedAt" },
+      ExpressionAttributeValues: { ":value0": DELETED_AT },
     });
+  });
+
+  it("reports a profile deleted by an earlier call when the condition fails", async () => {
+    const client = makeClient((command: unknown) => {
+      const name = (command as { constructor: { name: string } }).constructor.name;
+      if (name === "UpdateCommand") {
+        return Promise.reject(
+          Object.assign(new Error("The conditional request failed"), {
+            name: "ConditionalCheckFailedException",
+          }),
+        );
+      }
+      return { Item: { ...testProfile, deletedAt: DELETED_AT } };
+    });
+
+    const outcome = await softDeleteProfile(client, TABLE_NAME, "user-1", "prof-1", DELETED_AT);
+
+    expect(outcome).toBe("already-deleted");
+  });
+
+  it("reports a profile that is not there when the condition fails", async () => {
+    const client = makeClient((command: unknown) => {
+      const name = (command as { constructor: { name: string } }).constructor.name;
+      if (name === "UpdateCommand") {
+        return Promise.reject(
+          Object.assign(new Error("The conditional request failed"), {
+            name: "ConditionalCheckFailedException",
+          }),
+        );
+      }
+      return {};
+    });
+
+    const outcome = await softDeleteProfile(client, TABLE_NAME, "user-1", "prof-1", DELETED_AT);
+
+    expect(outcome).toBe("missing");
+  });
+
+  it("rethrows a failure that is not the condition", async () => {
+    const client = makeClient(() => Promise.reject(new Error("throughput exceeded")));
+
+    await expect(
+      softDeleteProfile(client, TABLE_NAME, "user-1", "prof-1", DELETED_AT),
+    ).rejects.toThrow("throughput exceeded");
   });
 });

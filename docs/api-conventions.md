@@ -64,7 +64,7 @@ query — the generated spec omits those parameters to match.
 Each operation declares the bodies it answers with in `responses`, keyed by HTTP
 status. `defineEndpoint` holds the handler's response to the schema declared for
 that status, after the handler ran. All 19 operations declare `responses` today.
-Only a status that writes a body is declared: a 302 redirect and a delete's 204
+Only a status that writes a body is declared: a 302 redirect and a delete's 200
 carry none, so a schema for them would describe something the handler never
 writes.
 

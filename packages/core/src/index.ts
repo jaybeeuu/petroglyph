@@ -6,9 +6,14 @@ export {
   listProfiles,
   putProfile,
   updateProfile,
-  deleteProfile,
+  softDeleteProfile,
+  isConditionalCheckFailure,
 } from "./sync-profile-db.js";
-export type { ProfileAttributeValue, ProfileChanges } from "./sync-profile-db.js";
+export type {
+  ProfileAttributeValue,
+  ProfileChanges,
+  ProfileSoftDelete,
+} from "./sync-profile-db.js";
 export { fileRecordSchema, fileRecordStatusEnum } from "./file-record.js";
 export type {
   FileRecord,

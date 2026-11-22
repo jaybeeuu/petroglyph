@@ -8,10 +8,11 @@ import {
 import type { EndpointInput } from "@petroglyph/contracts";
 import {
   getProfile,
+  isConditionalCheckFailure,
   listProfiles,
   normalizeSourceFolderPath,
   updateProfile,
-  deleteProfile,
+  softDeleteProfile,
 } from "@petroglyph/core";
 import type { SyncProfile } from "@petroglyph/core";
 import type { AppContext } from "./auth-middleware.js";
@@ -130,7 +131,16 @@ export const putProfileEndpoint = defineEndpoint(
       normalizeSourceFolderPath(updates.sourceFolderPath) !==
         normalizeSourceFolderPath(existing.sourceFolderPath);
     const update = profileUpdateFrom(updates, new Date().toISOString());
-    await updateProfile(docClient(), syncProfilesTableName(), userId, profileId, update);
+    try {
+      await updateProfile(docClient(), syncProfilesTableName(), userId, profileId, update);
+    } catch (error) {
+      // A deleted profile is read only. The read above can only catch a profile
+      // that was already deleted; the write's condition catches the race.
+      if (!isConditionalCheckFailure(error)) {
+        throw error;
+      }
+      return c.json({ error: "This profile has been deleted." }, 410);
+    }
     const updated = mergeProfile(existing, update);
     const deactivatedProfileIds: string[] = [];
     if (updates.active === true) {
@@ -162,7 +172,21 @@ export const deleteProfileEndpoint = defineEndpoint(
     if (existing === null || existing.userId !== userId) {
       return c.json({ error: "Profile not found" }, 404);
     }
-    await deleteProfile(docClient(), syncProfilesTableName(), userId, profileId);
+    // A repeat delete asks for a state the row is already in, so it succeeds and
+    // writes nothing: the first deletedAt stays.
+    const outcome = await softDeleteProfile(
+      docClient(),
+      syncProfilesTableName(),
+      userId,
+      profileId,
+      new Date().toISOString(),
+    );
+    if (outcome === "missing") {
+      return c.json({ error: "Profile not found" }, 404);
+    }
+    if (outcome === "already-deleted") {
+      return new Response(null, { status: 200 });
+    }
     await deleteFileRecordsForProfile(profileId);
     if (existing.active) {
       const remaining = await listProfiles(docClient(), syncProfilesTableName(), userId);
@@ -177,6 +201,6 @@ export const deleteProfileEndpoint = defineEndpoint(
         });
       }
     }
-    return new Response(null, { status: 204 });
+    return new Response(null, { status: 200 });
   },
 );

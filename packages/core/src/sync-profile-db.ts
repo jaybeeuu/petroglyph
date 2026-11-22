@@ -1,13 +1,19 @@
-import {
-  DeleteCommand,
-  GetCommand,
-  PutCommand,
-  QueryCommand,
-  UpdateCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { syncProfileSchema } from "./sync-profile.js";
 import type { SyncProfile } from "./sync-profile.js";
+
+/**
+ * Every write that changes a stored profile is conditional on the row existing
+ * and on the profile not being deleted, so a delete that races a stream-driven
+ * action wins. A deleted profile is read only.
+ */
+const LIVE_PROFILE_CONDITION = "attribute_exists(userId) AND attribute_not_exists(deletedAt)";
+
+/** Whether DynamoDB rejected a write because the write's condition did not hold. */
+export function isConditionalCheckFailure(error: unknown): boolean {
+  return error instanceof Error && error.name === "ConditionalCheckFailedException";
+}
 
 export async function getProfile(
   client: DynamoDBDocumentClient,
@@ -42,6 +48,9 @@ export async function listProfiles(
       new QueryCommand({
         TableName: tableName,
         KeyConditionExpression: "userId = :userId",
+        // A deleted profile is still readable by id, so a scoped route can
+        // answer 410 rather than 404, but it never appears in a list.
+        FilterExpression: "attribute_not_exists(deletedAt)",
         ExpressionAttributeValues: { ":userId": userId },
         ExclusiveStartKey: lastEvaluatedKey,
       }),
@@ -77,6 +86,12 @@ export async function putProfile(
 /** A profile attribute value as DynamoDB stores it. */
 export type ProfileAttributeValue = string | number | boolean;
 
+/** The attributes no ordinary update writes; each has its own command. */
+type ProfileLifecycleField = "deletedAt" | "purgedAt";
+
+/** Every profile attribute an ordinary update may write. */
+type ProfileChangeField = Exclude<keyof SyncProfile, ProfileLifecycleField>;
+
 /**
  * The attributes one profile write names. A field absent from the map keeps its
  * stored value, so an update cannot erase an attribute the writer does not know
@@ -86,17 +101,21 @@ export type ProfileAttributeValue = string | number | boolean;
  * A field mapped to `null` is removed. DynamoDB has no null value, so clearing
  * an optional attribute needs a `REMOVE` clause; a `SET` would store the string
  * `undefined` instead.
+ *
+ * The lifecycle markers are absent on purpose: {@link softDeleteProfile} is the
+ * only writer of `deletedAt`, and the purge is the only writer of `purgedAt`.
  */
 export type ProfileChanges = {
-  readonly [Field in keyof SyncProfile]?: ProfileAttributeValue | null;
+  readonly [Field in ProfileChangeField]?: ProfileAttributeValue | null;
 };
 
 /**
- * Writes the named attributes of an existing profile and nothing else. The item
- * must exist: the `attribute_exists` condition rejects a missing one, because an
- * unguarded update would create the item holding only the named attributes and
- * every later read of that row would fail. A create keeps using
- * {@link putProfile}.
+ * Writes the named attributes of an existing profile and nothing else. The row
+ * must exist and must not be deleted: the `attribute_exists` condition rejects a
+ * missing one, because an unguarded update would create the item holding only
+ * the named attributes and every later read of that row would fail, and
+ * `attribute_not_exists(deletedAt)` rejects a soft-deleted one, so a delete
+ * wins over a concurrent write. A create keeps using {@link putProfile}.
  */
 export async function updateProfile(
   client: DynamoDBDocumentClient,
@@ -140,23 +159,51 @@ export async function updateProfile(
       TableName: tableName,
       Key: { userId, profileId },
       UpdateExpression: updateExpression,
-      ConditionExpression: "attribute_exists(userId)",
+      ConditionExpression: LIVE_PROFILE_CONDITION,
       ExpressionAttributeNames: names,
       ...(Object.keys(values).length > 0 && { ExpressionAttributeValues: values }),
     }),
   );
 }
 
-export async function deleteProfile(
+/** What a soft delete did, so the caller can answer the request it was given. */
+export type ProfileSoftDelete = "deleted" | "already-deleted" | "missing";
+
+/**
+ * Soft-deletes a profile by setting `deletedAt`, conditional on the row existing
+ * and not being deleted already. The row stays: it is the only durable record
+ * that the purge is owed, and `getProfile` still reads it so a profile-scoped
+ * route can answer `410` rather than `404`.
+ *
+ * A repeat delete is a no-op. It reports `already-deleted` and writes nothing, so
+ * the timestamp of the first delete survives.
+ */
+export async function softDeleteProfile(
   client: DynamoDBDocumentClient,
   tableName: string,
   userId: string,
   profileId: string,
-): Promise<void> {
-  await client.send(
-    new DeleteCommand({
-      TableName: tableName,
-      Key: { userId, profileId },
-    }),
-  );
+  deletedAt: string,
+): Promise<ProfileSoftDelete> {
+  try {
+    await client.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: { userId, profileId },
+        UpdateExpression: "SET #attribute0 = :value0",
+        ConditionExpression: LIVE_PROFILE_CONDITION,
+        ExpressionAttributeNames: { "#attribute0": "deletedAt" },
+        ExpressionAttributeValues: { ":value0": deletedAt },
+      }),
+    );
+  } catch (error) {
+    if (!isConditionalCheckFailure(error)) {
+      throw error;
+    }
+    // The condition covers both cases, so the row decides which one it was.
+    const existing = await getProfile(client, tableName, userId, profileId);
+    return existing === null ? "missing" : "already-deleted";
+  }
+
+  return "deleted";
 }

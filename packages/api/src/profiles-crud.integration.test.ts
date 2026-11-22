@@ -192,10 +192,75 @@ describe("profiles CRUD against LocalStack DynamoDB", () => {
 
     const response = await request("DELETE", "/profiles/profile-active", undefined, userId);
 
-    expect(response.status).toBe(204);
+    expect(response.status).toBe(200);
     const promoted = await readStoredProfile("profile-newest", userId);
     expect(promoted["active"]).toBe(true);
     expect(promoted["oneDriveConnected"]).toBe(true);
+  });
+
+  it("sets deletedAt and keeps the row instead of removing it", async () => {
+    const userId = "user-soft-delete";
+    await putStoredProfile({ profileId: "profile-soft" }, userId);
+
+    const response = await request("DELETE", "/profiles/profile-soft", undefined, userId);
+
+    expect(response.status).toBe(200);
+    const stored = await findStoredProfile("profile-soft", userId);
+    expect(stored).not.toBeNull();
+    expect(stored?.["deletedAt"]).toEqual(expect.any(String));
+  });
+
+  it("answers a repeat delete with 200 and keeps the first deletedAt", async () => {
+    const userId = "user-repeat-delete";
+    // A second write would stamp the present, so the seeded value can only
+    // survive a delete that leaves an already-deleted row alone.
+    await putStoredProfile(
+      { profileId: "profile-repeat", deletedAt: "2024-03-03T00:00:00.000Z" },
+      userId,
+    );
+
+    const response = await request("DELETE", "/profiles/profile-repeat", undefined, userId);
+
+    expect(response.status).toBe(200);
+    expect((await readStoredProfile("profile-repeat", userId))["deletedAt"]).toBe(
+      "2024-03-03T00:00:00.000Z",
+    );
+  });
+
+  it("keeps a deleted profile out of the list but readable by id", async () => {
+    const userId = "user-reader-guard";
+    await putStoredProfile(
+      { profileId: "profile-deleted", deletedAt: "2024-05-05T00:00:00.000Z" },
+      userId,
+    );
+    await putStoredProfile({ profileId: "profile-live" }, userId);
+
+    const listResponse = await request("GET", "/profiles", undefined, userId);
+    const readResponse = await request("GET", "/profiles/profile-deleted", undefined, userId);
+
+    const listed = (await listResponse.json()) as { profileId: string }[];
+    expect(listed.map((profile) => profile.profileId)).toStrictEqual(["profile-live"]);
+    expect(readResponse.status).toBe(200);
+    expect(await readResponse.json()).toMatchObject({
+      profileId: "profile-deleted",
+      deletedAt: "2024-05-05T00:00:00.000Z",
+    });
+  });
+
+  it("refuses a mutation on a deleted profile and leaves its attributes alone", async () => {
+    const userId = "user-frozen";
+    await putStoredProfile(
+      { profileId: "profile-frozen", name: "Before", deletedAt: "2024-04-04T00:00:00.000Z" },
+      userId,
+    );
+
+    const response = await request("PUT", "/profiles/profile-frozen", { name: "After" }, userId);
+
+    expect(response.status).toBe(410);
+    expect(await readStoredProfile("profile-frozen", userId)).toMatchObject({
+      name: "Before",
+      deletedAt: "2024-04-04T00:00:00.000Z",
+    });
   });
 
   it("refuses a profile update when the row is not there instead of writing a partial row", async () => {
