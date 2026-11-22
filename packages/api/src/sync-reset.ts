@@ -22,7 +22,7 @@ function fileRecordsTableName(): string {
 }
 
 function deltaTokensTableName(): string {
-  return process.env["DELTA_TOKENS_TABLE"] ?? "petroglyph-delta-tokens-default";
+  return process.env["DELTA_CURSOR_TABLE"] ?? "petroglyph-delta-tokens-default";
 }
 
 function parseFileRecordKeys(items: unknown[] | undefined): FileRecordKey[] {

@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { CreateBucketCommand, GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { CreateTableCommand, DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { PutParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import type { SQSBatchResponse, SQSEvent } from "aws-lambda";
 import type { SyncProfile } from "@petroglyph/core";
@@ -15,7 +15,7 @@ const BUCKET = "petroglyph-staged-pdfs";
 const TOKEN_VAULT_TABLE = "token-vaults-int";
 const PROFILES_TABLE = "sync-profiles-int";
 const EVENT_LOG_TABLE = "event-log-int";
-const DELTA_STATES_TABLE = "delta-states-int";
+const DELTA_CURSOR_TABLE = "delta-tokens-int";
 const CLIENT_ID_PATH = "/petroglyph/onedrive/client-id";
 const CLIENT_SECRET_PATH = "/petroglyph/onedrive/client-secret";
 
@@ -109,7 +109,7 @@ describe("adapter handler against LocalStack S3 + event log", () => {
     vi.stubEnv("REFRESH_TOKENS_TABLE", TOKEN_VAULT_TABLE);
     vi.stubEnv("SYNC_PROFILES_TABLE", PROFILES_TABLE);
     vi.stubEnv("EVENT_LOG_TABLE", EVENT_LOG_TABLE);
-    vi.stubEnv("DELTA_TOKENS_TABLE", DELTA_STATES_TABLE);
+    vi.stubEnv("DELTA_CURSOR_TABLE", DELTA_CURSOR_TABLE);
     vi.stubEnv("STAGED_PDFS_BUCKET", BUCKET);
     vi.stubEnv("ONEDRIVE_CLIENT_ID_SSM_PATH", CLIENT_ID_PATH);
     vi.stubEnv("ONEDRIVE_CLIENT_SECRET_SSM_PATH", CLIENT_SECRET_PATH);
@@ -124,7 +124,7 @@ describe("adapter handler against LocalStack S3 + event log", () => {
     await createTable(rawDynamo, TOKEN_VAULT_TABLE, "userId", "provider");
     await createTable(rawDynamo, PROFILES_TABLE, "userId", "profileId");
     await createTable(rawDynamo, EVENT_LOG_TABLE, "source", "id");
-    await createTable(rawDynamo, DELTA_STATES_TABLE, "userId", "provider");
+    await createTable(rawDynamo, DELTA_CURSOR_TABLE, "profileId");
     dynamo = DynamoDBDocumentClient.from(rawDynamo);
 
     s3 = new S3Client({ region: REGION, endpoint, forcePathStyle: true, credentials: CREDENTIALS });
@@ -213,6 +213,14 @@ describe("adapter handler against LocalStack S3 + event log", () => {
         mimeType: "application/pdf",
       },
     });
+
+    // The cursor the walk advanced is one row, keyed by the profile that walked.
+    const cursor = await dynamo.send(
+      new GetCommand({ TableName: DELTA_CURSOR_TABLE, Key: { profileId: PROFILE.profileId } }),
+    );
+    expect(cursor.Item).toMatchObject({
+      deltaLink: `${graph.baseUrl}/me/drive/root/delta?token=next`,
+    });
   }, 60_000);
 });
 
@@ -220,20 +228,28 @@ function createTable(
   client: DynamoDBClient,
   tableName: string,
   hashKey: string,
-  rangeKey: string,
+  rangeKey?: string,
 ): Promise<void> {
+  const keySchema =
+    rangeKey === undefined
+      ? [{ AttributeName: hashKey, KeyType: "HASH" as const }]
+      : [
+          { AttributeName: hashKey, KeyType: "HASH" as const },
+          { AttributeName: rangeKey, KeyType: "RANGE" as const },
+        ];
+  const attributeDefinitions =
+    rangeKey === undefined
+      ? [{ AttributeName: hashKey, AttributeType: "S" as const }]
+      : [
+          { AttributeName: hashKey, AttributeType: "S" as const },
+          { AttributeName: rangeKey, AttributeType: "S" as const },
+        ];
   return client
     .send(
       new CreateTableCommand({
         TableName: tableName,
-        KeySchema: [
-          { AttributeName: hashKey, KeyType: "HASH" },
-          { AttributeName: rangeKey, KeyType: "RANGE" },
-        ],
-        AttributeDefinitions: [
-          { AttributeName: hashKey, AttributeType: "S" },
-          { AttributeName: rangeKey, AttributeType: "S" },
-        ],
+        KeySchema: keySchema,
+        AttributeDefinitions: attributeDefinitions,
         BillingMode: "PAY_PER_REQUEST",
       }),
     )

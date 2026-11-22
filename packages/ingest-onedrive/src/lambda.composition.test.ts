@@ -174,7 +174,7 @@ describe("adapter lambda composition (buildDeltaRunner)", () => {
     vi.stubEnv("REFRESH_TOKENS_TABLE", TABLES.refreshTokens);
     vi.stubEnv("SYNC_PROFILES_TABLE", TABLES.syncProfiles);
     vi.stubEnv("EVENT_LOG_TABLE", TABLES.eventLog);
-    vi.stubEnv("DELTA_TOKENS_TABLE", TABLES.deltaTokens);
+    vi.stubEnv("DELTA_CURSOR_TABLE", TABLES.deltaTokens);
     vi.stubEnv("STAGED_PDFS_BUCKET", STAGED_BUCKET);
     vi.stubEnv("DELTA_TRIGGER_QUEUE_URL", DELTA_TRIGGER_QUEUE_URL);
   });
@@ -242,7 +242,7 @@ describe("adapter lambda composition (buildDeltaRunner)", () => {
     ["REFRESH_TOKENS_TABLE"],
     ["SYNC_PROFILES_TABLE"],
     ["EVENT_LOG_TABLE"],
-    ["DELTA_TOKENS_TABLE"],
+    ["DELTA_CURSOR_TABLE"],
     ["STAGED_PDFS_BUCKET"],
     ["DELTA_TRIGGER_QUEUE_URL"],
   ])("throws naming %s when the variable is unset", async (name) => {

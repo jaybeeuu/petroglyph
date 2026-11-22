@@ -8,7 +8,7 @@ function createEnvironment(overrides: Partial<SmokeEnvironment> = {}): SmokeEnvi
     SMOKE_STAGED_RECORDS_TABLE: "staged-records",
     SMOKE_SYNC_PROFILES_TABLE: "sync-profiles",
     SMOKE_TOKEN_VAULTS_TABLE: "token-vaults",
-    SMOKE_DELTA_STATES_TABLE: "delta-states",
+    SMOKE_DELTA_CURSOR_TABLE: "petroglyph-delta-tokens",
     SMOKE_JWT_PRIVATE_KEY_SSM_PATH: "/petroglyph/qa/jwt/private-key",
     AWS_REGION: "eu-west-2",
     ...overrides,

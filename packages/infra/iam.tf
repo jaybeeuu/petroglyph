@@ -501,8 +501,8 @@ resource "aws_iam_role_policy" "petroglyph_adapter_onedrive_policy" {
     Version = "2012-10-17"
     Statement = [
       # Per-table least privilege: the adapter's env points REFRESH_TOKENS_TABLE at
-      # token_vaults and DELTA_TOKENS_TABLE at delta_states, so the legacy
-      # refresh_tokens/delta_tokens tables are not reachable from its code.
+      # token_vaults and DELTA_CURSOR_TABLE at delta_tokens, so the legacy
+      # refresh_tokens table is not reachable from its code.
       {
         Sid    = "DynamoDBTokenVaultReadWrite"
         Effect = "Allow"
@@ -514,14 +514,14 @@ resource "aws_iam_role_policy" "petroglyph_adapter_onedrive_policy" {
         Resource = aws_dynamodb_table.token_vaults.arn
       },
       {
-        Sid    = "DynamoDBDeltaStateReadWrite"
+        Sid    = "DynamoDBDeltaCursorReadWrite"
         Effect = "Allow"
         Action = [
           "dynamodb:GetItem",
           "dynamodb:UpdateItem",
           "dynamodb:DeleteItem",
         ]
-        Resource = aws_dynamodb_table.delta_states.arn
+        Resource = aws_dynamodb_table.delta_tokens.arn
       },
       {
         Sid      = "DynamoDBEventLogAppend"

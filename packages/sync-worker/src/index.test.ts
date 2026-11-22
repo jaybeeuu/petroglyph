@@ -73,7 +73,7 @@ function mockTokenRecord({
 describe("sync-worker handler", () => {
   beforeEach(() => {
     vi.stubEnv("FILE_RECORDS_TABLE", "petroglyph-file-records-test");
-    vi.stubEnv("DELTA_TOKENS_TABLE", "petroglyph-delta-tokens-test");
+    vi.stubEnv("DELTA_CURSOR_TABLE", "petroglyph-delta-tokens-test");
     vi.stubEnv("SYNC_JOBS_TABLE", "petroglyph-sync-jobs-test");
     vi.stubEnv("REFRESH_TOKENS_TABLE", "petroglyph-refresh-tokens-test");
     vi.stubEnv(

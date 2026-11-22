@@ -14,7 +14,7 @@ import {
 import { DynamoDBTokenStore } from "./tokens/token-store-ddb.js";
 import { OAuthTokenClient } from "./tokens/token-client.js";
 import { MicrosoftGraphClient } from "./tokens/graph-client.js";
-import { DynamoDBDeltaStateStore } from "./delta/delta-state-store-ddb.js";
+import { DynamoDBDeltaCursorStore } from "./delta/delta-cursor-store-ddb.js";
 import { runDeltaSync, type DeltaSyncResult } from "./adapter/sync.js";
 
 /**
@@ -175,9 +175,9 @@ export function buildDeltaRunner(): (connection: {
         client: docClient(),
         tableName: requiredEnv("EVENT_LOG_TABLE"),
       }),
-      deltaStateStore: new DynamoDBDeltaStateStore({
+      deltaCursorStore: new DynamoDBDeltaCursorStore({
         client: docClient(),
-        tableName: requiredEnv("DELTA_TOKENS_TABLE"),
+        tableName: requiredEnv("DELTA_CURSOR_TABLE"),
       }),
       connection,
       profiles,
@@ -191,10 +191,13 @@ export function buildDeltaRunner(): (connection: {
                 userId: continuation.connection.userId,
                 provider: continuation.connection.provider,
               } satisfies DeltaTrigger,
-              // The resume link is the identity of one continuation: one per page
-              // boundary, so two sends of the same point collapse into one walk
-              // while two different points do not.
-              dedupeIdentity: continuation.resumeLink,
+              // One continuation per invocation, identified by the set of resume
+              // points it carries: two sends of the same set collapse into one
+              // bell, two different sets do not. A bell addresses the
+              // connection, and each profile resumes from its own cursor.
+              dedupeIdentity: continuation.deferred
+                .map((profile) => `${profile.profileId}:${profile.resumeLink}`)
+                .join("\n"),
             }),
           ),
         );

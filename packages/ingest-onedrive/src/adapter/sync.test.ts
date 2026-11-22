@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CloudEvent, EventLogWriter } from "@petroglyph/events";
 import type { StagedObjectStore, StagedObjectStorePutResult } from "@petroglyph/staging-contracts";
-import type { DeltaStateStore } from "../delta/delta-state-store.js";
+import type { DeltaCursor, DeltaCursorStore } from "../delta/delta-cursor-store.js";
 import type { GraphClient } from "../tokens/graph-client.js";
 import { runDeltaSync, type DeltaContinuation } from "./sync.js";
 
@@ -50,8 +50,8 @@ function makeHarness(deltaItems: unknown[]): {
   eventLog: EventLogWriter;
   putIfAbsent: ReturnType<typeof vi.fn>;
   documents: CloudEvent<unknown>[];
-  deltaState: ReturnType<typeof makeDeltaState>;
-  deltaStateStore: DeltaStateStore;
+  deltaCursor: ReturnType<typeof makeDeltaCursorStore>;
+  deltaCursorStore: DeltaCursorStore;
   continuations: DeltaContinuation[];
   run(): Promise<Awaited<ReturnType<typeof runDeltaSync>>>;
 } {
@@ -79,8 +79,8 @@ function makeHarness(deltaItems: unknown[]): {
     });
   const eventLog = { putIfAbsent } as unknown as EventLogWriter;
 
-  const deltaState = makeDeltaState();
-  const deltaStateStore = deltaState as unknown as DeltaStateStore;
+  const deltaCursor = makeDeltaCursorStore();
+  const deltaCursorStore = deltaCursor as unknown as DeltaCursorStore;
   const continuations: DeltaContinuation[] = [];
 
   return {
@@ -90,15 +90,15 @@ function makeHarness(deltaItems: unknown[]): {
     eventLog,
     putIfAbsent,
     documents,
-    deltaState,
-    deltaStateStore,
+    deltaCursor,
+    deltaCursorStore,
     continuations,
     run() {
       return runDeltaSync({
         client,
         store,
         eventLog,
-        deltaStateStore,
+        deltaCursorStore,
         connection: { userId: "u1", provider: "onedrive" },
         profiles: [profile],
         initialUrl: INITIAL_URL,
@@ -111,7 +111,7 @@ function makeHarness(deltaItems: unknown[]): {
   };
 }
 
-function makeDeltaState(): {
+function makeDeltaCursorStore(): {
   read: ReturnType<typeof vi.fn>;
   write: ReturnType<typeof vi.fn>;
   clear: ReturnType<typeof vi.fn>;
@@ -197,14 +197,66 @@ describe("runDeltaSync — adapter driver", () => {
       "p1:item-2:file",
       "p1:item-3:deleted",
     ]);
-    // delta token persisted after a successful walk
-    expect(harness.deltaState.write).toHaveBeenCalled();
-    const written = harness.deltaState.write.mock.calls[0] as
-      | [string, string, { deltaLink: string }]
+    // delta cursor persisted under the profile that walked, after success
+    expect(harness.deltaCursor.write).toHaveBeenCalled();
+    const written = harness.deltaCursor.write.mock.calls[0] as
+      | [string, { deltaLink: string }]
       | undefined;
-    expect(written?.[0]).toBe("u1");
-    expect(written?.[1]).toBe("onedrive");
-    expect(written?.[2]).toMatchObject({ deltaLink: DELTA_LINK });
+    expect(written?.[0]).toBe("p1");
+    expect(written?.[1]).toMatchObject({ deltaLink: DELTA_LINK });
+  });
+
+  it("resumes each profile from its own stored cursor, so two profiles never share a read position", async () => {
+    const notesCursor = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=notes";
+    const otherCursor = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=other";
+    const requested: string[] = [];
+    const client: GraphClient = {
+      request(path) {
+        requested.push(path);
+        return Promise.resolve(jsonResponse({ value: [], "@odata.deltaLink": DELTA_LINK }));
+      },
+    };
+    const storedCursors = new Map([
+      ["notes-profile", notesCursor],
+      ["other-profile", otherCursor],
+    ]);
+    const writtenCursors: [string, DeltaCursor][] = [];
+    const deltaCursorStore: DeltaCursorStore = {
+      read: (profileId) => {
+        const deltaLink = storedCursors.get(profileId);
+        return Promise.resolve(
+          deltaLink === undefined ? null : { deltaLink, updatedAt: "2026-09-01T00:00:00.000Z" },
+        );
+      },
+      write: (profileId, cursor) => {
+        writtenCursors.push([profileId, cursor]);
+        return Promise.resolve();
+      },
+      clear: () => Promise.resolve(),
+    };
+
+    await runDeltaSync({
+      client,
+      store: {
+        put: vi.fn().mockResolvedValue({ versionId: "v1" }),
+      } as unknown as StagedObjectStore,
+      eventLog: { putIfAbsent: vi.fn().mockResolvedValue(true) } as unknown as EventLogWriter,
+      deltaCursorStore,
+      connection: { userId: "u1", provider: "onedrive" },
+      profiles: [
+        { profileId: "notes-profile", rootPath: "notes" },
+        { profileId: "other-profile", rootPath: "other" },
+      ],
+      initialUrl: INITIAL_URL,
+      requestContinuation: () => Promise.resolve(),
+    });
+
+    // Each walk starts where its own profile left off, not where the other did.
+    expect(requested).toEqual([notesCursor, otherCursor]);
+    expect(writtenCursors.map(([profileId]) => profileId)).toEqual([
+      "notes-profile",
+      "other-profile",
+    ]);
   });
 
   it("gives two updates to one item distinct emission ids, so both reach the event log", async () => {
@@ -231,9 +283,9 @@ describe("runDeltaSync — adapter driver", () => {
     };
 
     let stored: { deltaLink: string; updatedAt: string } | null = null;
-    const deltaStateStore: DeltaStateStore = {
+    const deltaCursorStore: DeltaCursorStore = {
       read: () => Promise.resolve(stored),
-      write: (_userId, _provider, state) => {
+      write: (_profileId, state) => {
         stored = state;
         return Promise.resolve();
       },
@@ -266,7 +318,7 @@ describe("runDeltaSync — adapter driver", () => {
       client,
       store,
       eventLog,
-      deltaStateStore,
+      deltaCursorStore,
       connection: { userId: "u1", provider: "onedrive" },
       profiles: [profile],
       initialUrl: INITIAL_URL,
@@ -313,7 +365,7 @@ describe("runDeltaSync — adapter driver", () => {
       client: harness.client,
       store: harness.store,
       eventLog: harness.eventLog,
-      deltaStateStore: harness.deltaStateStore,
+      deltaCursorStore: harness.deltaCursorStore,
       connection: { userId: "u1", provider: "onedrive" },
       profiles: [profile],
       initialUrl: INITIAL_URL,
@@ -356,7 +408,7 @@ describe("runDeltaSync — adapter driver", () => {
       client: harness.client,
       store: harness.store,
       eventLog: harness.eventLog,
-      deltaStateStore: harness.deltaStateStore,
+      deltaCursorStore: harness.deltaCursorStore,
       connection: { userId: "u1", provider: "onedrive" },
       profiles: [],
       initialUrl: INITIAL_URL,
@@ -371,7 +423,7 @@ describe("runDeltaSync — adapter driver", () => {
       pagesCompleted: 0,
       pagesRemaining: 0,
     });
-    expect(harness.deltaState.read).not.toHaveBeenCalled();
+    expect(harness.deltaCursor.read).not.toHaveBeenCalled();
   });
 
   it("reports failed when the walk fails and processes nothing", async () => {
@@ -390,7 +442,7 @@ describe("runDeltaSync — adapter driver", () => {
     });
     expect(harness.documents).toEqual([]);
     expect(harness.puts).toEqual([]);
-    expect(harness.deltaState.write).not.toHaveBeenCalled();
+    expect(harness.deltaCursor.write).not.toHaveBeenCalled();
   });
 
   it("a duplicate emit (putIfAbsent false) is counted as skipped — never as landed or deleted", async () => {
@@ -423,7 +475,7 @@ describe("runDeltaSync — adapter driver", () => {
   });
   it("a walk that spends its page budget lands what it fetched, moves the cursor to the resume point and re-enqueues a continuation", async () => {
     const { client, requested } = twoPageClient();
-    const deltaState = makeDeltaState();
+    const deltaCursor = makeDeltaCursorStore();
     const continuations: DeltaContinuation[] = [];
     const result = await runDeltaSync({
       client,
@@ -433,7 +485,7 @@ describe("runDeltaSync — adapter driver", () => {
       eventLog: {
         putIfAbsent: vi.fn().mockResolvedValue(true),
       } as unknown as EventLogWriter,
-      deltaStateStore: deltaState as unknown as DeltaStateStore,
+      deltaCursorStore: deltaCursor as unknown as DeltaCursorStore,
       connection: { userId: "u1", provider: "onedrive" },
       profiles: [profile],
       initialUrl: INITIAL_URL,
@@ -454,21 +506,21 @@ describe("runDeltaSync — adapter driver", () => {
       pagesRemaining: null,
     });
     expect(requested).not.toContain(SECOND_PAGE);
-    // The token stands at the resume point, so the continuation continues the
+    // The cursor stands at the resume point, so the continuation continues the
     // walk instead of restarting the whole drive.
-    const written = deltaState.write.mock.calls[0] as
-      | [string, string, { deltaLink: string }]
-      | undefined;
-    expect(written?.[0]).toBe("u1");
-    expect(written?.[1]).toBe("onedrive");
-    expect(written?.[2]).toMatchObject({ deltaLink: SECOND_PAGE });
+    const written = deltaCursor.write.mock.calls[0] as [string, { deltaLink: string }] | undefined;
+    expect(written?.[0]).toBe("p1");
+    expect(written?.[1]).toMatchObject({ deltaLink: SECOND_PAGE });
     expect(continuations).toEqual([
-      { connection: { userId: "u1", provider: "onedrive" }, resumeLink: SECOND_PAGE },
+      {
+        connection: { userId: "u1", provider: "onedrive" },
+        deferred: [{ profileId: "p1", resumeLink: SECOND_PAGE }],
+      },
     ]);
   });
   it("leaves the token and the continuation alone when landing fails, so the retry re-walks the same pages", async () => {
     const { client } = twoPageClient();
-    const deltaState = makeDeltaState();
+    const deltaCursor = makeDeltaCursorStore();
     const continuations: DeltaContinuation[] = [];
     await expect(
       runDeltaSync({
@@ -479,7 +531,7 @@ describe("runDeltaSync — adapter driver", () => {
         eventLog: {
           putIfAbsent: vi.fn().mockResolvedValue(true),
         } as unknown as EventLogWriter,
-        deltaStateStore: deltaState as unknown as DeltaStateStore,
+        deltaCursorStore: deltaCursor as unknown as DeltaCursorStore,
         connection: { userId: "u1", provider: "onedrive" },
         profiles: [profile],
         initialUrl: INITIAL_URL,
@@ -491,7 +543,7 @@ describe("runDeltaSync — adapter driver", () => {
       }),
     ).rejects.toThrow("s3 unavailable");
     // Advancing the token past unlanded changes would lose them for good.
-    expect(deltaState.write).not.toHaveBeenCalled();
+    expect(deltaCursor.write).not.toHaveBeenCalled();
     expect(continuations).toEqual([]);
   });
 });

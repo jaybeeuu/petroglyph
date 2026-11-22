@@ -11,7 +11,7 @@ export const smokeConfigSchema = z.object({
   stagedRecordsTable: z.string().min(1),
   syncProfilesTable: z.string().min(1),
   tokenVaultsTable: z.string().min(1),
-  deltaStatesTable: z.string().min(1),
+  deltaCursorTable: z.string().min(1),
   jwtPrivateKeySsmPath: z.string().min(1),
   /** Inline PEM override; when present the runner never reads SSM. */
   jwtPrivateKey: z.string().min(1).optional(),
@@ -37,7 +37,7 @@ export function readSmokeConfig(environment: SmokeEnvironment): SmokeConfig {
     stagedRecordsTable: environment["SMOKE_STAGED_RECORDS_TABLE"],
     syncProfilesTable: environment["SMOKE_SYNC_PROFILES_TABLE"],
     tokenVaultsTable: environment["SMOKE_TOKEN_VAULTS_TABLE"],
-    deltaStatesTable: environment["SMOKE_DELTA_STATES_TABLE"],
+    deltaCursorTable: environment["SMOKE_DELTA_CURSOR_TABLE"],
     jwtPrivateKeySsmPath: environment["SMOKE_JWT_PRIVATE_KEY_SSM_PATH"],
     jwtPrivateKey: environment["SMOKE_JWT_PRIVATE_KEY"],
     region: environment["AWS_REGION"],

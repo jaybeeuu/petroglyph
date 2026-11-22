@@ -422,7 +422,6 @@ POLICY_DOC_ALL=$(cat << EOF
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-event-log-${DEPLOY_ENVIRONMENT}",
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-staged-records-${DEPLOY_ENVIRONMENT}",
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-token-vaults-${DEPLOY_ENVIRONMENT}",
-        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-states-${DEPLOY_ENVIRONMENT}",
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-graph-subscriptions-${DEPLOY_ENVIRONMENT}"
       ]
     },

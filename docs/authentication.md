@@ -394,14 +394,13 @@ The adapter's connection-keyed token vault (Delivery 1). One record per (user, p
 | `updatedAt`         | String      | ISO 8601; part of the CAS write condition                           |
 | `reconnectRequired` | Boolean     | `true` once the grant is invalid, until `/connect` rewrites the row |
 
-### `delta_states`
+### `delta_tokens`
 
-The adapter's per-connection Graph delta state (Delivery 1), superseding the per-profile `delta_tokens` table used by the legacy sync path (deprecated, kept for rollback).
+The adapter's per-profile Graph delta cursor: one row per profile, holding the delta link that profile's walk resumes from. The connection-keyed `delta_states` table is retired — its `(userId, provider)` key could not keep two profiles on one connection apart.
 
 | Attribute   | Type        | Description                                   |
 | ----------- | ----------- | --------------------------------------------- |
-| `userId`    | String (PK) | Connection owner                              |
-| `provider`  | String (SK) | `onedrive`                                    |
+| `profileId` | String (PK) | The profile the walk reads for                |
 | `deltaLink` | String      | The Graph delta link the adapter resumes from |
 | `updatedAt` | String      | ISO 8601                                      |
 
