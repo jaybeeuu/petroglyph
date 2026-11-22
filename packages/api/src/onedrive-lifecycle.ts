@@ -78,10 +78,6 @@ export async function markConnected(userId: string): Promise<void> {
   await updateOneDriveStatus(userId, "connected");
 }
 
-async function markReconnectRequired(userId: string): Promise<void> {
-  await updateOneDriveStatus(userId, "reconnect_required");
-}
-
 interface MicrosoftTokenResponse {
   access_token: string;
   refresh_token: string;
@@ -332,7 +328,11 @@ async function handleReauthorizationRequired(notification: LifecycleNotification
 
 async function processLifecycleNotification(notification: LifecycleNotification): Promise<void> {
   if (notification.lifecycleEvent === "subscriptionRemoved") {
-    await markReconnectRequired(notification.clientState);
+    // A removed subscription marks one profile's registry row failed; it is not
+    // by itself a broken connection, so no connection status is written here.
+    console.warn("[onedrive-lifecycle] subscription removed", {
+      subscriptionId: notification.subscriptionId ?? null,
+    });
     return;
   }
 
@@ -340,8 +340,9 @@ async function processLifecycleNotification(notification: LifecycleNotification)
     try {
       await handleReauthorizationRequired(notification);
     } catch (error) {
+      // The reconnect a failed reauthorization needs is derived from the
+      // registry rows, so this path only reports it.
       console.error("[onedrive-lifecycle] reauthorization failed:", error);
-      await markReconnectRequired(notification.clientState);
     }
   }
 }
