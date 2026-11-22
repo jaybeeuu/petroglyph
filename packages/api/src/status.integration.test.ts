@@ -80,7 +80,7 @@ describe("GET /status against LocalStack DynamoDB", () => {
       oneDrive: { connected: false },
       oneDriveStatus: "reconnect_required",
     });
-  });
+  }, 60_000);
 
   it("reports connected when one live profile's subscription is active", async () => {
     const userId = "user-one-active";
@@ -95,7 +95,7 @@ describe("GET /status against LocalStack DynamoDB", () => {
       oneDrive: { connected: true },
       oneDriveStatus: "connected",
     });
-  });
+  }, 60_000);
 
   it("ignores a soft-deleted profile's failed subscription", async () => {
     const userId = "user-deleted-profile";
@@ -105,7 +105,7 @@ describe("GET /status against LocalStack DynamoDB", () => {
     const status = await getStatus(userId);
 
     expect(status).toMatchObject({ oneDriveStatus: "never_connected" });
-  });
+  }, 60_000);
 
   async function getStatus(
     userId: string,
