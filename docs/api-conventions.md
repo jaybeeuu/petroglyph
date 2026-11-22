@@ -63,9 +63,11 @@ query — the generated spec omits those parameters to match.
 Each operation declares the bodies it answers with in `responses`, keyed by HTTP
 status. `defineEndpoint` holds the handler's response to the schema declared for
 that status, after the handler ran. All 21 operations declare `responses` today.
-Only a status that writes a body is declared: a 302 redirect and a delete's 204
-carry none, so a schema for them would describe something the handler never
-writes.
+Only a status that writes a body is declared: a 302 redirect and a delete's
+empty success answer carry none, so a schema for them would describe something
+the handler never writes. `DELETE /profiles/:id` answers `200` with no body —
+the profile is soft-deleted, so a repeated delete answers `200` again rather
+than `404` ([profile/deleted.md](profile/deleted.md)).
 
 One switch decides what a body that violates its schema is allowed to do:
 `responseValidationMode()`, in
