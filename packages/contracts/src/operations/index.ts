@@ -3,7 +3,6 @@ import { getAuthUrl } from "./get-auth-url.operation.js";
 import { getAuthCallback } from "./get-auth-callback.operation.js";
 import { postAuthRefresh } from "./post-auth-refresh.operation.js";
 import { getStatus } from "./get-status.operation.js";
-import { getFilesChanges } from "./get-files-changes.operation.js";
 import { listProfiles } from "./list-profiles.operation.js";
 import { createProfile } from "./create-profile.operation.js";
 import { getProfile } from "./get-profile.operation.js";
@@ -13,8 +12,7 @@ import { getOnedriveAuthUrl } from "./get-onedrive-auth-url.operation.js";
 import { bridgeOnedriveCallback } from "./bridge-onedrive-callback.operation.js";
 import { connectOnedrive } from "./connect-onedrive.operation.js";
 import { postOnedriveLifecycle } from "./post-onedrive-lifecycle.operation.js";
-import { postOnedriveSyncTrigger } from "./post-onedrive-sync-trigger.operation.js";
-import { runSync } from "./run-sync.operation.js";
+import { postProfileSyncTrigger } from "./post-profile-sync-trigger.operation.js";
 import { resetSync } from "./reset-sync.operation.js";
 import { getSyncJob } from "./get-sync-job.operation.js";
 import { listFiles } from "./list-files.operation.js";
@@ -32,7 +30,6 @@ export {
   getAuthCallback,
   postAuthRefresh,
   getStatus,
-  getFilesChanges,
   listProfiles,
   createProfile,
   getProfile,
@@ -42,8 +39,7 @@ export {
   bridgeOnedriveCallback,
   connectOnedrive,
   postOnedriveLifecycle,
-  postOnedriveSyncTrigger,
-  runSync,
+  postProfileSyncTrigger,
   resetSync,
   getSyncJob,
   listFiles,
@@ -70,7 +66,6 @@ export const operations = defineRegistry({
   postOnedriveLifecycle,
   bridgeOnedriveCallback,
   getStatus: withUnauthorized(getStatus),
-  getFilesChanges: withUnauthorized(getFilesChanges),
   listProfiles: withUnauthorized(listProfiles),
   createProfile: withUnauthorized(createProfile),
   getProfile: withUnauthorized(getProfile),
@@ -78,8 +73,7 @@ export const operations = defineRegistry({
   deleteProfile: withUnauthorized(deleteProfile),
   getOnedriveAuthUrl: withUnauthorized(getOnedriveAuthUrl),
   connectOnedrive: withUnauthorized(connectOnedrive),
-  postOnedriveSyncTrigger: withUnauthorized(postOnedriveSyncTrigger),
-  runSync: withUnauthorized(runSync),
+  postProfileSyncTrigger: withUnauthorized(postProfileSyncTrigger),
   resetSync: withUnauthorized(resetSync),
   getSyncJob: withUnauthorized(getSyncJob),
   listFiles: withUnauthorized(listFiles),

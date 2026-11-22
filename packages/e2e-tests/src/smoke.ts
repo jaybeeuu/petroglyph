@@ -8,6 +8,7 @@ import { readSmokeConfig, type SmokeConfig } from "./config.js";
 import {
   SMOKE_ITEM_ID,
   SMOKE_ITEM_NAME,
+  SMOKE_PROFILE_ID,
   SMOKE_RELATIVE_PATH,
   SMOKE_USERNAME,
   SMOKE_USER_ID,
@@ -72,7 +73,7 @@ function asString(value: unknown): string | undefined {
 }
 
 async function fetchFeedEntry(deps: RunSmokeDeps, jwt: string): Promise<FeedEntry> {
-  const url = new URL("/files", deps.config.apiBaseUrl);
+  const url = new URL(`/profiles/${SMOKE_PROFILE_ID}/files`, deps.config.apiBaseUrl);
   const response = await deps.fetchFn(url, {
     headers: { authorization: `Bearer ${jwt}`, accept: "application/json" },
     signal: AbortSignal.timeout(10_000),
@@ -83,7 +84,7 @@ async function fetchFeedEntry(deps: RunSmokeDeps, jwt: string): Promise<FeedEntr
   const entries = parseFeed(await response.json());
   const entry = entries.find((candidate) => candidate.itemId === SMOKE_ITEM_ID);
   if (entry === undefined) {
-    throw new Error(`/files did not include ${SMOKE_ITEM_ID}`);
+    throw new Error(`/profiles/${SMOKE_PROFILE_ID}/files did not include ${SMOKE_ITEM_ID}`);
   }
   return entry;
 }
@@ -105,7 +106,7 @@ async function downloadEntry(deps: RunSmokeDeps, entry: FeedEntry): Promise<Uint
 /**
  * The deterministic QA journey: reset -> seed a profile + valid token ->
  * wake the deployed adapter -> wait for the forwarder/dispatch pipeline to
- * index the staged object -> read it from `/files` with a real QA JWT ->
+ * index the staged object -> read it from `/profiles/{id}/files` with a real QA JWT ->
  * download the presigned object. Microsoft Graph is the only mocked service;
  * every other hop is the deployed QA stack.
  */

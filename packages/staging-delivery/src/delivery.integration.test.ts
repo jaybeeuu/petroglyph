@@ -30,7 +30,7 @@ const profile: SyncProfile = {
   updatedAt: "2026-09-01T00:00:00.000Z",
 };
 
-describe("delivery surface /files against LocalStack S3 + DDB", () => {
+describe("delivery surface /profiles/{id}/files against LocalStack S3 + DDB", () => {
   let container: StartedTestContainer;
   let index: StagedIndexStore;
   let objectStore: StagedObjectStore;
@@ -90,7 +90,10 @@ describe("delivery surface /files against LocalStack S3 + DDB", () => {
     const router = createFilesRouter({
       index,
       objectStore,
-      listProfiles: () => Promise.resolve([{ ...profile }]),
+      readProfile: (userId, profileId) =>
+        Promise.resolve(
+          userId === profile.userId && profileId === profile.profileId ? { ...profile } : null,
+        ),
     });
     app = new Hono<{ Variables: FilesRouterVariables }>();
     app.use("*", async (c, next) => {
@@ -118,7 +121,7 @@ describe("delivery surface /files against LocalStack S3 + DDB", () => {
     });
     await objectStore.put(S3_KEY, BODY, { contentType: "application/pdf" });
 
-    const res = await app.request("/files");
+    const res = await app.request("/profiles/p1/files");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { files: { itemId: string; s3PresignedUrl: string }[] };
     expect(body.files).toHaveLength(1);
@@ -144,17 +147,17 @@ describe("delivery surface /files against LocalStack S3 + DDB", () => {
   }, 30_000);
 
   it("M2/M7: a deleted record is never served — feed drops it, download 404s", async () => {
-    const afterDelete = await app.request("/files");
+    const afterDelete = await app.request("/profiles/p1/files");
     const body = (await afterDelete.json()) as { files: unknown[] };
     expect(body.files).toHaveLength(1);
 
     await index.remove("p1", "item-1");
 
-    const feed = await app.request("/files");
+    const feed = await app.request("/profiles/p1/files");
     const feedBody = (await feed.json()) as { files: unknown[] };
     expect(feedBody.files).toEqual([]);
 
-    const download = await app.request("/files/item-1");
+    const download = await app.request("/profiles/p1/files/item-1");
     expect(download.status).toBe(404);
   }, 30_000);
 
@@ -174,8 +177,8 @@ describe("delivery surface /files against LocalStack S3 + DDB", () => {
       contentType: "application/pdf",
     });
 
-    expect((await app.request("/files/item-9")).status).toBe(404);
-    const feed = await app.request("/files");
+    expect((await app.request("/profiles/p1/files/item-9")).status).toBe(404);
+    const feed = await app.request("/profiles/p1/files");
     const feedBody = (await feed.json()) as { files: unknown[] };
     expect(feedBody.files).toEqual([]);
   }, 30_000);

@@ -2,6 +2,7 @@ import type { Operation } from "@petroglyph/contracts";
 import { defineEndpoint, toHonoPath, type EndpointHandler } from "@petroglyph/contracts/hono";
 import { getFile, listFiles } from "@petroglyph/contracts/operations";
 import type { SyncProfile } from "@petroglyph/core";
+import { isDeletedProfile } from "@petroglyph/core";
 import type { StagedIndexStore, StagedObjectStore } from "@petroglyph/staging-contracts";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -15,8 +16,11 @@ export interface FilesRouterVariables {
 export interface FilesRouterDependencies {
   index: StagedIndexStore;
   objectStore: StagedObjectStore;
-  /** Neutral profile record read-back — READ-ONLY (decisions §9: never calls back). */
-  listProfiles: (userId: string) => Promise<SyncProfile[]>;
+  /**
+   * The named profile, or null when the caller owns no profile with that id.
+   * READ-ONLY (decisions §9: never calls back).
+   */
+  readProfile: (userId: string, profileId: string) => Promise<SyncProfile | null>;
   presignTtlSeconds?: number;
 }
 
@@ -44,6 +48,17 @@ interface FeedScope {
 }
 
 const INVALID_CURSOR = { error: "Invalid files cursor" };
+
+const PROFILE_NOT_FOUND = { error: "Profile not found" };
+
+const PROFILE_DELETED = {
+  error: {
+    code: "profile_deleted",
+    message: "This profile has been deleted. Stop syncing it.",
+  },
+};
+
+const FILE_NOT_FOUND = { error: "File not found" };
 
 type FilesRouterEnv = { Variables: FilesRouterVariables };
 
@@ -90,14 +105,13 @@ function describeFeedQueryError(error: z.ZodError): string {
 }
 
 /**
- * Pins the whole pagination run to the active profile: a cursor naming any
- * other profile — or one that will not decode — is rejected, so a mid-
- * pagination active-profile change invalidates the page rather than silently
- * re-scoping the feed.
+ * Pins the whole pagination run to the named profile: a cursor naming any other
+ * profile — or one that will not decode — is rejected, so a cursor cannot
+ * silently re-scope the feed to a profile the caller did not name.
  */
-function resolveFeedScope(query: FeedQuery, activeProfileId: string): FeedScope | null {
+function resolveFeedScope(query: FeedQuery, profileId: string): FeedScope | null {
   if (query.nextToken === undefined) {
-    return { profileId: activeProfileId };
+    return { profileId };
   }
   let decoded: FeedCursor;
   try {
@@ -105,23 +119,46 @@ function resolveFeedScope(query: FeedQuery, activeProfileId: string): FeedScope 
   } catch {
     return null;
   }
-  if (decoded.profileId !== activeProfileId) {
+  if (decoded.profileId !== profileId) {
     return null;
   }
-  return { profileId: activeProfileId, cursor: decoded.itemId };
+  return { profileId, cursor: decoded.itemId };
 }
 
 function presignTtlOptions(ttlSeconds: number | undefined): { presignTtlSeconds?: number } {
   return ttlSeconds === undefined ? {} : { presignTtlSeconds: ttlSeconds };
 }
 
+/** What a profile-scoped request may read, decided once for both routes. */
+type ProfileScope =
+  | { readonly kind: "gone" }
+  | { readonly kind: "missing" }
+  | { readonly kind: "served"; readonly profileId: string }
+  | { readonly kind: "disabled" };
+
 /**
- * The single active, sync-enabled profile the delivery surface is scoped to.
- * Both the feed and the download surface gate on it, so they cannot drift:
- * no active-enabled profile means no served records.
+ * Resolves the profile named in the path. An unknown profile answers `404`; a
+ * soft-deleted one answers `410` from the moment `deletedAt` is written, so a
+ * deleted profile is never served as an empty feed — the client's prune step
+ * would read that as "every file vanished". `enabled` gates the feed, and a
+ * disabled profile serves nothing.
  */
-function activeEnabledProfile(profiles: SyncProfile[]): SyncProfile | null {
-  return profiles.find((profile) => profile.active && profile.enabled) ?? null;
+async function resolveProfileScope(
+  deps: FilesRouterDependencies,
+  userId: string,
+  profileId: string,
+): Promise<ProfileScope> {
+  const profile = await deps.readProfile(userId, profileId);
+  if (profile === null) {
+    return { kind: "missing" };
+  }
+  if (isDeletedProfile(profile)) {
+    return { kind: "gone" };
+  }
+  if (!profile.enabled) {
+    return { kind: "disabled" };
+  }
+  return { kind: "served", profileId: profile.profileId };
 }
 
 /**
@@ -135,18 +172,28 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
 }> {
   const app = new Hono<{ Variables: FilesRouterVariables }>();
 
-  mount(app, listFiles, async (_input, c) => {
+  mount(app, listFiles, async (input, c) => {
+    // The profile answers first. A deleted profile must stop a client, and a 400
+    // for the query would let the client clear its cursor before it ever reads
+    // the 410, so every profile-scoped route decides the profile before it
+    // validates anything else.
+    const profile = await resolveProfileScope(deps, c.get("userId"), input.params.id);
+    if (profile.kind === "missing") {
+      return c.json(PROFILE_NOT_FOUND, 404);
+    }
+    if (profile.kind === "gone") {
+      return c.json(PROFILE_DELETED, 410);
+    }
+    if (profile.kind === "disabled") {
+      return c.json({ files: [], nextToken: null });
+    }
+
     const query = parseFeedQuery(c.req.query());
     if (!query.ok) {
       return c.json({ error: describeFeedQueryError(query.error) }, 400);
     }
 
-    const activeProfile = activeEnabledProfile(await deps.listProfiles(c.get("userId")));
-    if (activeProfile === null) {
-      return c.json({ files: [], nextToken: null });
-    }
-
-    const scope = resolveFeedScope(query.data, activeProfile.profileId);
+    const scope = resolveFeedScope(query.data, profile.profileId);
     if (scope === null) {
       return c.json(INVALID_CURSOR, 400);
     }
@@ -162,27 +209,25 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
     return c.json({ files: result.files, nextToken: result.nextToken });
   });
 
-  mount(app, getFile, async (_input, c) => {
-    const itemId = c.req.param("itemId");
-    if (itemId === undefined) {
-      return c.json({ error: "File not found" }, 404);
+  mount(app, getFile, async (input, c) => {
+    const profile = await resolveProfileScope(deps, c.get("userId"), input.params.id);
+    if (profile.kind === "missing" || profile.kind === "disabled") {
+      return c.json(FILE_NOT_FOUND, 404);
     }
-
-    const activeProfile = activeEnabledProfile(await deps.listProfiles(c.get("userId")));
-    if (activeProfile === null) {
-      return c.json({ error: "File not found" }, 404);
+    if (profile.kind === "gone") {
+      return c.json(PROFILE_DELETED, 410);
     }
 
     const entry = await resolveOwnedEntry({
       index: deps.index,
       objectStore: deps.objectStore,
-      profileIds: [activeProfile.profileId],
-      itemId,
+      profileIds: [profile.profileId],
+      itemId: input.params.itemId,
       ...presignTtlOptions(deps.presignTtlSeconds),
     });
     if (entry === null) {
       // 404, never 403: the record's existence is not leaked across users.
-      return c.json({ error: "File not found" }, 404);
+      return c.json(FILE_NOT_FOUND, 404);
     }
     return c.json(entry);
   });

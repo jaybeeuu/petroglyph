@@ -16,10 +16,7 @@ import {
 import type { SyncProfile } from "@petroglyph/core";
 import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
-
-function syncProfilesTableName(): string {
-  return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
-}
+import { syncProfilesTableName } from "./tables.js";
 
 function fileRecordsTableName(): string {
   return process.env["FILE_RECORDS_TABLE"] ?? "petroglyph-file-records-default";
