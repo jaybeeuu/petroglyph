@@ -8,6 +8,7 @@ import {
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { deltaTriggerSchema, type DeltaTrigger } from "@petroglyph/contracts";
 import { getProfile, putProfile } from "@petroglyph/core";
+import type { SyncProfile } from "@petroglyph/core";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -33,11 +34,7 @@ interface ErrorEnvelope {
 }
 
 /** The profile row a request names. Only the id and the deletion marker matter here. */
-interface ProfileRow {
-  userId: string;
-  profileId: string;
-  deletedAt?: string;
-}
+type ProfileRow = Pick<SyncProfile, "userId" | "profileId" | "deletedAt">;
 
 describe("POST /profiles/{id}/sync-trigger against LocalStack DynamoDB + FIFO SQS", () => {
   let container: StartedTestContainer;

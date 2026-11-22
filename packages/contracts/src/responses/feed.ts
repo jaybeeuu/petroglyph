@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 /**
- * One delivered file, as `GET /files` lists it and `GET /files/{itemId}` returns
- * it. Served by `packages/staging-delivery`, described here so the registry stays
- * the one place that spells the surface.
+ * One delivered file, as `GET /profiles/{id}/files` lists it and
+ * `GET /profiles/{id}/files/{itemId}` returns it. Served by
+ * `packages/staging-delivery`, described here so the registry stays the one place
+ * that spells the surface.
  */
 export const feedEntryResponseSchema = z.object({
   itemId: z.string().min(1),

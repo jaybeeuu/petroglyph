@@ -10,9 +10,9 @@ import { collectRegistrySurface, collectServedSurface, compareSurface } from "..
  * declaration of the API surface, and it is only worth anything if it is held to
  * the routes the apps actually register. The three Hono apps live in `api` and
  * `staging-delivery`; neither builds an entry point a test could import, so their
- * app sources are reached directly. `api` serves everything but `/files`, which
- * is served by `staging-delivery` — the split that hid `/files` from the
- * hand-written spec.
+ * app sources are reached directly. `api` serves every route but the two
+ * profile-scoped file routes, which `staging-delivery` serves — the split that
+ * hid `/files` from the hand-written spec.
  */
 
 /** The router's stores are never reached: this test reads route tables, not records. */

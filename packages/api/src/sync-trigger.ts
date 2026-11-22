@@ -9,6 +9,7 @@ import type { AppContext, AppVariables } from "./auth-middleware.js";
 import { sqsClient } from "./sqs.js";
 import { docClient } from "./db.js";
 import { ONEDRIVE_PROVIDER, readConnection } from "./token-vault.js";
+import { syncProfilesTableName } from "./tables.js";
 
 /** The caller's stored connection, or null when onboarding never completed. */
 export type ConnectionReader = (userId: string, provider: string) => Promise<TokenRecord | null>;
@@ -122,8 +123,4 @@ export function createSyncTriggerDeps(): SyncTriggerDeps {
     readConnection: (userId, provider) => readConnection(docClient(), userId, provider),
     enqueueDeltaTrigger: createSyncTriggerEnqueuer(sqsClient(), deltaTriggerQueueUrl),
   };
-}
-
-function syncProfilesTableName(): string {
-  return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
 }

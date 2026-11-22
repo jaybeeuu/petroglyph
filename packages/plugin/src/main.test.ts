@@ -1142,13 +1142,17 @@ describe("syncNow", () => {
   });
 
   it("asks the server to walk OneDrive before it reads the files feed", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     stubTriggerFetch(queuedTrigger(), () => Promise.resolve(jsonResponse(emptyFeed())));
 
     await runSync(plugin);
 
     expect(global.fetch).toHaveBeenCalledWith(
-      "https://api.petroglyph.page/profiles/default/sync-trigger",
+      "https://api.petroglyph.page/profiles/p1/sync-trigger",
       {
         method: "POST",
         headers: { Authorization: "Bearer jwt-token" },
@@ -1156,13 +1160,17 @@ describe("syncNow", () => {
     );
     const urls = (global.fetch as Mock).mock.calls.map(([url]) => url as string);
     expect(urls.slice(0, 2)).toEqual([
-      "https://api.petroglyph.page/profiles/default/sync-trigger",
-      "https://api.petroglyph.page/profiles/default/files",
+      "https://api.petroglyph.page/profiles/p1/sync-trigger",
+      "https://api.petroglyph.page/profiles/p1/files",
     ]);
   });
 
   it("shows the server message and does not drain when the connection needs reconnecting", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     const message = "This OneDrive connection can no longer be used. Reconnect OneDrive.";
     const recorder = stubTriggerFetch(
       statusResponse(409, { error: { code: "reconnect_required", message } }),
@@ -1176,7 +1184,11 @@ describe("syncNow", () => {
   });
 
   it("shows the server message and does not drain when no connection is stored", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     const message = "No OneDrive connection is stored for this user.";
     const recorder = stubTriggerFetch(
       statusResponse(409, { error: { code: "no_connection", message } }),
@@ -1190,7 +1202,11 @@ describe("syncNow", () => {
   });
 
   it("shows the not-connected notice and does not drain when the trigger answers 401", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     // The shared JWT middleware still answers this flat body, with no `code`.
     const recorder = stubTriggerFetch(statusResponse(401, { error: "UNAUTHORIZED" }), () =>
       Promise.resolve(jsonResponse(emptyFeed())),
@@ -1203,7 +1219,11 @@ describe("syncNow", () => {
   });
 
   it("stops without draining when the profile is deleted, so a deleted profile is never emptied", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     const recorder = stubTriggerFetch(
       statusResponse(410, {
         error: { code: "profile_deleted", message: "This profile has been deleted." },
@@ -1218,7 +1238,11 @@ describe("syncNow", () => {
   });
 
   it("writes the files that land on the first recheck, reports them and stops rechecking", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     const vault = makeVaultStub();
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
@@ -1253,7 +1277,11 @@ describe("syncNow", () => {
   });
 
   it("reports that files will arrive on the next poll when the rechecks stay empty", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     const recorder = stubTriggerFetch(queuedTrigger(), () =>
       Promise.resolve(jsonResponse(emptyFeed())),
     );
@@ -1267,7 +1295,11 @@ describe("syncNow", () => {
   });
 
   it("stops the rechecks and writes nothing when the plugin unloads mid-wait", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     const vault = makeVaultStub();
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
@@ -1290,7 +1322,11 @@ describe("syncNow", () => {
   });
 
   it("spaces its rechecks 2500ms apart", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     const recorder = stubTriggerFetch(queuedTrigger(), () =>
       Promise.resolve(jsonResponse(emptyFeed())),
     );
@@ -1339,7 +1375,11 @@ describe("syncNow", () => {
   });
 
   it("does not report a sync that lands while the plugin unloads during the first drain", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     const vault = makeVaultStub();
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
@@ -1377,7 +1417,11 @@ describe("syncNow", () => {
   });
 
   it("writes the recheck's files but reports nothing when the plugin unloads during that write", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     const vault = makeVaultStub();
     // The unload lands after the drain reached the file, so the write lands but
     // the report must not.
@@ -1435,7 +1479,11 @@ describe("syncNow", () => {
   });
 
   it("ignores a second click while the first sync is still waiting", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     const vault = makeVaultStub();
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
@@ -1459,7 +1507,11 @@ describe("syncNow", () => {
   });
 
   it("writes and reports nothing after unload when the button was double-clicked", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     const vault = makeVaultStub();
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
@@ -1492,7 +1544,11 @@ describe("syncNow", () => {
   });
 
   it("shows one notice and still drains when the trigger fails", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     const files: string[] = [];
     global.fetch = vi.fn((url: string) => {
       if (url.endsWith("/sync-trigger")) return Promise.reject(new Error("offline"));
@@ -1511,7 +1567,11 @@ describe("syncNow", () => {
   });
 
   it("shows one notice when the trigger answers a 409 the plugin cannot act on", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     const recorder = stubTriggerFetch(
       statusResponse(409, { error: { code: "conflict", message: "The walk is already running." } }),
       () => Promise.resolve(jsonResponse(emptyFeed())),
@@ -1528,7 +1588,11 @@ describe("syncNow", () => {
   });
 
   it("frees the manual-sync slot when the drain throws", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     plugin.saveData = vi.fn(() => Promise.reject(new Error("disk full")));
     const recorder = stubTriggerFetch(queuedTrigger(), () =>
       Promise.resolve(jsonResponse(emptyFeed())),
@@ -1560,6 +1624,7 @@ describe("syncNow", () => {
 
   it("shows an error notice when the feed request is rejected", async () => {
     const { plugin } = await makePlugin({
+      activeProfileId: "p1",
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
@@ -1573,6 +1638,7 @@ describe("syncNow", () => {
 
   it("shows an error notice when the feed payload does not match the contract", async () => {
     const { plugin } = await makePlugin({
+      activeProfileId: "p1",
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
@@ -1587,6 +1653,7 @@ describe("syncNow", () => {
 
   it("shows a network error notice when the feed request throws", async () => {
     const { plugin } = await makePlugin({
+      activeProfileId: "p1",
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
@@ -1612,6 +1679,7 @@ describe("feed sync", () => {
 
   it("writes each feed file into the vault under its relative path", async () => {
     const { plugin } = await makePlugin({
+      activeProfileId: "p1",
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
@@ -1670,6 +1738,7 @@ describe("feed sync", () => {
 
   it("creates the destination folder before writing", async () => {
     const { plugin } = await makePlugin({
+      activeProfileId: "p1",
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
@@ -1772,6 +1841,7 @@ describe("feed sync", () => {
 
   it("pages through the feed using nextToken", async () => {
     const { plugin } = await makePlugin({
+      activeProfileId: "p1",
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
@@ -1839,7 +1909,7 @@ describe("feed sync", () => {
     await plugin.performSync();
 
     expect(global.fetch).toHaveBeenCalledWith(
-      "https://api.petroglyph.page/profiles/default/files?nextToken=page-2-cursor",
+      "https://api.petroglyph.page/profiles/p1/files?nextToken=page-2-cursor",
       expect.anything(),
     );
     expect(mockVault.adapter.writeBinary).toHaveBeenCalledTimes(2);
@@ -1867,9 +1937,10 @@ describe("feed sync", () => {
 
   it("clears a rejected cursor and re-pages from the head of the feed", async () => {
     const { plugin } = await makePlugin({
+      activeProfileId: "p1",
       jwt: "jwt-token",
       oneDriveConnected: true,
-      feedCursors: { default: "stale-cursor" },
+      feedCursors: { p1: "stale-cursor" },
     });
 
     const requestedUrls: string[] = [];
@@ -1919,8 +1990,8 @@ describe("feed sync", () => {
     await plugin.performSync();
 
     expect(requestedUrls).toEqual([
-      "https://api.petroglyph.page/profiles/default/files?nextToken=stale-cursor",
-      "https://api.petroglyph.page/profiles/default/files",
+      "https://api.petroglyph.page/profiles/p1/files?nextToken=stale-cursor",
+      "https://api.petroglyph.page/profiles/p1/files",
     ]);
     expect(mockVault.adapter.writeBinary).toHaveBeenCalledWith(
       "handwritten/note.pdf",
@@ -1930,9 +2001,10 @@ describe("feed sync", () => {
 
   it("gives up rather than looping when a cursor is rejected twice", async () => {
     const { plugin } = await makePlugin({
+      activeProfileId: "p1",
       jwt: "jwt-token",
       oneDriveConnected: true,
-      feedCursors: { default: "stale-cursor" },
+      feedCursors: { p1: "stale-cursor" },
     });
     global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 400 });
 
@@ -1941,34 +2013,31 @@ describe("feed sync", () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
-  it("drains under the default profile when the stored active id is empty", async () => {
+  it("requests nothing and keeps the stored cursor when no profile is known", async () => {
     const { plugin } = await makePlugin({
+      activeProfileId: "",
       jwt: "jwt-token",
       oneDriveConnected: true,
-      activeProfileId: "",
-      feedCursors: { default: "cursor-1" },
+      feedCursors: { p1: "cursor-1" },
     });
-    const requestedUrls: string[] = [];
-    global.fetch = vi.fn((url) => {
-      requestedUrls.push(String(url));
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ files: [], nextToken: null }),
-      });
-    }) as unknown as typeof fetch;
+    global.fetch = vi.fn(() =>
+      Promise.resolve(jsonResponse(emptyFeed())),
+    ) as unknown as typeof fetch;
 
     await plugin.performSync();
 
-    expect(requestedUrls).toEqual([
-      "https://api.petroglyph.page/profiles/default/files?nextToken=cursor-1",
-    ]);
+    // Profile ids are UUIDs, so there is no id to fall back to: a request for
+    // "default" would answer 404 on every interval, so no request is made.
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(plugin.data.feedCursors?.["p1"]).toBe("cursor-1");
   });
 
   it("clears the stored cursor once the feed is exhausted", async () => {
     const { plugin } = await makePlugin({
+      activeProfileId: "p1",
       jwt: "jwt-token",
       oneDriveConnected: true,
-      feedCursors: { default: "old-cursor" },
+      feedCursors: { p1: "old-cursor" },
     });
     let callCount = 0;
     global.fetch = vi.fn((url) => {
@@ -1985,11 +2054,12 @@ describe("feed sync", () => {
     await plugin.performSync();
 
     expect(callCount).toBe(1);
-    expect(plugin.data.feedCursors?.["default"]).toBeUndefined();
+    expect(plugin.data.feedCursors?.["p1"]).toBeUndefined();
   });
 
   it("keeps the mid-feed cursor when a later page fails", async () => {
     const { plugin } = await makePlugin({
+      activeProfileId: "p1",
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
@@ -2010,14 +2080,15 @@ describe("feed sync", () => {
 
     await plugin.performSync();
 
-    expect(plugin.data.feedCursors?.["default"]).toBe("page-2-cursor");
+    expect(plugin.data.feedCursors?.["p1"]).toBe("page-2-cursor");
   });
 
   it("stops on a 410, keeps the stored cursor and says the profile was deleted", async () => {
     const { plugin } = await makePlugin({
+      activeProfileId: "p1",
       jwt: "jwt-token",
       oneDriveConnected: true,
-      feedCursors: { default: "cursor-1" },
+      feedCursors: { p1: "cursor-1" },
     });
     let feedRequests = 0;
     stubTriggerFetch(queuedTrigger(), (url) => {
@@ -2032,11 +2103,35 @@ describe("feed sync", () => {
     // leaves the cursor where it was so nothing already written is forgotten.
     expect(Notice).toHaveBeenCalledWith("Sync stopped: this profile was deleted");
     expect(feedRequests).toBe(1);
-    expect(plugin.data.feedCursors?.["default"]).toBe("cursor-1");
+    expect(plugin.data.feedCursors?.["p1"]).toBe("cursor-1");
+  });
+
+  it("keeps the stored cursor when a rejected cursor is followed by a 410", async () => {
+    const { plugin } = await makePlugin({
+      activeProfileId: "p1",
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      feedCursors: { p1: "stale-cursor" },
+    });
+    let feedRequests = 0;
+    stubTriggerFetch(queuedTrigger(), (url) => {
+      if (!url.includes("/files")) return Promise.resolve(bytesResponse());
+      feedRequests += 1;
+      return Promise.resolve(failureResponse(feedRequests === 1 ? 400 : 410));
+    });
+
+    await plugin.syncNow();
+
+    // The 400 only drops the cursor from the next request. The profile turned
+    // out to be deleted, so the stored cursor is still the one already written.
+    expect(Notice).toHaveBeenCalledWith("Sync stopped: this profile was deleted");
+    expect(feedRequests).toBe(2);
+    expect(plugin.data.feedCursors?.["p1"]).toBe("stale-cursor");
   });
 
   it("gives up when the feed cursor never advances", async () => {
     const { plugin } = await makePlugin({
+      activeProfileId: "p1",
       jwt: "jwt-token",
       oneDriveConnected: true,
     });
@@ -2244,7 +2339,11 @@ describe("failed downloads", () => {
   });
 
   it("reports how many files failed to download", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     stubTriggerFetch(queuedTrigger(), (url) => {
       if (url.includes("/files")) {
         return Promise.resolve(
@@ -2274,7 +2373,11 @@ describe("failed downloads", () => {
   });
 
   it("reports a failed sync when every download fails", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     stubTriggerFetch(queuedTrigger(), (url) => {
       if (url.includes("/files")) {
         return Promise.resolve(
@@ -2298,7 +2401,11 @@ describe("failed downloads", () => {
   });
 
   it("counts a vault write error as a failed file", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     stubTriggerFetch(queuedTrigger(), (url) =>
       Promise.resolve(
         url.includes("/files")
@@ -2317,7 +2424,11 @@ describe("failed downloads", () => {
   });
 
   it("reports completion with the count when every file syncs", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     stubTriggerFetch(queuedTrigger(), (url) =>
       Promise.resolve(
         url.includes("/files")
@@ -2334,7 +2445,11 @@ describe("failed downloads", () => {
   });
 
   it("does not advance the cursor past a page whose files failed", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     const filesRequests: string[] = [];
     global.fetch = vi.fn((url: string) => {
       if (url.includes("/files")) {
@@ -2350,12 +2465,16 @@ describe("failed downloads", () => {
 
     await plugin.performSync();
 
-    expect(filesRequests).toEqual(["https://api.petroglyph.page/profiles/default/files"]);
-    expect(plugin.data.feedCursors?.["default"]).toBeUndefined();
+    expect(filesRequests).toEqual(["https://api.petroglyph.page/profiles/p1/files"]);
+    expect(plugin.data.feedCursors?.["p1"]).toBeUndefined();
   });
 
   it("keeps the earlier cursor when a later page has failed files", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
     let page = 0;
     global.fetch = vi.fn((url: string) => {
       if (url.includes("/files")) {
@@ -2375,7 +2494,7 @@ describe("failed downloads", () => {
 
     await plugin.performSync();
 
-    expect(plugin.data.feedCursors?.["default"]).toBe("page-2-cursor");
+    expect(plugin.data.feedCursors?.["p1"]).toBe("page-2-cursor");
   });
 });
 
@@ -3199,12 +3318,16 @@ describe("diagnostics log", () => {
 
   it("leaves a line naming itemId, status, and byte count when a download fails", async () => {
     const { LOG_PATH } = await import("./log.js");
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p1",
+    });
 
     global.fetch = vi.fn((url) => {
       if (
         typeof url === "string" &&
-        url.startsWith("https://api.petroglyph.page/profiles/default/files")
+        url.startsWith("https://api.petroglyph.page/profiles/p1/files")
       ) {
         return Promise.resolve({
           ok: true,

@@ -63,11 +63,6 @@ output "event_log_stream_arn" {
   value       = aws_dynamodb_table.event_log.stream_arn
 }
 
-output "files_feed_url" {
-  description = "The base URL of the profile-scoped files delivery surface: <feed>/profiles/{id}/files"
-  value       = "${aws_apigatewayv2_api.petroglyph_api.api_endpoint}/profiles/{id}/files"
-}
-
 output "graph_stub_function_url" {
   description = "Invoke URL of the QA Graph stub Lambda function URL (empty when the stub is not deployed)"
   value       = local.graph_stub_base_url

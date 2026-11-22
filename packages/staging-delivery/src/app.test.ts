@@ -201,6 +201,24 @@ describe("GET /profiles/:id/files feed", () => {
     expect(await res.json()).toMatchObject({ error: { code: "profile_deleted" } });
   });
 
+  it("answers 410 for a deleted profile before it validates the query", async () => {
+    const index = new MemoryIndex();
+    index.put(stagedRecord);
+    const { app } = buildApp({
+      profiles: [createProfile({ deletedAt: "2026-11-21T00:00:00.000Z" })],
+      index,
+      objectStore: objectStoreSpy().objectStore,
+    });
+
+    const badLimit = await app.request("/profiles/p1/files?limit=0");
+    const emptyCursor = await app.request("/profiles/p1/files?nextToken=");
+
+    // The profile answers first: a 400 for the query would let the client clear
+    // and persist its cursor before it ever reads the 410 that stops it.
+    expect(badLimit.status).toBe(410);
+    expect(emptyCursor.status).toBe(410);
+  });
+
   it("serves an empty feed when the named profile is disabled", async () => {
     const index = new MemoryIndex();
     index.put(stagedRecord);

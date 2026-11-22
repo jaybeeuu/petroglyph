@@ -291,6 +291,7 @@ export class PetroglyphPlugin extends Plugin {
     if (trigger.kind === "stop") return null;
 
     const profileId = this.resolveProfileId();
+    if (profileId === undefined) return null;
     let drain: FeedDrain = await this.drainFilesFeed(profileId);
     if (syncAborted(controller)) return null;
     if (drain.ok && drain.synced === 0) {
@@ -330,7 +331,12 @@ export class PetroglyphPlugin extends Plugin {
     const jwt = this._data.jwt;
     if (jwt === undefined) return { kind: "stop" };
 
-    const url = `${this._data.apiBaseUrl}/profiles/${this.resolveProfileId()}/sync-trigger`;
+    // Connect authorises only; a user may have authorised OneDrive and created
+    // no profile yet. There is no route to ask, so do not invent one.
+    const profileId = this.resolveProfileId();
+    if (profileId === undefined) return { kind: "stop" };
+
+    const url = `${this._data.apiBaseUrl}/profiles/${profileId}/sync-trigger`;
     let response: Response;
     try {
       response = await fetch(url, {
@@ -398,12 +404,14 @@ export class PetroglyphPlugin extends Plugin {
   }
 
   /**
-   * The profile whose feed cursor and files feed paging are used; falls back to
-   * "default" when no profile is active. An empty id is as absent as a missing
-   * one, so a stored "" can never pin the drain to a profile that does not exist.
+   * The profile whose feed cursor and files feed paging are used, or undefined
+   * when no profile is active. Profile ids are UUIDs, so there is no id this
+   * could fall back to: a made-up one would be requested as a real profile and
+   * answer 404 forever. An empty id is as absent as a missing one, so a stored
+   * "" can never pin the drain to a profile that does not exist.
    */
-  private resolveProfileId(): string {
-    return this._data.activeProfileId || DEFAULT_PROFILE_ID;
+  private resolveProfileId(): string | undefined {
+    return this._data.activeProfileId || undefined;
   }
 
   /** The loaded profile a feed is scoped to, if its data has been fetched yet. */
@@ -415,8 +423,10 @@ export class PetroglyphPlugin extends Plugin {
    * Pages GET /profiles/:id/files from the profile's stored cursor until the feed is
    * exhausted, writing each entry into the vault. A page whose files failed
    * does not advance the cursor, so the next poll retries those files. A cursor
-   * the feed rejects (400) is stale: it is cleared and the drain restarts once
-   * from the head of the feed, so a bad cursor can never wedge syncing.
+   * the feed rejects (400) is stale: it is dropped from the next request and
+   * cleared once a live answer proves the profile is not deleted, so a bad
+   * cursor can never wedge syncing and a `410` still leaves the stored cursor
+   * exactly where it was.
    */
   private async drainFilesFeed(profileId: string): Promise<FeedDrain> {
     const jwt = this._data.jwt;
@@ -435,6 +445,9 @@ export class PetroglyphPlugin extends Plugin {
     const headers = { Authorization: `Bearer ${jwt}` };
     let cursor = this._data.feedCursors?.[profileId];
     let retriedRejectedCursor = false;
+    // A rejected cursor is dropped from the request at once but written out of
+    // the stored state only after a live answer: a `410` must not clear it.
+    let rejectedCursorPendingClear = false;
     let synced = 0;
     let failed = 0;
 
@@ -455,7 +468,7 @@ export class PetroglyphPlugin extends Plugin {
 
       if (response.status === 400 && !retriedRejectedCursor) {
         retriedRejectedCursor = true;
-        await this.saveFeedCursor(profileId, undefined);
+        rejectedCursorPendingClear = true;
         cursor = undefined;
         continue;
       }
@@ -465,6 +478,10 @@ export class PetroglyphPlugin extends Plugin {
         // where it is, so nothing the plugin wrote is forgotten.
         this.logFeedFailure("deleted", `status ${String(response.status)}`);
         return { ok: false, reason: "deleted", synced, failed };
+      }
+      if (rejectedCursorPendingClear) {
+        rejectedCursorPendingClear = false;
+        await this.saveFeedCursor(profileId, undefined);
       }
       if (!response.ok) {
         this.logFeedFailure("rejected", `status ${String(response.status)}`);
@@ -748,7 +765,9 @@ export class PetroglyphPlugin extends Plugin {
   async performSync(): Promise<void> {
     if (this._data.jwt === undefined || !this._data.oneDriveConnected) return;
 
-    await this.drainFilesFeed(this.resolveProfileId());
+    const profileId = this.resolveProfileId();
+    if (profileId === undefined) return;
+    await this.drainFilesFeed(profileId);
     await this._log.flush();
   }
 
@@ -871,7 +890,7 @@ export class PetroglyphPlugin extends Plugin {
           ? manifest["version"]
           : "unknown",
       apiBaseUrl: this._data.apiBaseUrl,
-      activeProfileId: this.resolveProfileId(),
+      activeProfileId: this.resolveProfileId() ?? "none",
       oneDriveStatus: this._data.oneDriveStatus ?? "unknown",
       cursors: Object.keys(this._data.feedCursors ?? {}).length,
     });

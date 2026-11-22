@@ -149,7 +149,7 @@ async function resolveProfileScope(
   profileId: string,
 ): Promise<ProfileScope> {
   const profile = await deps.readProfile(userId, profileId);
-  if (profile === null || profile.userId !== userId) {
+  if (profile === null) {
     return { kind: "missing" };
   }
   if (isDeletedProfile(profile)) {
@@ -173,11 +173,10 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
   const app = new Hono<{ Variables: FilesRouterVariables }>();
 
   mount(app, listFiles, async (input, c) => {
-    const query = parseFeedQuery(c.req.query());
-    if (!query.ok) {
-      return c.json({ error: describeFeedQueryError(query.error) }, 400);
-    }
-
+    // The profile answers first. A deleted profile must stop a client, and a 400
+    // for the query would let the client clear its cursor before it ever reads
+    // the 410, so every profile-scoped route decides the profile before it
+    // validates anything else.
     const profile = await resolveProfileScope(deps, c.get("userId"), input.params.id);
     if (profile.kind === "missing") {
       return c.json(PROFILE_NOT_FOUND, 404);
@@ -187,6 +186,11 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
     }
     if (profile.kind === "disabled") {
       return c.json({ files: [], nextToken: null });
+    }
+
+    const query = parseFeedQuery(c.req.query());
+    if (!query.ok) {
+      return c.json({ error: describeFeedQueryError(query.error) }, 400);
     }
 
     const scope = resolveFeedScope(query.data, profile.profileId);
