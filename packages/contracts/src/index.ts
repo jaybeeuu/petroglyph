@@ -22,6 +22,10 @@ export {
   type DeltaTrigger,
   type DeltaTriggerSend,
 } from "./delta-trigger.js";
+export {
+  subscriptionRegistryItemSchema,
+  type SubscriptionRegistryItem,
+} from "./subscription-registry.js";
 export { defineRegistry, operationKey } from "./registry.js";
 export {
   isUnauthenticated,
