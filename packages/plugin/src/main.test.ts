@@ -2972,6 +2972,44 @@ describe("createProfile", () => {
     expect(plugin.data.profiles?.[0]?.destinationVaultPath).toBe("twiy-proof");
   });
 
+  it("saves the destination the user typed when the profile list fails", async () => {
+    const { plugin, savedData } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ profileId: "p1" }))
+      .mockResolvedValueOnce(failureResponse(500));
+
+    await plugin.createProfile({
+      name: "My Profile",
+      sourceFolderPath: "src",
+      destinationVaultPath: "twiy-proof",
+    });
+
+    const persisted: unknown = savedData["data"];
+    expect(persisted).toMatchObject({
+      profiles: [expect.objectContaining({ profileId: "p1", destinationVaultPath: "twiy-proof" })],
+    });
+  });
+
+  it("saves the destination the user typed when the profile list omits the new profile", async () => {
+    const { plugin, savedData } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ profileId: "p1" }))
+      .mockResolvedValueOnce(jsonResponse([]));
+
+    await plugin.createProfile({
+      name: "My Profile",
+      sourceFolderPath: "src",
+      destinationVaultPath: "twiy-proof",
+    });
+
+    const persisted: unknown = savedData["data"];
+    expect(persisted).toMatchObject({
+      profiles: [expect.objectContaining({ profileId: "p1", destinationVaultPath: "twiy-proof" })],
+    });
+  });
+
   it("calls loadProfiles after successful creation", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
     const mockProfiles = [

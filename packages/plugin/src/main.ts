@@ -1147,15 +1147,22 @@ export class PetroglyphPlugin extends Plugin {
       // id leaves that profile on the `handwritten` root until it is edited.
       const created: unknown = await response.json().catch(() => undefined);
       const profileId = readProfileId(created);
+      // The list read below decides nothing about the destination: it returns
+      // early when it fails, and an eventually consistent list can omit the row
+      // the POST just wrote. So the plugin refreshes the list first and writes
+      // the destination to plugin data afterwards, where no read can drop it.
+      await this.loadProfiles();
       if (profileId !== undefined) {
+        const listed = this._data.profiles?.find((profile) => profile.profileId === profileId);
         this.storeProfile({
           profileId,
-          name: data.name,
-          sourceFolderPath: data.sourceFolderPath,
+          name: listed?.name ?? data.name,
+          sourceFolderPath: listed?.sourceFolderPath ?? data.sourceFolderPath,
           destinationVaultPath: data.destinationVaultPath,
+          active: listed?.active ?? false,
         });
+        await this.savePluginData();
       }
-      await this.loadProfiles();
     } catch {
       new Notice("Failed to create profile: network error");
     }
