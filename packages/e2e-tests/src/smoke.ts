@@ -42,7 +42,7 @@ async function resetState(deps: RunSmokeDeps): Promise<void> {
   const { config } = deps;
   await deps.aws.deleteItem(config.syncProfilesTable, keys.syncProfile);
   await deps.aws.deleteItem(config.tokenVaultsTable, keys.tokenVault);
-  await deps.aws.deleteItem(config.deltaStatesTable, keys.deltaState);
+  await deps.aws.deleteItem(config.deltaCursorTable, keys.deltaCursor);
   await deps.aws.deleteItem(config.stagedRecordsTable, keys.stagedRecord);
 }
 

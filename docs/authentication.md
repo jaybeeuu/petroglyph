@@ -259,7 +259,7 @@ The Delivery 1 data path (OneDrive adapter) keeps OneDrive tokens in a **connect
 - A dead grant (`invalid_grant`) persists `reconnectRequired: true` — subsequent resolves fast-fail until `POST /onedrive/connect` rewrites the record.
 - **No record for the connection ⇒ reconnect required** (treated the same as a dead grant).
 
-The legacy components' `refresh_tokens` storage is **DEPRECATED** (kept for rollback, not deleted) and dies with the api at 6.6.5. The adapter's Graph delta link is a connection-keyed row in `delta_states`, superseding the per-profile `delta_tokens` table used by the legacy sync path.
+The legacy components' `refresh_tokens` storage is **DEPRECATED** (kept for rollback, not deleted) and dies with the api at 6.6.5. The adapter's Graph delta link is not connection-keyed: a cursor is the read position of the walk that advanced it, so it is one row per `profileId` in `delta_tokens` (schema in §4). One `(userId, provider)` row cannot hold a read position per profile, because every profile on a connection walks the same drive and one shared cursor would move past another profile's changes.
 
 ### Reconnection
 
@@ -394,16 +394,20 @@ The adapter's connection-keyed token vault (Delivery 1). One record per (user, p
 | `updatedAt`         | String      | ISO 8601; part of the CAS write condition                           |
 | `reconnectRequired` | Boolean     | `true` once the grant is invalid, until `/connect` rewrites the row |
 
-### `delta_states`
+### `delta_tokens`
 
-The adapter's per-connection Graph delta state (Delivery 1), superseding the per-profile `delta_tokens` table used by the legacy sync path (deprecated, kept for rollback).
+The adapter's per-profile Graph delta cursor: one row per profile, holding the delta link that profile's walk resumes from. The connection-keyed `delta_states` table is retired — its `(userId, provider)` key could not keep two profiles on one connection apart.
 
-| Attribute   | Type        | Description                                   |
-| ----------- | ----------- | --------------------------------------------- |
-| `userId`    | String (PK) | Connection owner                              |
-| `provider`  | String (SK) | `onedrive`                                    |
-| `deltaLink` | String      | The Graph delta link the adapter resumes from |
-| `updatedAt` | String      | ISO 8601                                      |
+| Attribute    | Type        | Description                                                           |
+| ------------ | ----------- | --------------------------------------------------------------------- |
+| `profileId`  | String (PK) | The profile the walk reads for                                        |
+| `deltaLink`  | String?     | The Graph delta link the adapter resumes from; absent on a legacy row |
+| `deltaToken` | String?     | The legacy sync worker's token; not a cursor                          |
+| `updatedAt`  | String      | ISO 8601                                                              |
+
+**Two writers share this row, and neither may replace it.** The adapter writes `deltaLink` and `updatedAt`; the legacy sync worker writes `deltaToken` and `updatedAt`, until it retires. Each write sets only its own attributes, because a whole-item put from either side replaces the row and drops the other's cursor — a `/sync/run` that put the item would erase the adapter's `deltaLink`, and the next walk would re-enumerate the whole drive. That constraint is not cosmetic: it is what lets the two sync paths share one row while the legacy worker is still live.
+
+The store reads a row with no `deltaLink` as no cursor: a legacy row holds a token the adapter cannot resume from, so the walk re-enumerates and overwrites that row with a real `deltaLink`. A `deltaLink` that is present but malformed fails validation instead, because that is a corrupted cursor rather than a legacy one. A deferred walk leaves the row untouched: it writes only at a terminal `@odata.deltaLink`, so a stored cursor always names a finished walk, and a resume `@odata.nextLink` travels in the continuation bell.
 
 ### `sync_profiles`
 

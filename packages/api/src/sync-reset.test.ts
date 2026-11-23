@@ -25,7 +25,7 @@ describe("POST /sync/reset", () => {
 
   beforeEach(() => {
     vi.stubEnv("FILE_RECORDS_TABLE", "petroglyph-file-records-test");
-    vi.stubEnv("DELTA_TOKENS_TABLE", "petroglyph-delta-tokens-test");
+    vi.stubEnv("DELTA_CURSOR_TABLE", "petroglyph-delta-tokens-test");
     vi.stubEnv("JWT_PUBLIC_KEY", publicKeyPem);
     mockDbSend.mockReset();
     resetKeyCache();

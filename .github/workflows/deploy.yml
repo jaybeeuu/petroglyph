@@ -136,7 +136,7 @@ jobs:
       staged_records_table: ${{ steps.smoke-context.outputs.staged_records_table }}
       sync_profiles_table: ${{ steps.smoke-context.outputs.sync_profiles_table }}
       token_vaults_table: ${{ steps.smoke-context.outputs.token_vaults_table }}
-      delta_states_table: ${{ steps.smoke-context.outputs.delta_states_table }}
+      delta_cursor_table: ${{ steps.smoke-context.outputs.delta_cursor_table }}
     steps: &deploy_steps
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v5
@@ -355,7 +355,7 @@ jobs:
           echo "staged_records_table=$(terraform output -raw staged_records_table_name)" >> "$GITHUB_OUTPUT"
           echo "sync_profiles_table=$(terraform output -raw sync_profiles_table_name)" >> "$GITHUB_OUTPUT"
           echo "token_vaults_table=$(terraform output -raw token_vaults_table_name)" >> "$GITHUB_OUTPUT"
-          echo "delta_states_table=$(terraform output -raw delta_states_table_name)" >> "$GITHUB_OUTPUT"
+          echo "delta_cursor_table=$(terraform output -raw delta_cursor_table_name)" >> "$GITHUB_OUTPUT"
       - name: Smoke test deployed API
         env:
           LAMBDA_FUNCTION_URL: ${{ steps.api-function-url.outputs.url }}
@@ -374,7 +374,7 @@ jobs:
       SMOKE_STAGED_RECORDS_TABLE: ${{ needs.deploy-qa.outputs.staged_records_table }}
       SMOKE_SYNC_PROFILES_TABLE: ${{ needs.deploy-qa.outputs.sync_profiles_table }}
       SMOKE_TOKEN_VAULTS_TABLE: ${{ needs.deploy-qa.outputs.token_vaults_table }}
-      SMOKE_DELTA_STATES_TABLE: ${{ needs.deploy-qa.outputs.delta_states_table }}
+      SMOKE_DELTA_CURSOR_TABLE: ${{ needs.deploy-qa.outputs.delta_cursor_table }}
       SMOKE_JWT_PRIVATE_KEY_SSM_PATH: /petroglyph/qa/jwt/private-key
     steps:
       - uses: actions/checkout@v4

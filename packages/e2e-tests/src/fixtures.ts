@@ -52,13 +52,13 @@ export function smokeTrigger(): { userId: string; provider: string } {
 export function smokeResetKeys(): {
   syncProfile: { [key: string]: string };
   tokenVault: { [key: string]: string };
-  deltaState: { [key: string]: string };
+  deltaCursor: { [key: string]: string };
   stagedRecord: { [key: string]: string };
 } {
   return {
     syncProfile: { userId: SMOKE_USER_ID, profileId: SMOKE_PROFILE_ID },
     tokenVault: { userId: SMOKE_USER_ID, provider: SMOKE_PROVIDER },
-    deltaState: { userId: SMOKE_USER_ID, provider: SMOKE_PROVIDER },
+    deltaCursor: { profileId: SMOKE_PROFILE_ID },
     stagedRecord: { profileId: SMOKE_PROFILE_ID, itemId: SMOKE_ITEM_ID },
   };
 }

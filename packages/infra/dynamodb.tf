@@ -184,31 +184,13 @@ resource "aws_dynamodb_table" "delta_tokens" {
   }
 }
 
-# Connection-keyed delta-state store (6.5.1.1 adapter): the adapter persists
-# per-connection Graph delta links keyed {userId, provider}. Distinct from the
-# legacy profileId-keyed delta_tokens table which the old sync worker still
-# writes — this table matches the adapter's read/write/clear key shape.
-
-resource "aws_dynamodb_table" "delta_states" {
-  name         = "petroglyph-delta-states-${terraform.workspace}"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "userId"
-  range_key    = "provider"
-
-  attribute {
-    name = "userId"
-    type = "S"
-  }
-
-  attribute {
-    name = "provider"
-    type = "S"
-  }
-
-  tags = {
-    environment = terraform.workspace
-  }
-}
+# The adapter's per-profile delta cursor lives in delta_tokens above: one row per
+# profileId holding the deltaLink that profile's walk resumes from (decision 8,
+# `.agent-cortex/designs/profile-flows`). The connection-keyed `delta_states`
+# table is retired — its {userId, provider} key could not keep two profiles on
+# one connection apart. The deployed table name stays `delta-tokens`; the
+# environment variable names the cursor it holds, and no Lambda reads a
+# delta-state table any more.
 
 # ---------------------------------------------------------------------------
 # Event log (the registry's DDB transport, Q8) and the staging index

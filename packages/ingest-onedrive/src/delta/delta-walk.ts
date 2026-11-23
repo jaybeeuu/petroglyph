@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { normalizeSourceFolderPath } from "@petroglyph/core";
 import type { GraphClient } from "../tokens/graph-client.js";
-import type { DeltaStateStore } from "./delta-state-store.js";
+import type { DeltaCursorStore } from "./delta-cursor-store.js";
 
 /**
  * A parsed driveItem carrying the `file` facet. `name` and `mimeType` are
@@ -188,7 +188,7 @@ export interface DeltaWalkResult {
    *
    * A path-less DELETION is deliberately not counted: it is carried by
    * `itemId` and resolved by Unit 2 from its own record, so no path is needed
-   * and failing the walk would wedge the connection forever.
+   * and failing the walk would wedge the profile forever.
    */
   unresolvedPathCount: number;
   /**
@@ -214,15 +214,15 @@ export interface DeltaWalkResult {
 
 export interface DeltaWalkProfile {
   profileId: string;
-  /** Profile source-dir prefix; items outside every profile's prefix are dropped. */
+  /** Profile source-dir prefix; items outside it are dropped by this walk. */
   rootPath?: string;
 }
 
 export interface DeltaWalkOptions {
   client: GraphClient;
-  store: DeltaStateStore;
-  connection: { userId: string; provider: string };
-  profiles: DeltaWalkProfile[];
+  store: DeltaCursorStore;
+  /** The one profile this walk reads for, and whose cursor it advances. */
+  profile: DeltaWalkProfile;
   /** First-call (no token) full-enumeration URL. */
   initialUrl: string;
   /**
@@ -344,17 +344,15 @@ type Page =
  * skipping changes the token would otherwise cover.
  */
 export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkResult> {
-  const stored = await options.store.read(options.connection.userId, options.connection.provider);
+  const stored = await options.store.read(options.profile.profileId);
 
   // A stored profile path may predate write-side normalization (a leading slash
   // makes the prefix match unsatisfiable, so the profile silently ingests
   // nothing), so canonicalize here too: the walk is where the prefix is used.
-  const profiles = options.profiles.map(
-    (profile): DeltaWalkProfile =>
-      profile.rootPath === undefined
-        ? profile
-        : { ...profile, rootPath: normalizeSourceFolderPath(profile.rootPath) },
-  );
+  const profile: DeltaWalkProfile =
+    options.profile.rootPath === undefined
+      ? options.profile
+      : { ...options.profile, rootPath: normalizeSourceFolderPath(options.profile.rootPath) };
 
   const pageBudget = options.pageBudget ?? DEFAULT_PAGE_BUDGET;
   const timeBudgetMs = options.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS;
@@ -379,7 +377,7 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
     if (!isResetResponse(response.status, body)) {
       return { kind: "page", status: response.status, body, didReset: false };
     }
-    await options.store.clear(options.connection.userId, options.connection.provider);
+    await options.store.clear(options.profile.profileId);
     const fresh = await options.client.request(options.initialUrl);
     const freshBody: unknown = await fresh.json().catch(() => null);
     if (isResetResponse(fresh.status, freshBody)) {
@@ -432,7 +430,7 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
       return failed(pageFailure("invalid-page", page.status, page.body));
     }
 
-    const classified = classifyPage(parsed.data.value, profiles);
+    const classified = classifyPage(parsed.data.value, profile);
     pagesCompleted += 1;
     unresolvedPathCount += classified.unresolvedPathCount;
     unresolvedItemIds = [...unresolvedItemIds, ...classified.unresolvedItemIds];
@@ -451,7 +449,7 @@ export async function walkDelta(options: DeltaWalkOptions): Promise<DeltaWalkRes
 
     const deltaLink = parsed.data["@odata.deltaLink"];
     if (deltaLink !== undefined) {
-      await options.store.write(options.connection.userId, options.connection.provider, {
+      await options.store.write(options.profile.profileId, {
         deltaLink,
         updatedAt: new Date().toISOString(),
       });
@@ -499,10 +497,9 @@ interface PageClassification {
 }
 
 /**
- * One page's changes, deduplicated by profile AND item: delta may report the
- * latest state of an item more than once in a page, so the last occurrence
- * wins. Keyed by both because one path-less deletion is reported against every
- * candidate profile, and those are distinct events for the same item id.
+ * One page's changes, deduplicated by item: delta may report the latest state
+ * of an item more than once in a page, so the last occurrence wins. The walk
+ * serves one profile, so the item id is the identity.
  *
  * Deduplication is per page, not per walk: the walk no longer holds earlier
  * pages, so a repeat across pages is landed twice — the event log dedupes the
@@ -511,12 +508,12 @@ interface PageClassification {
 function dedupePage(events: FileChangeEvent[]): FileChangeEvent[] {
   const byIdentity = new Map<string, FileChangeEvent>();
   for (const event of events) {
-    byIdentity.set(`${event.profileId}:${event.itemId}`, event);
+    byIdentity.set(event.itemId, event);
   }
   return [...byIdentity.values()];
 }
 
-function classifyPage(items: DriveItem[], profiles: DeltaWalkProfile[]): PageClassification {
+function classifyPage(items: DriveItem[], profile: DeltaWalkProfile): PageClassification {
   const events: FileChangeEvent[] = [];
   let unresolvedPathCount = 0;
   const unresolvedItemIds: string[] = [];
@@ -530,7 +527,9 @@ function classifyPage(items: DriveItem[], profiles: DeltaWalkProfile[]): PageCla
       // resolves it from its own record — the only rule that can be true.
       // A FILE needs a folder path to land under, so it fails the walk loudly.
       if (item.kind === "deleted") {
-        events.push(...deletionsForEveryProfile(item, profiles));
+        // A path-less deletion belongs to the profile that is walking: this
+        // walk is the one that covers the drive, so it is the candidate.
+        events.push(deletionEvent(item, profile, undefined));
       } else if (item.kind === "file") {
         unresolvedPathCount += 1;
         unresolvedItemIds.push(item.itemId);
@@ -546,15 +545,14 @@ function classifyPage(items: DriveItem[], profiles: DeltaWalkProfile[]): PageCla
     }
     switch (item.kind) {
       case "file": {
-        const event = classifyFile(item, profiles, relativePath);
+        const event = classifyFile(item, profile, relativePath);
         if (event !== null) {
           events.push(event);
         }
         break;
       }
       case "deleted": {
-        const profile = routeToProfile(profiles, relativePath);
-        if (profile !== undefined) {
+        if (coversPath(profile, relativePath)) {
           events.push(deletionEvent(item, profile, relativePath));
         }
         break;
@@ -572,27 +570,24 @@ function classifyPage(items: DriveItem[], profiles: DeltaWalkProfile[]): PageCla
   return { events, unresolvedPathCount, unresolvedItemIds, driveRootItemCount };
 }
 
-function routeToProfile(
-  profiles: DeltaWalkProfile[],
-  relativePath: string,
-): DeltaWalkProfile | undefined {
-  return profiles.find(
-    (profile) =>
-      profile.rootPath === undefined ||
-      profile.rootPath === "" ||
-      profile.rootPath === "/" ||
-      relativePath === profile.rootPath ||
-      relativePath.startsWith(`${profile.rootPath}/`),
+/** True when the item's folder path sits at or inside the profile's source root. */
+function coversPath(profile: DeltaWalkProfile, relativePath: string): boolean {
+  const rootPath = profile.rootPath;
+  return (
+    rootPath === undefined ||
+    rootPath === "" ||
+    rootPath === "/" ||
+    relativePath === rootPath ||
+    relativePath.startsWith(`${rootPath}/`)
   );
 }
 
 function classifyFile(
   item: FileItem,
-  profiles: DeltaWalkProfile[],
+  profile: DeltaWalkProfile,
   relativePath: string,
 ): FileChangeEvent | null {
-  const profile = routeToProfile(profiles, relativePath);
-  if (profile === undefined) {
+  if (!coversPath(profile, relativePath)) {
     return null;
   }
   return {
@@ -624,18 +619,4 @@ function deletionEvent(
     ...(relativePath === undefined ? {} : { relativePath }),
     isFolder: item.isFolder,
   };
-}
-
-/**
- * A deletion with no path cannot be routed: the item id names the change, but
- * not the profile whose index holds its record. So every profile of the
- * connection is a candidate and Unit 2's lookup decides — removing a record
- * that does not exist is a no-op, and one drive cannot hold the same item under
- * two profiles, so at most one of these events removes anything.
- */
-function deletionsForEveryProfile(
-  item: DeletedItem,
-  profiles: DeltaWalkProfile[],
-): FileChangeEvent[] {
-  return profiles.map((profile) => deletionEvent(item, profile, undefined));
 }

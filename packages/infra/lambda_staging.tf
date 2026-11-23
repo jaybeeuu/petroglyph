@@ -194,7 +194,7 @@ resource "aws_lambda_function" "petroglyph_adapter_onedrive" {
   environment {
     variables = {
       EVENT_LOG_TABLE                 = aws_dynamodb_table.event_log.name
-      DELTA_TOKENS_TABLE              = aws_dynamodb_table.delta_states.name
+      DELTA_CURSOR_TABLE              = local.delta_tokens_table_name
       REFRESH_TOKENS_TABLE            = aws_dynamodb_table.token_vaults.name
       SYNC_PROFILES_TABLE             = aws_dynamodb_table.sync_profiles.name
       STAGED_PDFS_BUCKET              = aws_s3_bucket.staged_pdfs.id

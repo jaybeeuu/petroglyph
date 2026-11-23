@@ -132,6 +132,17 @@ describe("infra script workflow split", () => {
       expect(declaredTableNames.filter((name) => !grantedTableNames.includes(name))).toEqual([]);
     });
 
+    // The deploy role applies the resource removal, so the apply that destroys a
+    // retired table still calls DeleteTable. The grant must outlive the destroy;
+    // a follow-up retires the ARN once the table is gone.
+    it("keeps the retired delta-states grant while the same apply destroys its table", () => {
+      const declaredTableNames = readDeclaredTableNames();
+      const grantedTableNames = readGrantedTableNames();
+
+      expect(declaredTableNames).not.toContain("petroglyph-delta-states-${DEPLOY_ENVIRONMENT}");
+      expect(grantedTableNames).toContain("petroglyph-delta-states-${DEPLOY_ENVIRONMENT}");
+    });
+
     it("scopes the plan role's SSM read to the namespaced production parameter", () => {
       const script = readScript("bootstrap.sh");
       expect(script).toMatch(/parameter\/petroglyph\/production\/onedrive\/client-id/);

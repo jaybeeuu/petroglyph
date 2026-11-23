@@ -6,5 +6,5 @@ export type {
   DeltaWalkResult,
   FileChangeEvent,
 } from "./delta-walk.js";
-export type { DeltaState, DeltaStateStore } from "./delta-state-store.js";
-export { DynamoDBDeltaStateStore } from "./delta-state-store-ddb.js";
+export type { DeltaCursor, DeltaCursorStore } from "./delta-cursor-store.js";
+export { DynamoDBDeltaCursorStore } from "./delta-cursor-store-ddb.js";

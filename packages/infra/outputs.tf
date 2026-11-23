@@ -83,7 +83,7 @@ output "token_vaults_table_name" {
   value       = aws_dynamodb_table.token_vaults.name
 }
 
-output "delta_states_table_name" {
-  description = "Name of the delta-state table the smoke resets before triggering"
-  value       = aws_dynamodb_table.delta_states.name
+output "delta_cursor_table_name" {
+  description = "Name of the delta-cursor table the smoke resets before triggering"
+  value       = aws_dynamodb_table.delta_tokens.name
 }
