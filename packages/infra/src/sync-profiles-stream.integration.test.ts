@@ -58,6 +58,22 @@ const POLL_INTERVAL_MS = 250;
 const ITERATOR_LIFETIME_MS = 10_000;
 /** One GetRecords must not take the whole budget while the service stalls. */
 const POLL_TIMEOUT_MS = 15_000;
+/**
+ * How long the table's stream may take to become readable. LocalStack serves a
+ * table's stream from a Kinesis stream it brings up after the table: until that
+ * stream is ACTIVE, GetShardIterator answers ResourceInUseException and a write
+ * the table has already accepted is never published. Such a record does not
+ * arrive late, it is lost, so a test that writes straight after CreateTable can
+ * spend a whole wait budget on a record that does not exist.
+ */
+const STREAM_READY_BUDGET_MS = 30_000;
+/**
+ * One canary row's wait: long enough for a stream that is publishing, short
+ * enough to write another canary when the previous write was dropped.
+ */
+const CANARY_RECORD_BUDGET_MS = 10_000;
+/** Canary rows written before the stream is declared not to publish at all. */
+const CANARY_ATTEMPTS = 3;
 
 /**
  * The stream the deployed table declaration asks DynamoDB to keep, read out of
@@ -129,6 +145,25 @@ function isAbortedRequest(error: unknown): boolean {
   return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
 }
 
+/**
+ * LocalStack reports the state of the Kinesis stream behind the table's stream
+ * as ResourceInUseException, wrapped in an InternalError response.
+ */
+function isStreamNotActive(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("ResourceInUseException");
+}
+
+/**
+ * What one poll of the shard found: the record it was asked for when it arrived,
+ * and what it saw on the way, so a caller that gives up can say why.
+ */
+interface StreamPollResult {
+  record?: DynamoDBStreamRecord;
+  seen: string[];
+  polls: number;
+  waitedMs: number;
+}
+
 describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
   let container: StartedTestContainer | undefined;
   let dynamo: DynamoDBClient;
@@ -179,6 +214,7 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
       throw new Error("the table has no stream ARN");
     }
     shardId = await awaitShardId();
+    await awaitStreamPublishing();
   }, 180_000);
 
   /**
@@ -224,6 +260,53 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
   }
 
   /**
+   * Await the stream a test may write to. LocalStack serves a table's stream from
+   * a Kinesis stream it creates after the table, and writes that land before that
+   * stream is ACTIVE are dropped: their records never appear. Awaiting the real
+   * signals — GetShardIterator answering instead of refusing, then a canary row
+   * coming back as a record — keeps a dropped write from looking like a timeout.
+   */
+  async function awaitStreamPublishing(): Promise<void> {
+    const deadline = Date.now() + STREAM_READY_BUDGET_MS;
+    for (;;) {
+      try {
+        await openShardIterator();
+        break;
+      } catch (error) {
+        if (!isStreamNotActive(error)) {
+          throw error;
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(
+            `the stream accepted no shard iterator within ${STREAM_READY_BUDGET_MS} ms of CreateTable`,
+          );
+        }
+        await delay(SHARD_DISCOVERY_INTERVAL_MS);
+      }
+    }
+
+    for (let attempt = 1; attempt <= CANARY_ATTEMPTS; attempt += 1) {
+      const profileId = `stream-canary-${attempt}`;
+      await dynamo.send(
+        new PutItemCommand({
+          TableName: TABLE_NAME,
+          Item: {
+            userId: { S: "user-stream-canary" },
+            profileId: { S: profileId },
+          },
+        }),
+      );
+      const { record } = await pollForStreamRecord(profileId, "INSERT", CANARY_RECORD_BUDGET_MS);
+      if (record !== undefined) {
+        return;
+      }
+    }
+    throw new Error(
+      `the stream published no record for ${CANARY_ATTEMPTS} canary rows, so a write is being dropped`,
+    );
+  }
+
+  /**
    * DynamoDB Streams reports no in-process completion signal, so the only way to
    * await a real record is to poll GetRecords. This polls the real transport; it
    * does not sleep on a stopwatch.
@@ -232,8 +315,26 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
     profileId: string,
     eventName: OperationType,
   ): Promise<DynamoDBStreamRecord> {
+    const { record, seen, polls, waitedMs } = await pollForStreamRecord(
+      profileId,
+      eventName,
+      RECORD_WAIT_BUDGET_MS,
+    );
+    if (record !== undefined) {
+      return record;
+    }
+    throw new Error(
+      `no ${eventName} stream record was observed for ${profileId} within ${waitedMs} ms and ${polls} polls; records seen: ${seen.length === 0 ? "none" : seen.join(", ")}`,
+    );
+  }
+
+  async function pollForStreamRecord(
+    profileId: string,
+    eventName: OperationType,
+    budgetMs: number,
+  ): Promise<StreamPollResult> {
     const startedAt = Date.now();
-    const deadline = startedAt + RECORD_WAIT_BUDGET_MS;
+    const deadline = startedAt + budgetMs;
     const seen = new Set<string>();
     let polls = 0;
     let iterator = await openShardIterator();
@@ -260,7 +361,12 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
       for (const record of page.Records ?? []) {
         const recordProfileId = record.dynamodb?.Keys?.["profileId"]?.S;
         if (record.eventName === eventName && recordProfileId === profileId) {
-          return record;
+          return {
+            record,
+            seen: [...seen],
+            polls,
+            waitedMs: Date.now() - startedAt,
+          };
         }
         seen.add(`${record.eventName ?? "UNKNOWN"}/${recordProfileId ?? "no-keys"}`);
       }
@@ -277,11 +383,11 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
       await delay(POLL_INTERVAL_MS);
     }
 
-    throw new Error(
-      `no ${eventName} stream record was observed for ${profileId} within ${
-        Date.now() - startedAt
-      } ms and ${polls} polls; records seen: ${seen.size === 0 ? "none" : [...seen].join(", ")}`,
-    );
+    return {
+      seen: [...seen],
+      polls,
+      waitedMs: Date.now() - startedAt,
+    };
   }
 
   it("keeps the row as it was before a soft delete on the MODIFY record", async () => {
