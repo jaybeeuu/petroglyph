@@ -62,6 +62,7 @@ resource "aws_iam_role_policy" "petroglyph_api_policy" {
           aws_dynamodb_table.file_records.arn,
           aws_dynamodb_table.delta_tokens.arn,
           aws_dynamodb_table.sync_jobs.arn,
+          aws_dynamodb_table.graph_subscriptions.arn,
         ]
       },
       {

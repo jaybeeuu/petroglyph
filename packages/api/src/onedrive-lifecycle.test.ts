@@ -124,7 +124,7 @@ describe("POST /onedrive/lifecycle", () => {
     expect(await response.text()).toBe("handshake-token");
   });
 
-  it("marks the user as reconnect_required for subscriptionRemoved events", async () => {
+  it("writes no connection status when a subscription is removed", async () => {
     const response = await app.request("/onedrive/lifecycle", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -140,28 +140,7 @@ describe("POST /onedrive/lifecycle", () => {
     });
 
     expect(response.status).toBe(202);
-
-    await vi.waitFor(() => {
-      expect(updateCalls()).toHaveLength(1);
-    });
-
-    const updateCall = updateCalls()[0];
-    if (!updateCall) {
-      throw new Error("Expected one UpdateCommand call");
-    }
-
-    const [updateCommand] = updateCall as [
-      {
-        input: {
-          TableName: string;
-          Key: { userId: string };
-          ExpressionAttributeValues: { [key: string]: unknown };
-        };
-      },
-    ];
-    expect(updateCommand.input.TableName).toBe("petroglyph-users-test");
-    expect(updateCommand.input.Key).toEqual({ userId: "user-123" });
-    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("reconnect_required");
+    expect(usersStatusUpdate()).toBeUndefined();
   });
 
   it("refreshes the token and reauthorizes the subscription for reauthorizationRequired events", async () => {
@@ -261,7 +240,7 @@ describe("POST /onedrive/lifecycle", () => {
     ).toBe("connected");
   });
 
-  it("marks the user as reconnect_required when token refresh fails", async () => {
+  it("writes no connection status when token refresh fails", async () => {
     setupDbMock([
       { command: GetCommand, response: { Item: { refreshToken: "existing-refresh-token" } } },
     ]);
@@ -287,26 +266,11 @@ describe("POST /onedrive/lifecycle", () => {
     });
 
     expect(response.status).toBe(202);
-
-    await vi.waitFor(() => {
-      expect(updateCalls()).toHaveLength(1);
-    });
-
-    const updateCall = updateCalls()[0];
-    if (!updateCall) {
-      throw new Error("Expected one UpdateCommand call");
-    }
-
-    const [updateCommand] = updateCall as [
-      {
-        input: {
-          Key: { userId: string };
-          ExpressionAttributeValues: { [key: string]: unknown };
-        };
-      },
-    ];
-    expect(updateCommand.input.Key).toEqual({ userId: "user-123" });
-    expect(updateCommand.input.ExpressionAttributeValues[":status"]).toBe("reconnect_required");
+    expect(mockFetch.mock.calls[0]).toEqual([
+      "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      expect.anything(),
+    ]);
+    expect(usersStatusUpdate()).toBeUndefined();
   });
 
   it("falls back to DELETE + recreate and marks connected when Graph reauthorize returns 308", async () => {
@@ -417,7 +381,7 @@ describe("POST /onedrive/lifecycle", () => {
     expect(recreateCall).toBeDefined();
   });
 
-  it("marks the user as reconnect_required when subscription recreate also fails", async () => {
+  it("writes no connection status when subscription recreate also fails", async () => {
     vi.stubEnv("GRAPH_NOTIFICATION_URL", "https://api.example.com/graph/notify");
     vi.stubEnv("GRAPH_LIFECYCLE_URL", "https://api.example.com/graph/lifecycle");
     setupDbMock([
@@ -444,35 +408,10 @@ describe("POST /onedrive/lifecycle", () => {
     });
 
     expect(response.status).toBe(202);
-
-    await vi.waitFor(() => {
-      const statusUpdate = usersStatusUpdate();
-      expect(statusUpdate).toBeDefined();
-      expect(
-        (statusUpdate?.input as { ExpressionAttributeValues: { [key: string]: unknown } })
-          .ExpressionAttributeValues[":status"],
-      ).toBe("reconnect_required");
-    });
-  });
-
-  it("returns 202 after subscriptionRemoved work finishes", async () => {
-    mockDbSend.mockResolvedValue({});
-
-    const response = await app.request("/onedrive/lifecycle", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        value: [
-          {
-            lifecycleEvent: "subscriptionRemoved",
-            clientState: "user-789",
-          },
-        ],
-      }),
-    });
-
-    expect(response.status).toBe(202);
-    expect(updateCalls()).toHaveLength(1);
+    const attemptedUrls = mockFetch.mock.calls.map(([url]) => url as string);
+    expect(attemptedUrls).toContain("https://graph.microsoft.com/v1.0/subscriptions/sub-456");
+    expect(attemptedUrls).toContain("https://graph.microsoft.com/v1.0/subscriptions");
+    expect(usersStatusUpdate()).toBeUndefined();
   });
 
   it("returns 202 after reauthorization work finishes", async () => {
@@ -532,9 +471,5 @@ describe("POST /onedrive/lifecycle", () => {
     });
 
     expect(response.status).toBe(202);
-
-    await vi.waitFor(() => {
-      expect(updateCalls()).toHaveLength(1);
-    });
   });
 });
