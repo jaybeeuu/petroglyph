@@ -178,10 +178,11 @@ describe("GET /files/changes", () => {
     expect(response.status).toBe(200);
 
     // The file records query must target the active profile's profileId, not a
-    // hardcoded partition key (regression: readFileRecordPage used to query the
-    // deleted "default" profile). listProfiles queries by userId, so the file
-    // records query is the one keyed on profileId (it is not simply the second
-    // QueryCommand: readInitialSyncEnabled issues an extra listProfiles call).
+    // hardcoded partition key (regression: readFileRecordPage used to query a
+    // profile id the product no longer creates). listProfiles queries by userId,
+    // so the file records query is the one keyed on profileId (it is not simply
+    // the second QueryCommand: readInitialSyncEnabled issues an extra
+    // listProfiles call).
     const fileRecordQuery: unknown = mockDbSend.mock.calls.find(
       ([command]) =>
         command instanceof QueryCommand &&

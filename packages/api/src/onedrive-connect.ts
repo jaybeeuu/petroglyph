@@ -1,4 +1,4 @@
-import { markConnected, registerGraphSubscription } from "./onedrive-lifecycle.js";
+import { markConnected } from "./onedrive-lifecycle.js";
 import { z } from "zod";
 import { DeleteCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { defineEndpoint } from "@petroglyph/contracts/hono";
@@ -9,10 +9,6 @@ import { writeInitialConnectionTokens } from "./token-vault.js";
 
 function refreshTokensTable(): string {
   return process.env["REFRESH_TOKENS_TABLE"] ?? "petroglyph-refresh_tokens-default";
-}
-
-function syncProfilesTable(): string {
-  return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
 }
 
 const onedriveStateItemSchema = z.object({
@@ -138,40 +134,6 @@ async function storeTokensInDynamoDB(
   );
 }
 
-async function upsertSyncProfile(userId: string): Promise<void> {
-  const now = new Date().toISOString();
-  await docClient().send(
-    new UpdateCommand({
-      TableName: syncProfilesTable(),
-      Key: { userId, profileId: "default" },
-      UpdateExpression:
-        "SET createdAt = if_not_exists(createdAt, :now), " +
-        "updatedAt = :now, " +
-        "oneDriveConnected = :true, " +
-        "#name = :name, " +
-        "sourceFolderPath = :rootPath, " +
-        "destinationVaultPath = :defaultDest, " +
-        "#active = :true, " +
-        "initialSyncEnabled = :true, " +
-        "#enabled = :true, " +
-        "pollingIntervalMinutes = :interval",
-      ExpressionAttributeNames: {
-        "#name": "name",
-        "#active": "active",
-        "#enabled": "enabled",
-      },
-      ExpressionAttributeValues: {
-        ":now": now,
-        ":true": true,
-        ":name": "default",
-        ":rootPath": "/",
-        ":defaultDest": "handwritten",
-        ":interval": 5,
-      },
-    }),
-  );
-}
-
 export const bridgeOnedriveCallbackEndpoint = defineEndpoint(
   bridgeOnedriveCallback,
   (_input, c: AppContext): Response => {
@@ -266,9 +228,6 @@ export const connectOnedriveEndpoint = defineEndpoint(
       expiresInSeconds: tokens.expires_in,
     });
     console.info("[onedrive-connect] Seeded the connection token vault", { userId });
-    await registerGraphSubscription(tokens.access_token, userId);
-    await upsertSyncProfile(userId);
-    console.info("[onedrive-connect] OneDrive profile updated", { userId });
     await markConnected(userId);
     console.info("[onedrive-connect] User record updated", { userId });
 

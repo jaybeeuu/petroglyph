@@ -25,6 +25,9 @@ beads, docs, PRs, and new code — a synonym invented in one place is a concept 
 
 - A **user** holds a **connection** to a **provider**; the connection owns the **grant**.
 - A **profile** is a scheduled job over one connection; it never holds tokens.
+- A **connection with no profile** is a valid state: it syncs nothing, and `GET /status` reports
+  `connected_no_profile`. Connect never creates a profile, because only the user knows which folder
+  maps to which vault path.
 - `userId` is Petroglyph-internal; a provider account id is a different namespace.
 
 ## Profile selection

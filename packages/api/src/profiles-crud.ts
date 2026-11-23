@@ -16,6 +16,7 @@ import {
 import type { SyncProfile } from "@petroglyph/core";
 import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
+import { setProfilePresence } from "./user-record.js";
 
 function syncProfilesTableName(): string {
   return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
@@ -167,19 +168,22 @@ export const deleteProfileEndpoint = defineEndpoint(
     }
     await deleteProfile(docClient(), syncProfilesTableName(), userId, profileId);
     await deleteFileRecordsForProfile(profileId);
-    if (existing.active) {
-      const remaining = await listProfiles(docClient(), syncProfilesTableName(), userId);
-      const others = remaining.filter((p) => p.profileId !== profileId);
-      if (others.length > 0) {
-        const newest = others.reduce((best: SyncProfile, p: SyncProfile) =>
-          p.createdAt > best.createdAt ? p : best,
-        );
-        await updateProfile(docClient(), syncProfilesTableName(), userId, newest.profileId, {
-          active: true,
-          updatedAt: new Date().toISOString(),
-        });
-      }
+    const remaining = await listProfiles(docClient(), syncProfilesTableName(), userId);
+    const others = remaining.filter((p) => p.profileId !== profileId);
+    // Promote before recording presence: the presence mark is best-effort, so it
+    // must never gate a promotion the user needs after losing the active profile.
+    if (existing.active && others.length > 0) {
+      const newest = others.reduce((best: SyncProfile, p: SyncProfile) =>
+        p.createdAt > best.createdAt ? p : best,
+      );
+      await updateProfile(docClient(), syncProfilesTableName(), userId, newest.profileId, {
+        active: true,
+        updatedAt: new Date().toISOString(),
+      });
     }
+    // The user record carries profile presence, so `/status` never reads a
+    // profile row. Clearing it with the last profile keeps that mark honest.
+    await setProfilePresence(userId, others.length > 0);
     return new Response(null, { status: 204 });
   },
 );

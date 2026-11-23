@@ -220,6 +220,17 @@ describe("PetroglyphSettingTab Profiles section", () => {
     buttonHandlers.clear();
   });
 
+  it("shows the empty state when no profile exists", async () => {
+    const plugin = await makePlugin({ username: "alice" });
+    const { PetroglyphSettingTab } = await import("./settings.js");
+    const tab = new PetroglyphSettingTab({} as App, plugin);
+    const createEl = vi.spyOn(tab.containerEl, "createEl");
+    tab.display();
+    expect(createEl).toHaveBeenCalledWith("p", {
+      text: "No profiles yet - create one to start syncing",
+    });
+  });
+
   it("shows 'Set active' buttons for each profile", async () => {
     const plugin = await makePlugin({ username: "alice" });
     // @ts-expect-error — testing internal data

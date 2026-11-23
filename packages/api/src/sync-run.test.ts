@@ -14,6 +14,8 @@ import { resetKeyCache } from "./jwt.js";
 
 const app = createApp();
 
+const PROFILE_ID = "b6f1c0de-0000-4000-8000-000000000001";
+
 describe("POST /sync/run", () => {
   let privateKey: CryptoKey;
   let publicKeyPem: string;
@@ -72,9 +74,9 @@ describe("POST /sync/run", () => {
           return Promise.resolve({
             Items: [
               {
-                profileId: "default",
+                profileId: PROFILE_ID,
                 userId: "user-42",
-                name: "default",
+                name: "legal",
                 sourceFolderPath: "OnyxBoox",
                 destinationVaultPath: "handwritten",
                 pollingIntervalMinutes: 5,
@@ -120,7 +122,7 @@ describe("POST /sync/run", () => {
           TableName: "petroglyph-sync-jobs-test",
           Item: expect.objectContaining({
             jobId,
-            profileId: "default",
+            profileId: PROFILE_ID,
             sourceFolderPath: "OnyxBoox",
             userId: "user-42",
             status: "queued",
@@ -169,7 +171,7 @@ describe("POST /sync/run", () => {
         return Promise.resolve({
           Items: [
             {
-              profileId: "default",
+              profileId: PROFILE_ID,
               userId: "user-42",
               sourceFolderPath: "OnyxBoox",
               active: true,

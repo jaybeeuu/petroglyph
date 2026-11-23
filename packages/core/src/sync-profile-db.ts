@@ -80,8 +80,9 @@ export type ProfileAttributeValue = string | number | boolean;
 /**
  * The attributes one profile write names. A field absent from the map keeps its
  * stored value, so an update cannot erase an attribute the writer does not know
- * about — `oneDriveConnected`, for one, is stamped by the connect path and is
- * not part of the domain schema a reader parses.
+ * about — `oneDriveConnected`, which the connect path used to stamp before
+ * connection state moved onto the connection, for one, and which is not part of
+ * the domain schema a reader parses.
  *
  * A field mapped to `null` is removed. DynamoDB has no null value, so clearing
  * an optional attribute needs a `REMOVE` clause; a `SET` would store the string

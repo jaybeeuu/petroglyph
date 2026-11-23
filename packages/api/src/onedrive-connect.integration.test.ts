@@ -4,7 +4,12 @@ import {
   type AttributeDefinition,
   type KeySchemaElement,
 } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { tokenRecordSchema } from "@petroglyph/core";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { createServer, type Server } from "node:http";
@@ -71,9 +76,6 @@ describe("POST /onedrive/connect against LocalStack DynamoDB", () => {
     vi.stubEnv("MICROSOFT_CLIENT_ID", "client-id");
     vi.stubEnv("MICROSOFT_CLIENT_SECRET", "client-secret");
     vi.stubEnv("MICROSOFT_REDIRECT_URI", "https://api.petroglyph.test/onedrive/connect");
-    // No Graph subscription: this seam runs from the token exchange to the
-    // vault write, and a registered notification URL is what would reach Graph.
-    vi.stubEnv("GRAPH_NOTIFICATION_URL", "");
 
     const keyPair = await generateKeyPair("RS256");
     privateKey = keyPair.privateKey as CryptoKey;
@@ -155,6 +157,102 @@ describe("POST /onedrive/connect against LocalStack DynamoDB", () => {
     });
     expect(Number(legacyRow.Item?.["expirySeconds"])).toBeGreaterThanOrEqual(startedAt + 3600);
     expect(Number(legacyRow.Item?.["expirySeconds"])).toBeLessThanOrEqual(finishedAt + 3600);
+
+    // Connect establishes the connection only. Choosing which folder maps to
+    // which vault path is the user's own profile action, so nothing exists yet.
+    const profileRows = await vault.send(
+      new QueryCommand({
+        TableName: SYNC_PROFILES_TABLE,
+        KeyConditionExpression: "userId = :userId",
+        ExpressionAttributeValues: { ":userId": "user-42" },
+      }),
+    );
+    expect(profileRows.Items).toEqual([]);
+
+    // A live connection with no profile is connected -- the grant is in the
+    // vault and the user record is marked -- and asks for a profile.
+    const status = await createApp().request("/status", {
+      headers: { Authorization: `Bearer ${await makeToken("user-42")}` },
+    });
+    expect(status.status).toBe(200);
+    expect(await status.json()).toMatchObject({
+      oneDrive: { connected: true },
+      oneDriveStatus: "connected_no_profile",
+    });
+  }, 60_000);
+
+  it("leaves an existing profile untouched and reports connected", async () => {
+    const tokens: MicrosoftTokenBody = {
+      access_token: "ms-access-token-2",
+      refresh_token: "ms-refresh-token-2",
+      expires_in: 3600,
+    };
+    const tokenEndpoint = await startTokenEndpoint(tokens);
+    redirectMicrosoftFetch(tokenEndpoint.origin);
+
+    await vault.send(
+      new PutCommand({
+        TableName: REFRESH_TOKENS_TABLE,
+        Item: {
+          tokenHash: "state-7d2a",
+          type: "onedrive_state",
+          verifier: "code-verifier-2",
+          ttl: Math.floor(Date.now() / 1000) + 600,
+        },
+      }),
+    );
+
+    // The profile the user created themselves: connect must not touch it. Login
+    // writes the user record and `POST /profiles` writes the profile, so the
+    // user record's presence mark is set the way the product sets it.
+    await vault.send(
+      new PutCommand({
+        TableName: USERS_TABLE,
+        Item: { userId: "user-43", username: "octocat", createdAt: "2026-11-15T00:00:00.000Z" },
+      }),
+    );
+    const created = await createApp().request("/profiles", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${await makeToken("user-43")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "legal",
+        sourceFolderPath: "/legal",
+        destinationVaultPath: "inbox/legal",
+      }),
+    });
+    expect(created.status).toBe(201);
+    const profile = (await created.json()) as { profileId: string };
+
+    const response = await createApp().request("/onedrive/connect", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${await makeToken("user-43")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ code: "ms-authorization-code", state: "state-7d2a" }),
+    });
+
+    expect(response.status).toBe(200);
+
+    const storedProfile = await vault.send(
+      new GetCommand({
+        TableName: SYNC_PROFILES_TABLE,
+        Key: { userId: "user-43", profileId: profile.profileId },
+      }),
+    );
+    expect(storedProfile.Item).toEqual(profile);
+
+    const status = await createApp().request("/status", {
+      headers: { Authorization: `Bearer ${await makeToken("user-43")}` },
+    });
+    expect(status.status).toBe(200);
+    expect(await status.json()).toMatchObject({
+      oneDrive: { connected: true },
+      oneDriveStatus: "connected",
+    });
   }, 60_000);
 
   async function makeToken(userId: string): Promise<string> {

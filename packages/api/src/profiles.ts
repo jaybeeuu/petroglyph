@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { listProfiles, normalizeSourceFolderPath, putProfile } from "@petroglyph/core";
 import type { AppContext } from "./auth-middleware.js";
 import { docClient } from "./db.js";
+import { setProfilePresence } from "./user-record.js";
 
 function syncProfilesTableName(): string {
   return process.env["SYNC_PROFILES_TABLE"] ?? "petroglyph-sync-profiles-default";
@@ -42,6 +43,7 @@ export const createProfileEndpoint = defineEndpoint(
       updatedAt: now,
     };
     await putProfile(docClient(), syncProfilesTableName(), profile);
+    await setProfilePresence(userId, true);
     return c.json(profile, 201);
   },
 );
