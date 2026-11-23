@@ -1,3 +1,7 @@
+> **SUPERSEDED.** This plan records the first design and is kept as history. The current sync lifecycle
+> is [docs/sync-lifecycle.md](../docs/sync-lifecycle.md); `/files/changes`, `/sync/run`, `file_records`
+> and `sync_jobs` here describe the legacy surface that Delivery 3 retires (`petroglyph-m0jc.3`).
+
 # Plan: Petroglyph — Phase 1 PDF Sync
 
 > Source: [ARCHITECTURE.md](../ARCHITECTURE.md), [docs/authentication.md](../docs/authentication.md)
