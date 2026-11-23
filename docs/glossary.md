@@ -2,6 +2,7 @@
 
 Canonical vocabulary for the Petroglyph sync redesign. Use these terms consistently in plans,
 beads, docs, PRs, and new code — a synonym invented in one place is a concept invented in two.
+For how these terms behave in the flow, see [sync-lifecycle.md](sync-lifecycle.md).
 
 ## Two auth layers, never conflated
 
