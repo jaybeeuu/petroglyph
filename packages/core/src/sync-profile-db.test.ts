@@ -19,7 +19,6 @@ const testProfile: SyncProfile = {
   userId: "user-1",
   name: "My Profile",
   sourceFolderPath: "/source",
-  destinationVaultPath: "/vault",
   pollingIntervalMinutes: 5,
   enabled: true,
   active: false,

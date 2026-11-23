@@ -36,7 +36,6 @@ type ProfileUpdate = Partial<
     SyncProfile,
     | "name"
     | "sourceFolderPath"
-    | "destinationVaultPath"
     | "pollingIntervalMinutes"
     | "enabled"
     | "initialSyncEnabled"
@@ -75,9 +74,6 @@ function profileUpdateFrom(body: PutProfileBody, updatedAt: string): ProfileUpda
     ...(body.name !== undefined && { name: body.name }),
     ...(body.sourceFolderPath !== undefined && {
       sourceFolderPath: normalizeSourceFolderPath(body.sourceFolderPath),
-    }),
-    ...(body.destinationVaultPath !== undefined && {
-      destinationVaultPath: body.destinationVaultPath,
     }),
     ...(body.pollingIntervalMinutes !== undefined && {
       pollingIntervalMinutes: body.pollingIntervalMinutes,

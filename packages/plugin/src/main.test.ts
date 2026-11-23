@@ -129,39 +129,35 @@ function writtenPaths(vault: VaultStub): string[] {
 }
 
 /**
- * A fetch stub for the three URLs one sync touches: GET /profiles, GET /files
- * and the presigned download, so one test can drive the whole write path.
+ * A plugin holding one active profile whose destination is the plugin's own
+ * state. The server sends none back, so the destination has to be seeded here.
  */
-function stubSyncFetch(profile: {
-  destinationVaultPath?: string;
-  files: FeedEntry[];
-  /** The profiles the server lists; defaults to the one active profile under test. */
-  profiles?: {
-    profileId: string;
-    name: string;
-    sourceFolderPath: string;
-    destinationVaultPath: string;
-    active: boolean;
-  }[];
-}): typeof fetch {
-  const profiles = profile.profiles ?? [
-    {
-      profileId: "p1",
-      name: "Proofs",
-      sourceFolderPath: "onyx/proofs",
-      destinationVaultPath: profile.destinationVaultPath ?? "",
-      active: true,
-    },
-  ];
+async function makePluginWithDestination(destinationVaultPath: string): Promise<PetroglyphPlugin> {
+  const { plugin } = await makePlugin({
+    jwt: "jwt-token",
+    oneDriveConnected: true,
+    activeProfileId: "p1",
+    profiles: [
+      {
+        profileId: "p1",
+        name: "Proofs",
+        sourceFolderPath: "onyx/proofs",
+        destinationVaultPath,
+      },
+    ],
+  });
+  return plugin;
+}
+
+/**
+ * A fetch stub for the URLs one sync touches: the sync trigger, GET /files and
+ * the presigned download, so one test can drive the whole write path.
+ */
+function stubSyncFetch(files: FeedEntry[]): typeof fetch {
   return vi.fn((url: string) => {
+    if (url.includes("/sync-trigger")) return Promise.resolve(queuedTrigger());
     if (url.includes("/files")) {
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ files: profile.files, nextToken: null }),
-      });
-    }
-    if (url.includes("/profiles")) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(profiles) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ files, nextToken: null }) });
     }
     return Promise.resolve({
       ok: true,
@@ -331,6 +327,28 @@ describe("loadPluginData / savePluginData", () => {
     await plugin.savePluginData();
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(plugin.saveData).toHaveBeenCalledWith(expect.objectContaining({ username: "carol" }));
+  });
+
+  it("restores the profiles it saved, with their destinations", async () => {
+    const { plugin } = await makePlugin({
+      profiles: [
+        {
+          profileId: "p1",
+          name: "Proofs",
+          sourceFolderPath: "onyx/proofs",
+          destinationVaultPath: "twiy-proof",
+        },
+      ],
+    });
+
+    expect(plugin.data.profiles).toEqual([
+      {
+        profileId: "p1",
+        name: "Proofs",
+        sourceFolderPath: "onyx/proofs",
+        destinationVaultPath: "twiy-proof",
+      },
+    ]);
   });
 });
 
@@ -2160,47 +2178,42 @@ describe("destination vault path", () => {
   });
 
   it("writes under the active profile's destination, not another profile's", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
-    const vault = makeVaultStub();
-    // @ts-expect-error — minimal stub
-    plugin.app = { vault };
-    global.fetch = stubSyncFetch({
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      oneDriveConnected: true,
+      activeProfileId: "p-active",
       profiles: [
         {
           profileId: "p-inactive",
           name: "Archive",
           sourceFolderPath: "onyx/archive",
           destinationVaultPath: "archive",
-          active: false,
         },
         {
           profileId: "p-active",
           name: "Proofs",
           sourceFolderPath: "onyx/proofs",
           destinationVaultPath: "twiy-proof",
-          active: true,
         },
       ],
-      files: [makeFeedEntry({ name: "note.pdf", relativePath: "notes" })],
     });
+    const vault = makeVaultStub();
+    // @ts-expect-error — minimal stub
+    plugin.app = { vault };
+    global.fetch = stubSyncFetch([makeFeedEntry({ name: "note.pdf", relativePath: "notes" })]);
 
-    await plugin.loadProfiles();
     await plugin.performSync();
 
     expect(writtenPaths(vault)).toEqual(["twiy-proof/notes/note.pdf", "twiy-proof/notes/note.md"]);
   });
 
   it("writes the file and its companion note under the profile's destination", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const plugin = await makePluginWithDestination("twiy-proof");
     const vault = makeVaultStub();
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
-    global.fetch = stubSyncFetch({
-      destinationVaultPath: "twiy-proof",
-      files: [makeFeedEntry({ name: "note.pdf", relativePath: "notes/2026" })],
-    });
+    global.fetch = stubSyncFetch([makeFeedEntry({ name: "note.pdf", relativePath: "notes/2026" })]);
 
-    await plugin.loadProfiles();
     await plugin.performSync();
 
     expect(vault.adapter.writeBinary).toHaveBeenCalledWith(
@@ -2214,16 +2227,12 @@ describe("destination vault path", () => {
   });
 
   it("writes under the default root when the profile names no destination", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const plugin = await makePluginWithDestination("");
     const vault = makeVaultStub();
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
-    global.fetch = stubSyncFetch({
-      destinationVaultPath: "",
-      files: [makeFeedEntry({ name: "note.pdf", relativePath: "notes/2026" })],
-    });
+    global.fetch = stubSyncFetch([makeFeedEntry({ name: "note.pdf", relativePath: "notes/2026" })]);
 
-    await plugin.loadProfiles();
     await plugin.performSync();
 
     expect(vault.adapter.writeBinary).toHaveBeenCalledWith(
@@ -2237,16 +2246,12 @@ describe("destination vault path", () => {
   });
 
   it("normalises slashes around the destination", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const plugin = await makePluginWithDestination("//twiy-proof//");
     const vault = makeVaultStub();
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
-    global.fetch = stubSyncFetch({
-      destinationVaultPath: "//twiy-proof//",
-      files: [makeFeedEntry({ name: "note.pdf", relativePath: "notes" })],
-    });
+    global.fetch = stubSyncFetch([makeFeedEntry({ name: "note.pdf", relativePath: "notes" })]);
 
-    await plugin.loadProfiles();
     await plugin.performSync();
 
     expect(vault.adapter.writeBinary).toHaveBeenCalledWith(
@@ -2256,16 +2261,12 @@ describe("destination vault path", () => {
   });
 
   it("writes nothing when the destination escapes the vault", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const plugin = await makePluginWithDestination("../outside");
     const vault = makeVaultStub();
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
-    global.fetch = stubSyncFetch({
-      destinationVaultPath: "../outside",
-      files: [makeFeedEntry({ name: "note.pdf", relativePath: "notes" })],
-    });
+    global.fetch = stubSyncFetch([makeFeedEntry({ name: "note.pdf", relativePath: "notes" })]);
 
-    await plugin.loadProfiles();
     await plugin.syncNow();
 
     expect(writtenPaths(vault)).toEqual([]);
@@ -2275,16 +2276,12 @@ describe("destination vault path", () => {
   it.each(["..\\x", "..\\..", "a\\..\\..\\b", "../..", "a/../../b", "..\\../x"])(
     "writes nothing when the destination %j escapes through any separator",
     async (destinationVaultPath) => {
-      const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+      const plugin = await makePluginWithDestination(destinationVaultPath);
       const vault = makeVaultStub();
       // @ts-expect-error — minimal stub
       plugin.app = { vault };
-      global.fetch = stubSyncFetch({
-        destinationVaultPath,
-        files: [makeFeedEntry({ name: "note.pdf", relativePath: "notes" })],
-      });
+      global.fetch = stubSyncFetch([makeFeedEntry({ name: "note.pdf", relativePath: "notes" })]);
 
-      await plugin.loadProfiles();
       await plugin.syncNow();
 
       expect(writtenPaths(vault)).toEqual([]);
@@ -2293,32 +2290,24 @@ describe("destination vault path", () => {
   );
 
   it("writes a nested destination as a folder inside the vault", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const plugin = await makePluginWithDestination("notes/sub");
     const vault = makeVaultStub();
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
-    global.fetch = stubSyncFetch({
-      destinationVaultPath: "notes/sub",
-      files: [makeFeedEntry({ name: "note.pdf", relativePath: "2026" })],
-    });
+    global.fetch = stubSyncFetch([makeFeedEntry({ name: "note.pdf", relativePath: "2026" })]);
 
-    await plugin.loadProfiles();
     await plugin.performSync();
 
     expect(writtenPaths(vault)).toEqual(["notes/sub/2026/note.pdf", "notes/sub/2026/note.md"]);
   });
 
   it("writes nothing for a feed entry whose relative path escapes the vault", async () => {
-    const { plugin } = await makePlugin({ jwt: "jwt-token", oneDriveConnected: true });
+    const plugin = await makePluginWithDestination("twiy-proof");
     const vault = makeVaultStub();
     // @ts-expect-error — minimal stub
     plugin.app = { vault };
-    global.fetch = stubSyncFetch({
-      destinationVaultPath: "twiy-proof",
-      files: [makeFeedEntry({ name: "note.pdf", relativePath: "../../etc" })],
-    });
+    global.fetch = stubSyncFetch([makeFeedEntry({ name: "note.pdf", relativePath: "../../etc" })]);
 
-    await plugin.loadProfiles();
     await plugin.syncNow();
 
     expect(writtenPaths(vault)).toEqual([]);
@@ -2595,7 +2584,6 @@ describe("loadProfiles", () => {
         profileId: "p1",
         name: "Profile 1",
         sourceFolderPath: "/src",
-        destinationVaultPath: "/dst",
         active: true,
       },
     ];
@@ -2624,14 +2612,12 @@ describe("loadProfiles", () => {
             profileId: "p1",
             name: "Profile 1",
             sourceFolderPath: "/src",
-            destinationVaultPath: "/dst",
             active: false,
           },
           {
             profileId: "p2",
             name: "Profile 2",
             sourceFolderPath: "/src2",
-            destinationVaultPath: "/dst2",
             active: true,
           },
         ]),
@@ -2656,7 +2642,6 @@ describe("loadProfiles", () => {
             profileId: "p1",
             name: "Profile 1",
             sourceFolderPath: "/src",
-            destinationVaultPath: "/dst",
           },
         ]),
     });
@@ -2678,14 +2663,12 @@ describe("loadProfiles", () => {
             profileId: "p1",
             name: "Profile 1",
             sourceFolderPath: "/src",
-            destinationVaultPath: "/dst",
             active: false,
           },
           {
             profileId: "p2",
             name: "Profile 2",
             sourceFolderPath: "/src2",
-            destinationVaultPath: "/dst2",
             active: true,
           },
         ]),
@@ -2707,7 +2690,6 @@ describe("loadProfiles", () => {
             profileId: "p1",
             name: "Profile 1",
             sourceFolderPath: "/src",
-            destinationVaultPath: "/dst",
             active: false,
           },
         ]),
@@ -2718,15 +2700,83 @@ describe("loadProfiles", () => {
     expect(plugin.data.activeProfileId).toBe("p1");
   });
 
+  it("keeps the stored destination when the server lists the profile without one", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      profiles: [
+        {
+          profileId: "p1",
+          name: "Profile 1",
+          sourceFolderPath: "/src",
+          destinationVaultPath: "twiy-proof",
+        },
+      ],
+    });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve([{ profileId: "p1", name: "Profile 1", sourceFolderPath: "/src" }]),
+    });
+
+    await plugin.loadProfiles();
+
+    expect(plugin.data.profiles).toEqual([
+      {
+        profileId: "p1",
+        name: "Profile 1",
+        sourceFolderPath: "/src",
+        destinationVaultPath: "twiy-proof",
+        active: false,
+      },
+    ]);
+  });
+
+  it("keeps a destination through a list read that omits its profile", async () => {
+    const { plugin, savedData } = await makePlugin({
+      jwt: "jwt-token",
+      profiles: [
+        {
+          profileId: "p1",
+          name: "Proofs",
+          sourceFolderPath: "onyx/proofs",
+          destinationVaultPath: "twiy-proof",
+        },
+      ],
+    });
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse([]));
+
+    await plugin.loadProfiles();
+
+    // The list omits the profile, so its row is gone; the destination that row
+    // carried must not go with it.
+    const persisted: unknown = savedData["data"];
+    expect(persisted).toMatchObject({ profileDestinations: { p1: "twiy-proof" } });
+
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse([{ profileId: "p1", name: "Proofs", sourceFolderPath: "onyx/proofs" }]),
+      );
+
+    await plugin.loadProfiles();
+
+    expect(plugin.data.profiles).toEqual([
+      {
+        profileId: "p1",
+        name: "Proofs",
+        sourceFolderPath: "onyx/proofs",
+        destinationVaultPath: "twiy-proof",
+        active: false,
+      },
+    ]);
+  });
+
   it("saves plugin data after fetching profiles", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () =>
-        Promise.resolve([
-          { profileId: "p1", name: "P1", sourceFolderPath: "/s", destinationVaultPath: "/d" },
-        ]),
+      json: () => Promise.resolve([{ profileId: "p1", name: "P1", sourceFolderPath: "/s" }]),
     });
 
     await plugin.loadProfiles();
@@ -2778,7 +2828,6 @@ describe("setActiveProfile", () => {
               profileId: "p1",
               name: "Proofs",
               sourceFolderPath: "onyx/proofs",
-              destinationVaultPath: "twiy-proof",
               active: false,
             },
           ]),
@@ -2940,13 +2989,65 @@ describe("createProfile", () => {
       expect.stringContaining("/profiles"),
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({
-          name: "My Profile",
-          sourceFolderPath: "/src",
-          destinationVaultPath: "/dst",
-        }),
+        body: JSON.stringify({ name: "My Profile", sourceFolderPath: "/src" }),
       }),
     );
+  });
+
+  it("keeps the destination the user typed in plugin data", async () => {
+    const { plugin } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ profileId: "p1" }))
+      .mockResolvedValueOnce(
+        jsonResponse([{ profileId: "p1", name: "My Profile", sourceFolderPath: "src" }]),
+      );
+
+    await plugin.createProfile({
+      name: "My Profile",
+      sourceFolderPath: "src",
+      destinationVaultPath: "twiy-proof",
+    });
+
+    expect(plugin.data.profiles?.[0]?.destinationVaultPath).toBe("twiy-proof");
+  });
+
+  it("saves the destination the user typed when the profile list fails", async () => {
+    const { plugin, savedData } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ profileId: "p1" }))
+      .mockResolvedValueOnce(failureResponse(500));
+
+    await plugin.createProfile({
+      name: "My Profile",
+      sourceFolderPath: "src",
+      destinationVaultPath: "twiy-proof",
+    });
+
+    const persisted: unknown = savedData["data"];
+    expect(persisted).toMatchObject({
+      profiles: [expect.objectContaining({ profileId: "p1", destinationVaultPath: "twiy-proof" })],
+    });
+  });
+
+  it("saves the destination the user typed when the profile list omits the new profile", async () => {
+    const { plugin, savedData } = await makePlugin({ jwt: "jwt-token" });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ profileId: "p1" }))
+      .mockResolvedValueOnce(jsonResponse([]));
+
+    await plugin.createProfile({
+      name: "My Profile",
+      sourceFolderPath: "src",
+      destinationVaultPath: "twiy-proof",
+    });
+
+    const persisted: unknown = savedData["data"];
+    expect(persisted).toMatchObject({
+      profiles: [expect.objectContaining({ profileId: "p1", destinationVaultPath: "twiy-proof" })],
+    });
   });
 
   it("calls loadProfiles after successful creation", async () => {
@@ -2956,13 +3057,12 @@ describe("createProfile", () => {
         profileId: "p1",
         name: "My Profile",
         sourceFolderPath: "/src",
-        destinationVaultPath: "/dst",
       },
     ];
     global.fetch = vi
       .fn()
-      .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(mockProfiles) });
+      .mockResolvedValueOnce(jsonResponse({ profileId: "p1" }))
+      .mockResolvedValueOnce(jsonResponse(mockProfiles));
 
     await plugin.createProfile({
       name: "My Profile",
@@ -3036,6 +3136,81 @@ describe("editProfile", () => {
     );
   });
 
+  it("sends only the fields the profile carries, never a destination", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      profiles: [
+        { profileId: "p1", name: "P1", sourceFolderPath: "src", destinationVaultPath: "old" },
+      ],
+    });
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse([]));
+
+    await plugin.editProfile("p1", {
+      name: "Renamed",
+      sourceFolderPath: "src2",
+      destinationVaultPath: "twiy-proof",
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/profiles/p1"),
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ name: "Renamed", sourceFolderPath: "src2" }),
+      }),
+    );
+  });
+
+  it("keeps a destination edit in plugin data", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      profiles: [
+        { profileId: "p1", name: "P1", sourceFolderPath: "src", destinationVaultPath: "old" },
+      ],
+    });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse([{ profileId: "p1", name: "P1", sourceFolderPath: "src" }]),
+      );
+
+    await plugin.editProfile("p1", { destinationVaultPath: "twiy-proof" });
+
+    expect(plugin.data.profiles?.[0]?.destinationVaultPath).toBe("twiy-proof");
+  });
+
+  it("keeps a destination edit when the list read omits the profile", async () => {
+    const { plugin, savedData } = await makePlugin({
+      jwt: "jwt-token",
+      profiles: [
+        {
+          profileId: "p1",
+          name: "Proofs",
+          sourceFolderPath: "onyx/proofs",
+          destinationVaultPath: "old",
+        },
+      ],
+    });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({}))
+      .mockResolvedValueOnce(jsonResponse([]));
+
+    await plugin.editProfile("p1", { name: "Proofs", destinationVaultPath: "twiy-proof" });
+
+    const persisted: unknown = savedData["data"];
+    expect(persisted).toMatchObject({ profileDestinations: { p1: "twiy-proof" } });
+
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse([{ profileId: "p1", name: "Proofs", sourceFolderPath: "onyx/proofs" }]),
+      );
+
+    await plugin.loadProfiles();
+
+    expect(plugin.data.profiles?.[0]?.destinationVaultPath).toBe("twiy-proof");
+  });
+
   it("calls loadProfiles after successful edit", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
     const updatedProfiles = [
@@ -3043,7 +3218,6 @@ describe("editProfile", () => {
         profileId: "p1",
         name: "Updated Name",
         sourceFolderPath: "/new-src",
-        destinationVaultPath: "/dst",
       },
     ];
     global.fetch = vi
@@ -3141,16 +3315,52 @@ describe("deleteProfile", () => {
       .mockResolvedValueOnce({ ok: true })
       .mockResolvedValueOnce({
         ok: true,
-        json: () =>
-          Promise.resolve([
-            { profileId: "p2", name: "P2", sourceFolderPath: "/s2", destinationVaultPath: "/d2" },
-          ]),
+        json: () => Promise.resolve([{ profileId: "p2", name: "P2", sourceFolderPath: "/s2" }]),
       });
 
     await plugin.deleteProfile("p1");
 
     expect(plugin.data.profiles).toHaveLength(1);
     expect(plugin.data.profiles?.[0]?.profileId).toBe("p2");
+  });
+
+  it("drops the destination of the profile it deletes, and keeps the other one", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      profiles: [
+        { profileId: "p1", name: "P1", sourceFolderPath: "src", destinationVaultPath: "old" },
+        { profileId: "p2", name: "P2", sourceFolderPath: "src2", destinationVaultPath: "kept" },
+      ],
+    });
+    // A stale list still answers with the row the DELETE just removed.
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({}))
+      .mockResolvedValueOnce(
+        jsonResponse([
+          { profileId: "p1", name: "P1", sourceFolderPath: "src" },
+          { profileId: "p2", name: "P2", sourceFolderPath: "src2" },
+        ]),
+      );
+
+    await plugin.deleteProfile("p1");
+
+    expect(plugin.data.profiles).toEqual([
+      {
+        profileId: "p1",
+        name: "P1",
+        sourceFolderPath: "src",
+        destinationVaultPath: "",
+        active: false,
+      },
+      {
+        profileId: "p2",
+        name: "P2",
+        sourceFolderPath: "src2",
+        destinationVaultPath: "kept",
+        active: false,
+      },
+    ]);
   });
 
   it("clears activeProfileId when the active profile is deleted", async () => {

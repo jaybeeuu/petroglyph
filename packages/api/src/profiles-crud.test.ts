@@ -38,7 +38,6 @@ function makeProfile(overrides: Partial<SyncProfile> = {}): SyncProfile {
     userId: "user-42",
     name: "My Profile",
     sourceFolderPath: "/source",
-    destinationVaultPath: "/vault",
     pollingIntervalMinutes: 5,
     enabled: true,
     active: false,
@@ -273,6 +272,17 @@ describe("profiles CRUD handlers", () => {
       mockGetProfile.mockResolvedValue(makeProfile({ active: false }));
 
       const response = await request("PUT", "/profiles/profile-1", { actve: true });
+
+      expect(response.status).toBe(400);
+      expect(mockUpdateProfile).not.toHaveBeenCalled();
+    });
+
+    it("rejects a destination, because a profile no longer carries one", async () => {
+      mockGetProfile.mockResolvedValue(makeProfile());
+
+      const response = await request("PUT", "/profiles/profile-1", {
+        destinationVaultPath: "archive",
+      });
 
       expect(response.status).toBe(400);
       expect(mockUpdateProfile).not.toHaveBeenCalled();

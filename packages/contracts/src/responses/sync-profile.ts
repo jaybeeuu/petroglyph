@@ -11,7 +11,6 @@ export const syncProfileResponseSchema = z.object({
   userId: z.string().min(1),
   name: z.string().min(1),
   sourceFolderPath: z.string().min(1),
-  destinationVaultPath: z.string().min(1),
   pollingIntervalMinutes: z.number().int().positive(),
   enabled: z.boolean(),
   active: z.boolean(),

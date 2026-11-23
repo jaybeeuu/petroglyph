@@ -312,31 +312,34 @@ In all `disconnected` and `reconnect_required` cases the plugin surfaces a **"Re
 
 ## 3. Sync Profiles
 
-A **Sync Profile** binds a source (an OneDrive folder) to a destination (an Obsidian vault path) with associated settings. Profiles are stored server-side in DynamoDB so they are available across all plugin instances (e.g. home laptop and work laptop).
+A **Sync Profile** binds a source (an OneDrive folder) to a destination (an Obsidian vault path) with associated settings. The server stores the profile in DynamoDB so its definition reaches every plugin instance (e.g. home laptop and work laptop). The destination is not part of that definition — see [Destination](#destination).
 
 ### Profile Shape
 
 ```typescript
 interface SyncProfile {
-  profileId: string; // UUID
+  profileId: string; // UUID; the default profile uses "default"
   userId: string; // GitHub user ID
   name: string; // e.g. "Work Notes"
-  source: {
-    provider: "onedrive";
-    folderPath: string; // e.g. "OnyxBoox/Work/"
-    folderId: string; // Microsoft Graph item ID (stable across renames)
-  };
-  destination: {
-    vaultPath: string; // e.g. "handwritten/work/"
-  };
-  settings: {
-    conflictMode: "overwrite"; // OneDrive always wins (Phase 1)
-    deletionMode: "sync" | "retain"; // configurable
-  };
+  sourceFolderPath: string; // e.g. "OnyxBoox/Work", canonical form
+  pollingIntervalMinutes: number; // default 5
+  enabled: boolean; // participates in the delivery feed
+  active: boolean; // walked by the legacy catch-up sweep
+  initialSyncEnabled: boolean;
   createdAt: string; // ISO 8601
   updatedAt: string;
 }
 ```
+
+There is no destination field: the server neither accepts nor returns one.
+
+### Destination
+
+The vault folder a profile syncs into is plugin state, held in the plugin's data file as `profileDestinations`, keyed by `profileId`. `createProfile` and `editProfile` write an entry once the server confirms the profile, and `deleteProfile` removes one once the server confirms the delete.
+
+No profile list read writes the map. A `GET /profiles` answer that omits a row — an eventually consistent read, or a failed request — used to erase the destination, so the map is written only by the three profile mutations. A list that omits a profile leaves its destination in place, and the profile gets it back when a list returns it again.
+
+Only a delete this device confirms removes an entry. A profile deleted on another device therefore leaves one string behind, and the cost is only that string: the plugin reads the map for a profile a list returned, so nothing can reach the entry.
 
 ### Plugin UI
 
@@ -348,8 +351,8 @@ On deletion, `activeProfileId` is cleared locally _before_ `loadProfiles()` is c
 
 - Each plugin instance selects **one active profile** from the user's profile list (Phase 1).
 - The active profile ID is persisted in plugin-local settings but the API is the authoritative source. On every `loadProfiles()` call, if any profile carries `active: true` from the server, that value overwrites the locally-stored ID. The local value is used only as a fallback when the API returns no active profile.
-- Profile _definitions_ (source, destination, settings) are always read from the cloud API, ensuring changes propagate across devices without manual reconfiguration.
-- `loadProfiles()` also cleans up any locally-stored changeTokens whose profile IDs no longer appear in the API response — a profile that has been deleted server-side will have its sync checkpoint removed locally on the next load.
+- Profile _definitions_ (source and settings) are always read from the cloud API, ensuring changes propagate across devices without manual reconfiguration. The destination is the exception: it stays on the device that set it, so two devices can write into different vault folders.
+- `loadProfiles()` also cleans up any locally-stored changeTokens whose profile IDs no longer appear in the API response — a profile that has been deleted server-side will have its sync checkpoint removed locally on the next load. Destinations do not take part in this cleanup; see [Destination](#destination).
 - Future phases may allow multiple active profiles per vault.
 
 ---
@@ -413,14 +416,13 @@ The adapter's per-connection Graph delta state (Delivery 1), superseding the per
 | `profileId`              | String (SK) | Profile identifier. The default profile uses the literal value `"default"`; additional profiles use UUIDs. |
 | `name`                   | String      | Human-readable profile name                                                                                |
 | `sourceFolderPath`       | String      | OneDrive folder path to watch, in canonical form — see [glossary](glossary.md#terms)                       |
-| `destinationVaultPath`   | String      | Vault folder that replaces the `handwritten` root; blank keeps it; an escape is rejected                   |
 | `pollingIntervalMinutes` | Number      | How often to poll for changes (default: `5`)                                                               |
 | `enabled`                | Boolean     | Whether the profile participates in sync runs (default: `true`)                                            |
 | `active`                 | Boolean     | `true` once OneDrive is connected and the profile is live                                                  |
 | `createdAt`              | String      | ISO 8601                                                                                                   |
 | `updatedAt`              | String      | ISO 8601                                                                                                   |
 
-`userId` as partition key means all profiles for a user are co-located, making list-by-user the primary key query rather than a GSI scan. Source and destination are stored as flat string fields rather than nested maps — the current single-provider design doesn't require the extra indirection.
+`userId` as partition key means all profiles for a user are co-located, making list-by-user the primary key query rather than a GSI scan. Source is stored as a flat string field rather than a nested map — the current single-provider design doesn't require the extra indirection. The destination is not stored here at all; it is plugin state, see [Destination](#destination).
 
 ---
 

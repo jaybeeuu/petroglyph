@@ -26,7 +26,6 @@ const PROFILE: SyncProfile = {
   userId: USER_ID,
   name: "Main",
   sourceFolderPath: "notes",
-  destinationVaultPath: "Inbox",
   pollingIntervalMinutes: 5,
   enabled: true,
   active: true,

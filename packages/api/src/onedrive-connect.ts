@@ -150,7 +150,6 @@ async function upsertSyncProfile(userId: string): Promise<void> {
         "oneDriveConnected = :true, " +
         "#name = :name, " +
         "sourceFolderPath = :rootPath, " +
-        "destinationVaultPath = :defaultDest, " +
         "#active = :true, " +
         "initialSyncEnabled = :true, " +
         "#enabled = :true, " +
@@ -165,7 +164,6 @@ async function upsertSyncProfile(userId: string): Promise<void> {
         ":true": true,
         ":name": "default",
         ":rootPath": "/",
-        ":defaultDest": "handwritten",
         ":interval": 5,
       },
     }),

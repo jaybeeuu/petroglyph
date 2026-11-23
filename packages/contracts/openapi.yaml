@@ -334,9 +334,6 @@ paths:
                     sourceFolderPath:
                       type: string
                       minLength: 1
-                    destinationVaultPath:
-                      type: string
-                      minLength: 1
                     pollingIntervalMinutes:
                       type: integer
                       exclusiveMinimum: 0
@@ -358,7 +355,6 @@ paths:
                     - userId
                     - name
                     - sourceFolderPath
-                    - destinationVaultPath
                     - pollingIntervalMinutes
                     - enabled
                     - active
@@ -396,9 +392,6 @@ paths:
                 sourceFolderPath:
                   type: string
                   minLength: 1
-                destinationVaultPath:
-                  type: string
-                  minLength: 1
                 pollingIntervalMinutes:
                   type: integer
                   exclusiveMinimum: 0
@@ -408,7 +401,6 @@ paths:
               required:
                 - name
                 - sourceFolderPath
-                - destinationVaultPath
       responses:
         "201":
           description: Created
@@ -427,9 +419,6 @@ paths:
                     type: string
                     minLength: 1
                   sourceFolderPath:
-                    type: string
-                    minLength: 1
-                  destinationVaultPath:
                     type: string
                     minLength: 1
                   pollingIntervalMinutes:
@@ -453,7 +442,6 @@ paths:
                   - userId
                   - name
                   - sourceFolderPath
-                  - destinationVaultPath
                   - pollingIntervalMinutes
                   - enabled
                   - active
@@ -499,9 +487,6 @@ paths:
                   sourceFolderPath:
                     type: string
                     minLength: 1
-                  destinationVaultPath:
-                    type: string
-                    minLength: 1
                   pollingIntervalMinutes:
                     type: integer
                     exclusiveMinimum: 0
@@ -523,7 +508,6 @@ paths:
                   - userId
                   - name
                   - sourceFolderPath
-                  - destinationVaultPath
                   - pollingIntervalMinutes
                   - enabled
                   - active
@@ -580,9 +564,6 @@ paths:
                 sourceFolderPath:
                   type: string
                   minLength: 1
-                destinationVaultPath:
-                  type: string
-                  minLength: 1
                 pollingIntervalMinutes:
                   type: integer
                   exclusiveMinimum: 0
@@ -614,9 +595,6 @@ paths:
                   sourceFolderPath:
                     type: string
                     minLength: 1
-                  destinationVaultPath:
-                    type: string
-                    minLength: 1
                   pollingIntervalMinutes:
                     type: integer
                     exclusiveMinimum: 0
@@ -642,7 +620,6 @@ paths:
                   - userId
                   - name
                   - sourceFolderPath
-                  - destinationVaultPath
                   - pollingIntervalMinutes
                   - enabled
                   - active

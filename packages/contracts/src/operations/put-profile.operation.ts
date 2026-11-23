@@ -15,7 +15,6 @@ export const putProfileBodySchema = z
   .object({
     name: z.string().min(1).optional(),
     sourceFolderPath: z.string().min(1).optional(),
-    destinationVaultPath: z.string().min(1).optional(),
     pollingIntervalMinutes: z.number().int().positive().optional(),
     enabled: z.boolean().optional(),
     initialSyncEnabled: z.boolean().optional(),

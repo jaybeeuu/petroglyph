@@ -286,8 +286,8 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
 
   it("keeps the row as it was before a soft delete on the MODIFY record", async () => {
     // The items these tests write are deliberately partial: this suite reads the
-    // stream envelope, never the row, so name, destinationVaultPath, active,
-    // createdAt and updatedAt are omitted. Do not treat them as schema-conformant.
+    // stream envelope, never the row, so name, active, createdAt and updatedAt
+    // are omitted. Do not treat them as schema-conformant.
 
     const deletedAt = "2026-11-21T09:00:00.000Z";
     await dynamo.send(

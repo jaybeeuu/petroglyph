@@ -172,7 +172,6 @@ describe("POST /profiles/{id}/sync-trigger against LocalStack DynamoDB + FIFO SQ
       userId: row.userId,
       name: "Main",
       sourceFolderPath: "notes",
-      destinationVaultPath: "Inbox",
       pollingIntervalMinutes: 5,
       enabled: true,
       active: true,

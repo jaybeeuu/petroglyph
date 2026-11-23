@@ -66,7 +66,6 @@ describe("/profiles", () => {
     userId: "user-42",
     name: "My Profile",
     sourceFolderPath: "/source",
-    destinationVaultPath: "/vault",
     pollingIntervalMinutes: 5,
     enabled: true,
     active: true,
@@ -134,7 +133,6 @@ describe("/profiles", () => {
         body: JSON.stringify({
           name: "Test",
           sourceFolderPath: "/src",
-          destinationVaultPath: "/dst",
         }),
       });
       expect(res.status).toBe(401);
@@ -182,7 +180,6 @@ describe("/profiles", () => {
         body: JSON.stringify({
           name: "My Profile",
           sourceFolderPath: "source",
-          destinationVaultPath: "/vault",
         }),
       });
 
@@ -193,11 +190,34 @@ describe("/profiles", () => {
       expect(body.userId).toBe("user-42");
       expect(body.name).toBe("My Profile");
       expect(body.sourceFolderPath).toBe("source");
-      expect(body.destinationVaultPath).toBe("/vault");
       expect(body.pollingIntervalMinutes).toBe(5);
       expect(body.enabled).toBe(true);
       expect(body.createdAt).toBeDefined();
       expect(body.updatedAt).toBeDefined();
+    });
+
+    it("stores no destination, even when the request names one", async () => {
+      const token = await makeValidToken("user-42");
+
+      const res = await app.request("/profiles", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        // A client that still sends a destination: the server ignores it.
+        body: JSON.stringify({
+          name: "My Profile",
+          sourceFolderPath: "source",
+          destinationVaultPath: "vault",
+        }),
+      });
+
+      expect(res.status).toBe(201);
+      const body: unknown = await res.json();
+      // The 201 body is the profile the handler stored, so no destination here
+      // means no destination in the row.
+      expect(body).not.toHaveProperty("destinationVaultPath");
     });
 
     it("stores a leading-slash source folder path without the leading slash", async () => {
@@ -212,7 +232,6 @@ describe("/profiles", () => {
         body: JSON.stringify({
           name: "My Profile",
           sourceFolderPath: "/onyx/NoteAir5C/Notebooks",
-          destinationVaultPath: "/vault",
         }),
       });
 
@@ -239,7 +258,6 @@ describe("/profiles", () => {
         body: JSON.stringify({
           name: "First Profile",
           sourceFolderPath: "/source",
-          destinationVaultPath: "/vault",
         }),
       });
 
@@ -261,7 +279,6 @@ describe("/profiles", () => {
         body: JSON.stringify({
           name: "Second Profile",
           sourceFolderPath: "/source2",
-          destinationVaultPath: "/vault2",
         }),
       });
 
@@ -282,7 +299,6 @@ describe("/profiles", () => {
         body: JSON.stringify({
           name: "Custom Profile",
           sourceFolderPath: "/source",
-          destinationVaultPath: "/vault",
           pollingIntervalMinutes: 10,
           enabled: false,
         }),
@@ -306,7 +322,6 @@ describe("/profiles", () => {
         body: JSON.stringify({
           name: "My Profile",
           sourceFolderPath: "/source",
-          destinationVaultPath: "/vault",
         }),
       });
 
