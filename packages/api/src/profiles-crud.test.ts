@@ -7,7 +7,7 @@ const mockGetProfile = vi.hoisted(() => vi.fn());
 const mockListProfiles = vi.hoisted(() => vi.fn());
 const mockPutProfile = vi.hoisted(() => vi.fn());
 const mockUpdateProfile = vi.hoisted(() => vi.fn());
-const mockDeleteProfile = vi.hoisted(() => vi.fn());
+const mockSoftDeleteProfile = vi.hoisted(() => vi.fn());
 const mockDbSend = vi.hoisted(() => vi.fn());
 
 vi.mock("@petroglyph/core", async (importOriginal) => {
@@ -19,7 +19,7 @@ vi.mock("@petroglyph/core", async (importOriginal) => {
     listProfiles: mockListProfiles,
     putProfile: mockPutProfile,
     updateProfile: mockUpdateProfile,
-    deleteProfile: mockDeleteProfile,
+    softDeleteProfile: mockSoftDeleteProfile,
   };
 });
 
@@ -75,7 +75,7 @@ describe("profiles CRUD handlers", () => {
     mockListProfiles.mockReset();
     mockPutProfile.mockReset();
     mockUpdateProfile.mockReset();
-    mockDeleteProfile.mockReset();
+    mockSoftDeleteProfile.mockReset();
     mockDbSend.mockReset();
     resetKeyCache();
   });
@@ -302,20 +302,57 @@ describe("profiles CRUD handlers", () => {
       expect(body.enabled).toBe(false);
       expect(body.pollingIntervalMinutes).toBe(10);
     });
+
+    it("answers 410 when the write's condition finds the profile deleted", async () => {
+      mockGetProfile.mockResolvedValue(makeProfile());
+      // The row can be deleted between the read and the write, so the condition
+      // is the guard that holds, and its failure is the client's 410.
+      mockUpdateProfile.mockRejectedValue(
+        Object.assign(new Error("The conditional request failed"), {
+          name: "ConditionalCheckFailedException",
+        }),
+      );
+
+      const response = await request("PUT", "/profiles/profile-1", { name: "Renamed" });
+
+      expect(response.status).toBe(410);
+    });
   });
 
   describe("DELETE /profiles/:id", () => {
-    it("deletes the profile and returns 204", async () => {
+    it("answers 200 and sets deletedAt instead of deleting the row", async () => {
       const profile = makeProfile();
       mockGetProfile.mockResolvedValue(profile);
-      mockDeleteProfile.mockResolvedValue(undefined);
+      mockSoftDeleteProfile.mockResolvedValue("deleted");
       mockListProfiles.mockResolvedValue([]);
       mockDbSend.mockResolvedValue({ Items: [] });
 
       const response = await request("DELETE", "/profiles/profile-1");
 
-      expect(response.status).toBe(204);
-      expect(mockDeleteProfile).toHaveBeenCalledOnce();
+      expect(response.status).toBe(200);
+      expect(mockSoftDeleteProfile).toHaveBeenCalledOnce();
+      const write = mockSoftDeleteProfile.mock.calls[0] as unknown[];
+      expect(write[4]).toEqual(expect.any(String));
+    });
+
+    it("answers 200 and touches nothing else when the profile is already deleted", async () => {
+      mockGetProfile.mockResolvedValue(makeProfile({ deletedAt: "2024-03-03T00:00:00.000Z" }));
+      mockSoftDeleteProfile.mockResolvedValue("already-deleted");
+
+      const response = await request("DELETE", "/profiles/profile-1");
+
+      expect(response.status).toBe(200);
+      expect(mockDbSend).not.toHaveBeenCalled();
+      expect(mockUpdateProfile).not.toHaveBeenCalled();
+    });
+
+    it("answers 404 when the row is gone by the time the write runs", async () => {
+      mockGetProfile.mockResolvedValue(makeProfile());
+      mockSoftDeleteProfile.mockResolvedValue("missing");
+
+      const response = await request("DELETE", "/profiles/profile-1");
+
+      expect(response.status).toBe(404);
     });
 
     it("returns 404 when profile not found", async () => {
@@ -349,14 +386,14 @@ describe("profiles CRUD handlers", () => {
       });
 
       mockGetProfile.mockResolvedValue(deletedProfile);
-      mockDeleteProfile.mockResolvedValue(undefined);
+      mockSoftDeleteProfile.mockResolvedValue("deleted");
       mockDbSend.mockResolvedValue({ Items: [] });
       mockListProfiles.mockResolvedValue([olderProfile, newerProfile]);
       mockUpdateProfile.mockResolvedValue(undefined);
 
       const response = await request("DELETE", "/profiles/profile-1");
 
-      expect(response.status).toBe(204);
+      expect(response.status).toBe(200);
       expect(mockUpdateProfile).toHaveBeenCalledOnce();
       expect(profileWrites()).toEqual([
         { profileId: "profile-3", attributes: ["active", "updatedAt"] },
@@ -368,13 +405,13 @@ describe("profiles CRUD handlers", () => {
     it("does not promote any profile when no other profiles exist", async () => {
       const activeProfile = makeProfile({ active: true });
       mockGetProfile.mockResolvedValue(activeProfile);
-      mockDeleteProfile.mockResolvedValue(undefined);
+      mockSoftDeleteProfile.mockResolvedValue("deleted");
       mockDbSend.mockResolvedValue({ Items: [] });
       mockListProfiles.mockResolvedValue([]);
 
       const response = await request("DELETE", "/profiles/profile-1");
 
-      expect(response.status).toBe(204);
+      expect(response.status).toBe(200);
       expect(mockUpdateProfile).not.toHaveBeenCalled();
     });
 
@@ -382,20 +419,20 @@ describe("profiles CRUD handlers", () => {
       const profile = makeProfile({ active: false });
       const other = makeProfile({ profileId: "profile-2", active: true });
       mockGetProfile.mockResolvedValue(profile);
-      mockDeleteProfile.mockResolvedValue(undefined);
+      mockSoftDeleteProfile.mockResolvedValue("deleted");
       mockDbSend.mockResolvedValue({ Items: [] });
       mockListProfiles.mockResolvedValue([other]);
 
       const response = await request("DELETE", "/profiles/profile-1");
 
-      expect(response.status).toBe(204);
+      expect(response.status).toBe(200);
       expect(mockUpdateProfile).not.toHaveBeenCalled();
     });
 
     it("deletes file_records for the profile", async () => {
       const profile = makeProfile();
       mockGetProfile.mockResolvedValue(profile);
-      mockDeleteProfile.mockResolvedValue(undefined);
+      mockSoftDeleteProfile.mockResolvedValue("deleted");
       mockListProfiles.mockResolvedValue([]);
       mockDbSend
         .mockResolvedValueOnce({
@@ -406,7 +443,7 @@ describe("profiles CRUD handlers", () => {
 
       const response = await request("DELETE", "/profiles/profile-1");
 
-      expect(response.status).toBe(204);
+      expect(response.status).toBe(200);
       const dbCalls = mockDbSend.mock.calls;
       const queryCall = dbCalls.find(
         (call) => (call[0] as { input?: unknown }) instanceof QueryCommand,

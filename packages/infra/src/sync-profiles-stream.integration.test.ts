@@ -32,10 +32,12 @@ const infraDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /**
  * How long a stream record may take to become readable. LocalStack publishes a
  * record asynchronously, and the CI test job runs every package at once on a
- * runner that the same load brings to the edge of memory exhaustion: the first
- * MODIFY record took longer than 18 s there against under a second here. The
- * wait is a wall-clock deadline rather than a poll count, so a starved runner
- * gets the same time as an idle one instead of a shorter one.
+ * runner that the same load brings to the edge of memory exhaustion, so the wait
+ * is a wall-clock deadline rather than a poll count: a starved runner gets the
+ * same time as an idle one instead of a shorter one. A stream that is not yet
+ * recording never publishes at all, and no budget can outwait that, so `beforeAll`
+ * proves the stream records before any test writes. This budget is for a slow
+ * runner, not for a missing record.
  */
 const RECORD_WAIT_BUDGET_MS = 120_000;
 /**
@@ -45,6 +47,24 @@ const RECORD_WAIT_BUDGET_MS = 120_000;
  * diagnostic unreachable on a starved runner.
  */
 const RECORD_TEST_TIMEOUT_MS = RECORD_WAIT_BUDGET_MS + 60_000;
+/**
+ * How long one warm-up write may take to reach the stream. A write the stream
+ * never records is lost outright, so an attempt that is still empty at this
+ * point is a write the stream was not yet recording; a recorded write reaches
+ * the stream in well under a second.
+ */
+const WARM_UP_ATTEMPT_BUDGET_MS = 20_000;
+/**
+ * The whole readiness gate. An attempt is only known to have been dropped once
+ * its budget is spent, so the gate may need several writes.
+ */
+const WARM_UP_BUDGET_MS = 120_000;
+/**
+ * The pause before the next warm-up write. A write made while the stream is
+ * still being created is refused outright at the iterator, so the gate backs off
+ * instead of spending its budget in a write loop.
+ */
+const WARM_UP_RETRY_INTERVAL_MS = 1_000;
 /** How long CreateTable may take to report its first shard. */
 const SHARD_DISCOVERY_BUDGET_MS = 10_000;
 const SHARD_DISCOVERY_INTERVAL_MS = 250;
@@ -68,6 +88,16 @@ const POLL_TIMEOUT_MS = 15_000;
  */
 interface DeclaredStream {
   viewType: StreamViewType;
+}
+
+/** What one poll for a stream record found, so a caller can wait or assert on it. */
+interface StreamPoll {
+  /** The record the poll waited for, or `undefined` when its budget ran out. */
+  readonly record: DynamoDBStreamRecord | undefined;
+  readonly polls: number;
+  readonly elapsedMs: number;
+  /** `<eventName>/<profileId>` for every record the shard carried but the poll did not want. */
+  readonly seen: ReadonlySet<string>;
 }
 
 function readResourceBlock(terraform: string, resourceType: string, name: string): string {
@@ -129,6 +159,20 @@ function isAbortedRequest(error: unknown): boolean {
   return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
 }
 
+/**
+ * Whether the streams service refused a request because the stream backing the
+ * table is still being created. LocalStack answers `GetShardIterator` with a
+ * `ResourceInUseException` for a stream that is not ACTIVE yet and wraps it in
+ * the `InternalError` the SDK reports, so the service's own words are the only
+ * discriminator left.
+ */
+function isStreamNotReady(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "ResourceInUseException" || error.message.includes("is not currently ACTIVE"))
+  );
+}
+
 describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
   let container: StartedTestContainer | undefined;
   let dynamo: DynamoDBClient;
@@ -179,7 +223,8 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
       throw new Error("the table has no stream ARN");
     }
     shardId = await awaitShardId();
-  }, 180_000);
+    await awaitRecordingStream();
+  }, 180_000 + WARM_UP_BUDGET_MS);
 
   /**
    * LocalStack can answer DescribeStream before it reports the table's first
@@ -201,6 +246,54 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
       }
       await delay(SHARD_DISCOVERY_INTERVAL_MS);
     }
+  }
+
+  /**
+   * LocalStack implements a table's stream with a Kinesis stream it creates
+   * beside the table. DescribeStream already reports a shard before that stream
+   * can record, and a write made in that window is stored with no stream record
+   * emitted, so no later poll finds it however long it waits: the record does
+   * not exist, and a TRIM_HORIZON replay cannot recover it.
+   *
+   * That is what starved the soft-delete test's wait. Its two writes were the
+   * first after CreateTable, so they could land in the window and be invisible
+   * to every poll of the wait's budget, while the two tests after it pass in
+   * under 150 ms once the stream is recording.
+   *
+   * Only a record proves the stream records, so write a warm-up row and wait for
+   * it before any test writes the rows it asserts on. Each attempt uses a fresh
+   * row because a row written inside the window is dropped like any other, and
+   * no test asserts on these rows.
+   */
+  async function awaitRecordingStream(): Promise<void> {
+    const deadline = Date.now() + WARM_UP_BUDGET_MS;
+    for (let attempt = 1; Date.now() < deadline; attempt += 1) {
+      const profileId = `profile-warm-up-${attempt}`;
+      await dynamo.send(
+        new PutItemCommand({
+          TableName: TABLE_NAME,
+          Item: { userId: { S: "user-warm-up" }, profileId: { S: profileId } },
+        }),
+      );
+      let poll: StreamPoll;
+      try {
+        poll = await pollForStreamRecord(profileId, "INSERT", WARM_UP_ATTEMPT_BUDGET_MS);
+      } catch (error) {
+        // A stream that is not yet ACTIVE refuses the iterator itself, so this
+        // attempt did not prove anything either way.
+        if (!isStreamNotReady(error)) {
+          throw error;
+        }
+        await delay(WARM_UP_RETRY_INTERVAL_MS);
+        continue;
+      }
+      if (poll.record !== undefined) {
+        return;
+      }
+    }
+    throw new Error(
+      `the stream recorded none of the warm-up writes within ${WARM_UP_BUDGET_MS} ms of CreateTable`,
+    );
   }
 
   afterAll(async () => {
@@ -232,8 +325,28 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
     profileId: string,
     eventName: OperationType,
   ): Promise<DynamoDBStreamRecord> {
+    const poll = await pollForStreamRecord(profileId, eventName, RECORD_WAIT_BUDGET_MS);
+    if (poll.record === undefined) {
+      throw new Error(
+        `no ${eventName} stream record was observed for ${profileId} within ${poll.elapsedMs} ms and ${poll.polls} polls; records seen: ${poll.seen.size === 0 ? "none" : [...poll.seen].join(", ")}`,
+      );
+    }
+    return poll.record;
+  }
+
+  /**
+   * Polls the shard until the record arrives or the budget runs out, and reports
+   * which it was with the evidence for the caller's own message. A caller that
+   * asserts on the record and one that only needs the stream to be recording ask
+   * the same question and must not pay for two loops.
+   */
+  async function pollForStreamRecord(
+    profileId: string,
+    eventName: OperationType,
+    budgetMs: number,
+  ): Promise<StreamPoll> {
     const startedAt = Date.now();
-    const deadline = startedAt + RECORD_WAIT_BUDGET_MS;
+    const deadline = startedAt + budgetMs;
     const seen = new Set<string>();
     let polls = 0;
     let iterator = await openShardIterator();
@@ -260,7 +373,7 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
       for (const record of page.Records ?? []) {
         const recordProfileId = record.dynamodb?.Keys?.["profileId"]?.S;
         if (record.eventName === eventName && recordProfileId === profileId) {
-          return record;
+          return { record, polls, seen, elapsedMs: Date.now() - startedAt };
         }
         seen.add(`${record.eventName ?? "UNKNOWN"}/${recordProfileId ?? "no-keys"}`);
       }
@@ -277,11 +390,7 @@ describe("sync-profiles stream", { timeout: RECORD_TEST_TIMEOUT_MS }, () => {
       await delay(POLL_INTERVAL_MS);
     }
 
-    throw new Error(
-      `no ${eventName} stream record was observed for ${profileId} within ${
-        Date.now() - startedAt
-      } ms and ${polls} polls; records seen: ${seen.size === 0 ? "none" : [...seen].join(", ")}`,
-    );
+    return { record: undefined, polls, seen, elapsedMs: Date.now() - startedAt };
   }
 
   it("keeps the row as it was before a soft delete on the MODIFY record", async () => {

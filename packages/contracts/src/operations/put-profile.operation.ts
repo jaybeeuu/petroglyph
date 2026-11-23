@@ -43,5 +43,6 @@ export const putProfile = defineOperation({
     200: putProfileResponseSchema,
     404: flatErrorSchema,
     409: flatErrorSchema,
+    410: flatErrorSchema,
   },
 });

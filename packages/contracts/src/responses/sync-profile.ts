@@ -18,4 +18,9 @@ export const syncProfileResponseSchema = z.object({
   initialSyncEnabled: z.boolean(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
+  /**
+   * Set once the profile is soft-deleted. It reaches the client on a read by id,
+   * which still answers `200`; the profile-scoped routes answer `410` instead.
+   */
+  deletedAt: z.string().min(1).optional(),
 });

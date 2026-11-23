@@ -17,6 +17,12 @@ export const syncProfileSchema = z.object({
    * empty: every profile-scoped route answers `410` for it.
    */
   deletedAt: z.string().min(1).optional(),
+  /**
+   * Set by the purge consumer when the profile's stored content is gone. It is
+   * what makes a stuck purge visible: the row outlives the delete, so
+   * "deleted but not purged" is one query.
+   */
+  purgedAt: z.string().min(1).optional(),
 });
 
 export type SyncProfile = z.infer<typeof syncProfileSchema>;

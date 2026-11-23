@@ -64,7 +64,7 @@ query — the generated spec omits those parameters to match.
 Each operation declares the bodies it answers with in `responses`, keyed by HTTP
 status. `defineEndpoint` holds the handler's response to the schema declared for
 that status, after the handler ran. All 19 operations declare `responses` today.
-Only a status that writes a body is declared: a 302 redirect and a delete's 204
+Only a status that writes a body is declared: a 302 redirect and a delete's 200
 carry none, so a schema for them would describe something the handler never
 writes.
 
@@ -126,6 +126,10 @@ The `unauthorized` row is the target, not what ships today. The shared JWT middl
 Every JWT-protected route inherits it, including routes that otherwise follow this envelope,
 so a client must branch on the 401 status until that middleware returns
 `{ "error": { "code": "unauthorized", "message": … } }`.
+
+`profile_deleted` reaches a client from the profile-scoped files and sync-trigger routes. `PUT /profiles/:id`
+answers `410` with the legacy flat `{ "error": "This profile has been deleted." }` instead, so branch
+on the status there until that route returns the envelope.
 
 This is RFC 9457-compatible in spirit (`code` ≈ `type`, `message` ≈ `title`).
 Moving to `application/problem+json` later is mechanical, and worth doing only if

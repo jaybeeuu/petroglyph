@@ -43,6 +43,10 @@ named row and never picks one. The answer separates the three cases a client mus
 - a profile carrying `deletedAt` answers `410 profile_deleted`, from the moment the field is written
 - a disabled profile answers `{ files: [], nextToken: null }` on the list and `404` on the download
 
+A deleted profile is absent from `GET /profiles` but still readable at `GET /profiles/:id`, which
+returns it with `deletedAt` set. That asymmetry is deliberate: a profile-scoped route resolves the
+row so it can answer `410`, and a read that hid the row would turn every `410` into a `404`.
+
 `410` is not an empty page. A client that pruned on an empty feed would delete every file it had
 written for a profile that is gone, so a deleted profile must never look empty.
 
