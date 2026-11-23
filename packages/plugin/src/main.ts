@@ -12,7 +12,7 @@ import {
   revealInOs,
 } from "./log.js";
 import { PetroglyphSettingTab } from "./settings.js";
-import { parseStoredProfiles } from "./types.js";
+import { parseProfileDestinations, parseStoredProfiles } from "./types.js";
 import type { PluginData, SyncProfile } from "./types.js";
 import { hasStringProp, isRecord } from "./validate.js";
 
@@ -1019,9 +1019,22 @@ export class PetroglyphPlugin extends Plugin {
         saved.activeProfileId = raw.activeProfileId;
       }
       // The destination a profile syncs into is plugin state, so the saved
-      // profiles are what restore it; the server never sends one back.
+      // destinations are what restore it; the server never sends one back.
       const savedProfiles = parseStoredProfiles(raw["profiles"]);
       if (savedProfiles !== undefined) saved.profiles = savedProfiles;
+      const savedDestinations = parseProfileDestinations(raw["profileDestinations"]) ?? {};
+      // A data file written before the destinations had a key of their own
+      // carries each one on its profile row; move it across so the upgrade keeps
+      // every destination.
+      for (const profile of savedProfiles ?? []) {
+        if (
+          profile.destinationVaultPath !== "" &&
+          savedDestinations[profile.profileId] === undefined
+        ) {
+          savedDestinations[profile.profileId] = profile.destinationVaultPath;
+        }
+      }
+      if (Object.keys(savedDestinations).length > 0) saved.profileDestinations = savedDestinations;
     }
     this._data = { ...DEFAULT_DATA, ...saved };
   }
@@ -1035,21 +1048,17 @@ export class PetroglyphPlugin extends Plugin {
       if (!response.ok) return;
       const body: unknown = await response.json();
       if (!Array.isArray(body)) return;
-      // The server owns the name and source path; the destination is plugin
-      // state, so a profile it lists keeps the one already stored here.
-      const storedDestinations = new Map(
-        (this._data.profiles ?? []).map((profile) => [
-          profile.profileId,
-          profile.destinationVaultPath,
-        ]),
-      );
+      // The server owns the name, source path and active flag. The destination is
+      // plugin state with a home of its own, so this read only reads it: a list
+      // that omits a profile leaves that destination in place, and the profile
+      // gets it back whenever a list returns it again.
       const profiles = body.filter(isRecord).map((p): SyncProfile => {
         const profileId = typeof p["profileId"] === "string" ? p["profileId"] : "";
         return {
           profileId,
           name: typeof p["name"] === "string" ? p["name"] : "",
           sourceFolderPath: typeof p["sourceFolderPath"] === "string" ? p["sourceFolderPath"] : "",
-          destinationVaultPath: storedDestinations.get(profileId) ?? "",
+          destinationVaultPath: this.destinationFor(profileId),
           active: p["active"] === true,
         };
       });
@@ -1147,20 +1156,24 @@ export class PetroglyphPlugin extends Plugin {
       // id leaves that profile on the `handwritten` root until it is edited.
       const created: unknown = await response.json().catch(() => undefined);
       const profileId = readProfileId(created);
-      // The list read below decides nothing about the destination: it returns
-      // early when it fails, and an eventually consistent list can omit the row
-      // the POST just wrote. So the plugin refreshes the list first and writes
-      // the destination to plugin data afterwards, where no read can drop it.
+      // The list read below decides nothing about the destination: the
+      // destination has its own key, which no list read rewrites, so a failure or
+      // an eventually consistent answer cannot drop it.
       await this.loadProfiles();
       if (profileId !== undefined) {
-        const listed = this._data.profiles?.find((profile) => profile.profileId === profileId);
-        this.storeProfile({
-          profileId,
-          name: listed?.name ?? data.name,
-          sourceFolderPath: listed?.sourceFolderPath ?? data.sourceFolderPath,
-          destinationVaultPath: data.destinationVaultPath,
-          active: listed?.active ?? false,
-        });
+        this.storeDestination(profileId, data.destinationVaultPath);
+        // Show the profile the POST created even when the list read has not
+        // caught up with it, so the destination the user just typed takes effect
+        // on the next sync instead of on some later refresh.
+        if (this.profileFor(profileId) === undefined) {
+          this.storeProfile({
+            profileId,
+            name: data.name,
+            sourceFolderPath: data.sourceFolderPath,
+            destinationVaultPath: data.destinationVaultPath,
+            active: false,
+          });
+        }
         await this.savePluginData();
       }
     } catch {
@@ -1191,12 +1204,12 @@ export class PetroglyphPlugin extends Plugin {
           return;
         }
       }
+      // The destination is plugin state with a home of its own, so it is
+      // recorded whatever the profile list says next: an edit that carries a
+      // destination keeps it even when the list omits the profile.
       if (destinationVaultPath !== undefined) {
-        const stored = this._data.profiles?.find((profile) => profile.profileId === profileId);
-        if (stored !== undefined) {
-          this.storeProfile({ ...stored, destinationVaultPath });
-          await this.savePluginData();
-        }
+        this.storeDestination(profileId, destinationVaultPath);
+        await this.savePluginData();
       }
       await this.loadProfiles();
     } catch {
@@ -1205,9 +1218,47 @@ export class PetroglyphPlugin extends Plugin {
   }
 
   /**
-   * Records a profile in the plugin's own copy of the list. The destination is
-   * the plugin's state: the server neither accepts nor returns one, so this copy
-   * is its only home and `loadProfiles` reads it back by id.
+   * The destination the plugin holds for a profile, or `""` for the `handwritten`
+   * root. This map is the destination's only home, because the server neither
+   * accepts nor returns one. No profile list read writes to it, so a list that
+   * omits a profile cannot drop that profile's destination. Only a delete this
+   * device performs removes an entry: a list that omits a profile is not evidence
+   * of deletion, since an eventually consistent read omits rows that exist. A
+   * profile deleted on another device therefore leaves its entry behind, and that
+   * entry costs one string until a list returns that id again.
+   */
+  private destinationFor(profileId: string): string {
+    return this._data.profileDestinations?.[profileId] ?? "";
+  }
+
+  /**
+   * Records the destination the user chose for a profile, in the map that no list
+   * read rewrites and on the profile's row so settings and sync read it without a
+   * lookup.
+   */
+  private storeDestination(profileId: string, destinationVaultPath: string): void {
+    const profiles = this._data.profiles?.map((profile) =>
+      profile.profileId === profileId ? { ...profile, destinationVaultPath } : profile,
+    );
+    this._data = {
+      ...this._data,
+      profileDestinations: { ...this._data.profileDestinations, [profileId]: destinationVaultPath },
+      ...(profiles !== undefined ? { profiles } : {}),
+    };
+  }
+
+  /** Forgets the destination of a profile this device confirmed deleted. */
+  private forgetDestination(profileId: string): void {
+    const kept = Object.entries(this._data.profileDestinations ?? {}).filter(
+      ([id]) => id !== profileId,
+    );
+    this._data = { ...this._data, profileDestinations: Object.fromEntries(kept) };
+  }
+
+  /**
+   * Records a profile in the plugin's own copy of the list, so a profile the
+   * server has not listed yet still shows with the destination the user chose.
+   * A later list read replaces this copy; the destination survives in the map.
    */
   private storeProfile(profile: SyncProfile): void {
     const stored = this._data.profiles ?? [];
@@ -1235,6 +1286,9 @@ export class PetroglyphPlugin extends Plugin {
         delete data.activeProfileId;
         this._data = data;
       }
+      // The delete is the only evidence that a destination is no longer wanted,
+      // and it comes from this device.
+      this.forgetDestination(profileId);
       await this.loadProfiles();
     } catch {
       new Notice("Failed to delete profile: network error");

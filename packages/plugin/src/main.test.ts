@@ -2731,6 +2731,46 @@ describe("loadProfiles", () => {
     ]);
   });
 
+  it("keeps a destination through a list read that omits its profile", async () => {
+    const { plugin, savedData } = await makePlugin({
+      jwt: "jwt-token",
+      profiles: [
+        {
+          profileId: "p1",
+          name: "Proofs",
+          sourceFolderPath: "onyx/proofs",
+          destinationVaultPath: "twiy-proof",
+        },
+      ],
+    });
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse([]));
+
+    await plugin.loadProfiles();
+
+    // The list omits the profile, so its row is gone; the destination that row
+    // carried must not go with it.
+    const persisted: unknown = savedData["data"];
+    expect(persisted).toMatchObject({ profileDestinations: { p1: "twiy-proof" } });
+
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse([{ profileId: "p1", name: "Proofs", sourceFolderPath: "onyx/proofs" }]),
+      );
+
+    await plugin.loadProfiles();
+
+    expect(plugin.data.profiles).toEqual([
+      {
+        profileId: "p1",
+        name: "Proofs",
+        sourceFolderPath: "onyx/proofs",
+        destinationVaultPath: "twiy-proof",
+        active: false,
+      },
+    ]);
+  });
+
   it("saves plugin data after fetching profiles", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
 
@@ -3138,6 +3178,39 @@ describe("editProfile", () => {
     expect(plugin.data.profiles?.[0]?.destinationVaultPath).toBe("twiy-proof");
   });
 
+  it("keeps a destination edit when the list read omits the profile", async () => {
+    const { plugin, savedData } = await makePlugin({
+      jwt: "jwt-token",
+      profiles: [
+        {
+          profileId: "p1",
+          name: "Proofs",
+          sourceFolderPath: "onyx/proofs",
+          destinationVaultPath: "old",
+        },
+      ],
+    });
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({}))
+      .mockResolvedValueOnce(jsonResponse([]));
+
+    await plugin.editProfile("p1", { name: "Proofs", destinationVaultPath: "twiy-proof" });
+
+    const persisted: unknown = savedData["data"];
+    expect(persisted).toMatchObject({ profileDestinations: { p1: "twiy-proof" } });
+
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse([{ profileId: "p1", name: "Proofs", sourceFolderPath: "onyx/proofs" }]),
+      );
+
+    await plugin.loadProfiles();
+
+    expect(plugin.data.profiles?.[0]?.destinationVaultPath).toBe("twiy-proof");
+  });
+
   it("calls loadProfiles after successful edit", async () => {
     const { plugin } = await makePlugin({ jwt: "jwt-token" });
     const updatedProfiles = [
@@ -3249,6 +3322,45 @@ describe("deleteProfile", () => {
 
     expect(plugin.data.profiles).toHaveLength(1);
     expect(plugin.data.profiles?.[0]?.profileId).toBe("p2");
+  });
+
+  it("drops the destination of the profile it deletes, and keeps the other one", async () => {
+    const { plugin } = await makePlugin({
+      jwt: "jwt-token",
+      profiles: [
+        { profileId: "p1", name: "P1", sourceFolderPath: "src", destinationVaultPath: "old" },
+        { profileId: "p2", name: "P2", sourceFolderPath: "src2", destinationVaultPath: "kept" },
+      ],
+    });
+    // A stale list still answers with the row the DELETE just removed.
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({}))
+      .mockResolvedValueOnce(
+        jsonResponse([
+          { profileId: "p1", name: "P1", sourceFolderPath: "src" },
+          { profileId: "p2", name: "P2", sourceFolderPath: "src2" },
+        ]),
+      );
+
+    await plugin.deleteProfile("p1");
+
+    expect(plugin.data.profiles).toEqual([
+      {
+        profileId: "p1",
+        name: "P1",
+        sourceFolderPath: "src",
+        destinationVaultPath: "",
+        active: false,
+      },
+      {
+        profileId: "p2",
+        name: "P2",
+        sourceFolderPath: "src2",
+        destinationVaultPath: "kept",
+        active: false,
+      },
+    ]);
   });
 
   it("clears activeProfileId when the active profile is deleted", async () => {
