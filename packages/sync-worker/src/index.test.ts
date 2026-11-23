@@ -180,12 +180,14 @@ describe("sync-worker handler", () => {
     ];
     expect(updateCommand.input.ExpressionAttributeValues[":fileCount"]).toBe(2);
 
-    // Check that delta token was stored
-    const deltaTokenPut = mockDocSend.mock.calls.find(
+    // Check that the delta token was stored as a partial update, so the
+    // adapter's deltaLink on the same profileId row survives the legacy run
+    const deltaTokenUpdate = mockDocSend.mock.calls.find(
       ([command]) =>
-        command instanceof PutCommand && command.input.TableName === "petroglyph-delta-tokens-test",
+        command instanceof UpdateCommand &&
+        command.input.TableName === "petroglyph-delta-tokens-test",
     );
-    expect(deltaTokenPut).toBeDefined();
+    expect(deltaTokenUpdate).toBeDefined();
   });
 
   it("updates job status to failed when Graph API fails", async () => {

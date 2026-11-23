@@ -341,14 +341,22 @@ async function sendIngestMessage(file: GraphDriveFileItem, profileId: string): P
   );
 }
 
+/**
+ * Writes the legacy token beside the adapter's cursor rather than over it.
+ *
+ * The adapter keeps its own cursor on the same profileId row as `deltaLink`.
+ * A whole-item put here would replace that row and drop the cursor, so the
+ * legacy write sets only the attributes it owns.
+ */
 async function storeDeltaToken(profileId: string, deltaToken: string): Promise<void> {
   await docClient().send(
-    new PutCommand({
+    new UpdateCommand({
       TableName: deltaTokensTableName(),
-      Item: {
-        profileId,
-        deltaToken,
-        updatedAt: new Date().toISOString(),
+      Key: { profileId },
+      UpdateExpression: "SET deltaToken = :deltaToken, updatedAt = :updatedAt",
+      ExpressionAttributeValues: {
+        ":deltaToken": deltaToken,
+        ":updatedAt": new Date().toISOString(),
       },
     }),
   );

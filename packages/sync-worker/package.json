@@ -23,6 +23,7 @@
     "@types/aws-lambda": "^8.10.145",
     "@types/node": "^25.5.2",
     "esbuild": "^0.28.0",
+    "testcontainers": "^10.17.0",
     "vitest": "^3.2.4"
   }
 }

@@ -326,6 +326,14 @@ fi
 # event-source mappings) move to <name>-workloads; everything else stays on
 # <name>. Keeping every project ARN explicit is the guardrail in docs/ops.md,
 # so the fix is a split, not a wildcard.
+#
+# DynamoDbProjectTables still lists petroglyph-delta-states because the apply
+# that retires the table needs dynamodb:DeleteTable on it. terraform no longer
+# declares aws_dynamodb_table.delta_states (2026-11-22, petroglyph-n20i.11), so
+# the next deploy destroys it and the grant has to outlive that apply. A
+# follow-up removes this ARN, and the test beside the script's other policy
+# checks, once the destroy has landed. Dropping it here makes the destroy fail
+# AccessDenied and leaves the deploy-policy drift check red in the meantime.
 POLICY_DOC_ALL=$(cat << EOF
 {
   "Version": "2012-10-17",
@@ -422,6 +430,7 @@ POLICY_DOC_ALL=$(cat << EOF
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-event-log-${DEPLOY_ENVIRONMENT}",
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-staged-records-${DEPLOY_ENVIRONMENT}",
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-token-vaults-${DEPLOY_ENVIRONMENT}",
+        "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-delta-states-${DEPLOY_ENVIRONMENT}",
         "arn:aws:dynamodb:eu-west-2:${ACCOUNT_ID}:table/petroglyph-graph-subscriptions-${DEPLOY_ENVIRONMENT}"
       ]
     },
