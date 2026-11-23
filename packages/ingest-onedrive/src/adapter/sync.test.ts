@@ -2,8 +2,22 @@ import { describe, expect, it, vi } from "vitest";
 import type { CloudEvent, EventLogWriter } from "@petroglyph/events";
 import type { StagedObjectStore, StagedObjectStorePutResult } from "@petroglyph/staging-contracts";
 import type { DeltaStateStore } from "../delta/delta-state-store.js";
+import type { Logger } from "../log.js";
 import type { GraphClient } from "../tokens/graph-client.js";
 import { runDeltaSync, type DeltaContinuation } from "./sync.js";
+
+/** The three levels as separate spies, so a test asserts the level, not just the text. */
+function createLoggerStub(): Logger & {
+  info: ReturnType<typeof vi.fn<(message: string) => void>>;
+  warn: ReturnType<typeof vi.fn<(message: string) => void>>;
+  error: ReturnType<typeof vi.fn<(message: string) => void>>;
+} {
+  return {
+    info: vi.fn<(message: string) => void>(),
+    warn: vi.fn<(message: string) => void>(),
+    error: vi.fn<(message: string) => void>(),
+  };
+}
 
 const INITIAL_URL = "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name";
 const DELTA_LINK = "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=done";
@@ -141,6 +155,7 @@ function twoPageClient(): { client: GraphClient; requested: string[] } {
                 {
                   id: "item-1",
                   name: "a.pdf",
+                  eTag: "etag-1",
                   parentReference: { path: "/drive/root:/notes" },
                   file: { mimeType: "application/pdf" },
                 },
@@ -298,7 +313,7 @@ describe("runDeltaSync — adapter driver", () => {
     ]);
   });
 
-  it("falls back to the unversioned id and logs when a file change carries no eTag", async () => {
+  it("falls back to the unversioned id and logs ERROR when a file change carries no eTag", async () => {
     const harness = makeHarness([
       {
         id: "item-1",
@@ -307,7 +322,7 @@ describe("runDeltaSync — adapter driver", () => {
         file: { mimeType: "application/pdf" },
       },
     ]);
-    const logs: string[] = [];
+    const log = createLoggerStub();
 
     await runDeltaSync({
       client: harness.client,
@@ -318,11 +333,14 @@ describe("runDeltaSync — adapter driver", () => {
       profiles: [profile],
       initialUrl: INITIAL_URL,
       requestContinuation: () => Promise.resolve(),
-      log: (message) => logs.push(message),
+      log,
     });
 
     expect(harness.documents.map((document) => document.id)).toEqual(["p1:item-1:file"]);
-    expect(logs).toContainEqual(expect.stringContaining("no eTag"));
+    // A missing eTag breaks the page contract and silences the next update, so
+    // the line names the item and stays above an operator's WARN filter.
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining("no eTag"));
+    expect(log.warn).not.toHaveBeenCalled();
   });
 
   it("records a gate-rejected lie as skipped with no S3 put and no emit", async () => {
@@ -391,6 +409,58 @@ describe("runDeltaSync — adapter driver", () => {
     expect(harness.documents).toEqual([]);
     expect(harness.puts).toEqual([]);
     expect(harness.deltaState.write).not.toHaveBeenCalled();
+  });
+
+  it("logs a failed walk at ERROR with the page count and the cause, and never at INFO or WARN", async () => {
+    const harness = makeHarness([]);
+    harness.client.request = () => Promise.resolve(new Response(null, { status: 500 }));
+    const log = createLoggerStub();
+
+    await runDeltaSync({
+      client: harness.client,
+      store: harness.store,
+      eventLog: harness.eventLog,
+      deltaStateStore: harness.deltaStateStore,
+      connection: { userId: "u1", provider: "onedrive" },
+      profiles: [profile],
+      initialUrl: INITIAL_URL,
+      requestContinuation: () => Promise.resolve(),
+      log,
+    });
+
+    expect(log.error).toHaveBeenCalledWith(
+      expect.stringContaining("delta walk failed for u1/onedrive"),
+    );
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining("after 0 page(s)"));
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining("status=500"));
+    expect(log.warn).not.toHaveBeenCalled();
+    expect(log.info).not.toHaveBeenCalled();
+  });
+
+  it("logs a deferred walk at WARN, naming the pages completed and the continuation", async () => {
+    const { client } = twoPageClient();
+    const log = createLoggerStub();
+
+    await runDeltaSync({
+      client,
+      store: {
+        put: vi.fn().mockResolvedValue({ versionId: "v1" }),
+      } as unknown as StagedObjectStore,
+      eventLog: { putIfAbsent: vi.fn().mockResolvedValue(true) } as unknown as EventLogWriter,
+      deltaStateStore: makeDeltaState() as unknown as DeltaStateStore,
+      connection: { userId: "u1", provider: "onedrive" },
+      profiles: [profile],
+      initialUrl: INITIAL_URL,
+      pageBudget: 1,
+      requestContinuation: () => Promise.resolve(),
+      log,
+    });
+
+    expect(log.warn).toHaveBeenCalledWith(
+      "[adapter] delta walk deferred for u1/onedrive: 1 page(s) completed, more remain — continuation enqueued",
+    );
+    // A healthy deferred walk is not a failure, so it emits no ERROR line.
+    expect(log.error).not.toHaveBeenCalled();
   });
 
   it("a duplicate emit (putIfAbsent false) is counted as skipped — never as landed or deleted", async () => {
