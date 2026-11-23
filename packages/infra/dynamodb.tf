@@ -265,6 +265,40 @@ resource "aws_dynamodb_table" "staged_records" {
   }
 }
 
+# The append-only change log (petroglyph-xgyd): one row per staged change, keyed
+# {profileId, seq} with `seq` as a zero-padded decimal STRING so the table's
+# lexicographic range order is numeric order. Two row namespaces share the
+# profile partition and sit outside the log's sort range: "!seq" holds the
+# per-profile counter, "~change#<changeId>" is the redelivery guard. Rows are
+# never updated, so a reader always sees the order the consumer wrote.
+
+resource "aws_dynamodb_table" "staged_changes" {
+  name         = "petroglyph-staged-changes-${terraform.workspace}"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "profileId"
+  range_key    = "seq"
+
+  attribute {
+    name = "profileId"
+    type = "S"
+  }
+
+  attribute {
+    name = "seq"
+    type = "S"
+  }
+
+  # Retires the redelivery markers only; the log rows carry no expiresAt.
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+
+  tags = {
+    environment = terraform.workspace
+  }
+}
+
 resource "aws_dynamodb_table" "sync_jobs" {
   name         = "petroglyph-sync-jobs-${terraform.workspace}"
   billing_mode = "PAY_PER_REQUEST"

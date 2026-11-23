@@ -6,13 +6,14 @@ import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { PutParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import type { LambdaEvent, handle } from "hono/aws-lambda";
 import { putProfile, type SyncProfile } from "@petroglyph/core";
-import { DynamoDBStagedIndexStore } from "@petroglyph/staging-contracts";
+import { DynamoDBStagedChangeLog, DynamoDBStagedIndexStore } from "@petroglyph/staging-contracts";
 import { SignJWT, exportSPKI, generateKeyPair } from "jose";
 
 const REGION = "eu-west-2";
 const CREDENTIALS = { accessKeyId: "test", secretAccessKey: "test" };
 const BUCKET = "petroglyph-staged-pdfs";
 const FILE_RECORDS_TABLE = "staged-records-int";
+const STAGED_CHANGES_TABLE = "staged-changes-int";
 const PROFILES_TABLE = "sync-profiles-int";
 const JWT_PUBLIC_KEY_PATH = "/petroglyph/jwt/public-key";
 
@@ -106,12 +107,14 @@ describe("delivery app handler against LocalStack S3 + staged records", () => {
     vi.stubEnv("AWS_SECRET_ACCESS_KEY", CREDENTIALS.secretAccessKey);
     vi.stubEnv("AWS_REGION", REGION);
     vi.stubEnv("FILE_RECORDS_TABLE", FILE_RECORDS_TABLE);
+    vi.stubEnv("STAGED_CHANGES_TABLE", STAGED_CHANGES_TABLE);
     vi.stubEnv("SYNC_PROFILES_TABLE", PROFILES_TABLE);
     vi.stubEnv("STAGED_PDFS_BUCKET", BUCKET);
     vi.stubEnv("JWT_PUBLIC_KEY_SSM_PATH", JWT_PUBLIC_KEY_PATH);
 
     const rawDynamo = new DynamoDBClient({ region: REGION, endpoint, credentials: CREDENTIALS });
     await createTable(rawDynamo, FILE_RECORDS_TABLE, "profileId", "itemId");
+    await createTable(rawDynamo, STAGED_CHANGES_TABLE, "profileId", "seq");
     await createTable(rawDynamo, PROFILES_TABLE, "userId", "profileId");
     const dynamo = DynamoDBDocumentClient.from(rawDynamo);
 
@@ -147,6 +150,7 @@ describe("delivery app handler against LocalStack S3 + staged records", () => {
     const index = new DynamoDBStagedIndexStore({ client: dynamo, tableName: FILE_RECORDS_TABLE });
     await index.upsert({
       profileId: "p1",
+      subscriptionId: "p1",
       itemId: ITEM_ID,
       s3Key: S3_KEY,
       relativePath: "notes",
@@ -155,6 +159,23 @@ describe("delivery app handler against LocalStack S3 + staged records", () => {
       mimeType: "application/pdf",
       status: "staged",
       createdAt: "2026-09-01T00:00:00.000Z",
+    });
+    const changeLog = new DynamoDBStagedChangeLog({
+      client: dynamo,
+      tableName: STAGED_CHANGES_TABLE,
+    });
+    await changeLog.append({
+      profileId: "p1",
+      subscriptionId: "p1",
+      changeId: "p1:item-1:file:etag-1",
+      itemId: ITEM_ID,
+      kind: "stage",
+      relativePath: "notes",
+      name: "a.pdf",
+      mimeType: "application/pdf",
+      s3Key: S3_KEY,
+      eTag: "etag-1",
+      recordedAt: "2026-09-01T00:00:00.000Z",
     });
 
     ({ handler } = await import("./index.js"));

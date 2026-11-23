@@ -1,4 +1,6 @@
 import type {
+  StagedChange,
+  StagedChangeLog,
   StagedIndexStore,
   StagedObjectStore,
   StagedRecord,
@@ -20,46 +22,76 @@ export interface FeedEntry {
 
 export interface FeedResult {
   files: FeedEntry[];
-  /** Opaque cursor for the next page; null when the feed is exhausted. */
+  /**
+   * Opaque cursor for the next page; null when the log holds nothing after the
+   * rows this page read. A client that writes this page and asks again with the
+   * cursor gets nothing until a new change is logged.
+   */
   nextToken: string | null;
 }
 
 export interface BuildFeedOptions {
+  changeLog: StagedChangeLog;
   index: StagedIndexStore;
   objectStore: StagedObjectStore;
   profileId: string;
   limit?: number;
-  /** Index cursor (itemId) — the page resumes exactly where the last stopped. */
-  cursor?: string;
+  /** The change-log seq the page resumes after. */
+  after?: number;
   presignTtlSeconds?: number;
 }
 
 /**
- * The delivery surface's ONLY read path: the index output + stored s3Key.
- * The s3Key is used verbatim for presigning — never derived here (the
- * staging layout is contract knowledge; readers follow stored keys).
+ * The delivery surface's ONLY read path. The change log owns the change ORDER —
+ * a re-staged item carries a new `seq`, so it is served again — and the index
+ * owns the CURRENT bytes: each stage row is resolved to its record, and a row
+ * whose record has been deleted is not served. Presigning uses the record's
+ * stored s3Key verbatim (the staging layout is contract knowledge; readers
+ * follow stored keys, never derive them).
+ *
+ * Delete rows are read but never served: removing a file from a vault is a
+ * product decision that has not been made, so a delete only advances the
+ * cursor.
  */
 export async function buildFeed(options: BuildFeedOptions): Promise<FeedResult> {
   const limit = options.limit ?? DEFAULT_PAGE_SIZE;
-  const page = await options.index.queryFeed({
+  const changes = await options.changeLog.read({
     profileId: options.profileId,
     limit,
-    ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+    ...(options.after === undefined ? {} : { after: options.after }),
   });
 
+  const records = (
+    await Promise.all(
+      stagedItemIds(changes).map((itemId) => options.index.get(options.profileId, itemId)),
+    )
+  ).filter((record): record is StagedRecord => record !== null);
   const files = await Promise.all(
-    page.records.map((record) =>
+    records.map((record) =>
       entryFromRecord(record, options.objectStore, options.presignTtlSeconds),
     ),
   );
 
+  const lastSeq = changes.at(-1)?.seq;
   return {
     files,
     nextToken:
-      page.nextCursor === undefined
+      lastSeq === undefined
         ? null
-        : encodeFeedCursor({ profileId: options.profileId, itemId: page.nextCursor }),
+        : encodeFeedCursor({ profileId: options.profileId, seq: lastSeq }),
   };
+}
+
+/**
+ * The items this page tells the client about, in the order the log first names
+ * them. Two stages of one item in a single page are one delivery: the index
+ * holds only the latest bytes, so serving the item twice would deliver the same
+ * file twice.
+ */
+function stagedItemIds(changes: StagedChange[]): string[] {
+  return [
+    ...new Set(changes.filter((change) => change.kind === "stage").map((change) => change.itemId)),
+  ];
 }
 
 /**
@@ -113,16 +145,24 @@ async function entryFromRecord(
   objectStore: StagedObjectStore,
   presignTtlSeconds: number | undefined,
 ): Promise<FeedEntry> {
-  const s3PresignedUrl = await objectStore.presignGet(record.s3Key, {
-    ttlSeconds: presignTtlSeconds ?? DEFAULT_PRESIGN_TTL_SECONDS,
-    responseContentDisposition: buildPresignedDisposition(record.name),
-  });
   return {
     itemId: record.itemId,
     name: record.name,
     relativePath: record.relativePath,
     mimeType: record.mimeType,
-    s3PresignedUrl,
+    s3PresignedUrl: await presign(record.s3Key, record.name, objectStore, presignTtlSeconds),
     createdAt: record.createdAt,
   };
+}
+
+function presign(
+  s3Key: string,
+  name: string,
+  objectStore: StagedObjectStore,
+  presignTtlSeconds: number | undefined,
+): Promise<string> {
+  return objectStore.presignGet(s3Key, {
+    ttlSeconds: presignTtlSeconds ?? DEFAULT_PRESIGN_TTL_SECONDS,
+    responseContentDisposition: buildPresignedDisposition(name),
+  });
 }

@@ -13,6 +13,12 @@ export const deletedChangeTypeSchema = z.literal("deleted");
 export const fileStagedDataSchema = z
   .object({
     profileId: z.string().min(1),
+    /**
+     * The sync unit the change came through. Optional because the adapter can
+     * only name a shared root once the subscription registry exists; the
+     * consumer falls back to the profile (see `subscriptionIdOf`).
+     */
+    subscriptionId: z.string().min(1).optional(),
     source: z.string().min(1),
     changeType: stagedChangeTypeSchema,
     itemId: z.string().min(1),
@@ -20,6 +26,8 @@ export const fileStagedDataSchema = z
     relativePath: z.string().min(1),
     s3Key: z.string().min(1),
     mimeType: z.string().min(1),
+    /** The provider's content version, recorded on the change-log row. */
+    eTag: z.string().min(1).optional(),
   })
   .strict();
 
@@ -41,6 +49,8 @@ export type FileStagedData = z.infer<typeof fileStagedDataSchema>;
 export const fileDeletedDataSchema = z
   .object({
     profileId: z.string().min(1),
+    /** See `fileStagedDataSchema.subscriptionId`. */
+    subscriptionId: z.string().min(1).optional(),
     source: z.string().min(1),
     changeType: deletedChangeTypeSchema,
     itemId: z.string().min(1),

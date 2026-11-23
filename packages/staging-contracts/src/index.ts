@@ -5,7 +5,7 @@ export {
   fileDeletedDataSchema,
 } from "./events.js";
 export type { FileStagedData, FileDeletedData } from "./events.js";
-export { deriveStagingKey, STAGING_LAYOUT_VERSION } from "./keys.js";
+export { deriveStagingKey, stagingPrefix, STAGING_LAYOUT_VERSION } from "./keys.js";
 export { detectType } from "./type.js";
 export type { MimeType } from "./type.js";
 export { stage } from "./stage.js";
@@ -20,4 +20,13 @@ export type {
 export { stagedRecordSchema } from "./record.js";
 export type { StagedRecord } from "./record.js";
 export { DynamoDBStagedIndexStore } from "./index-store-ddb.js";
-export type { FeedPage, StagedIndexStore } from "./index-store.js";
+export type { StagedIndexStore } from "./index-store.js";
+export { stagedChangeSchema, stagedChangeKindSchema, subscriptionIdOf } from "./change-log.js";
+export type {
+  AppendOutcome,
+  StagedChange,
+  StagedChangeInput,
+  StagedChangeKind,
+  StagedChangeLog,
+} from "./change-log.js";
+export { DynamoDBStagedChangeLog } from "./change-log-ddb.js";

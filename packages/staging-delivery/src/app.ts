@@ -2,7 +2,11 @@ import type { Operation } from "@petroglyph/contracts";
 import { defineEndpoint, toHonoPath, type EndpointHandler } from "@petroglyph/contracts/hono";
 import { getFile, listFiles } from "@petroglyph/contracts/operations";
 import type { SyncProfile } from "@petroglyph/core";
-import type { StagedIndexStore, StagedObjectStore } from "@petroglyph/staging-contracts";
+import type {
+  StagedChangeLog,
+  StagedIndexStore,
+  StagedObjectStore,
+} from "@petroglyph/staging-contracts";
 import { Hono } from "hono";
 import { z } from "zod";
 import { decodeFeedCursor, type FeedCursor } from "./cursor.js";
@@ -14,6 +18,8 @@ export interface FilesRouterVariables {
 
 export interface FilesRouterDependencies {
   index: StagedIndexStore;
+  /** The change log the feed reads, in `seq` order. */
+  changeLog: StagedChangeLog;
   objectStore: StagedObjectStore;
   /** Neutral profile record read-back — READ-ONLY (decisions §9: never calls back). */
   listProfiles: (userId: string) => Promise<SyncProfile[]>;
@@ -37,10 +43,10 @@ type FeedQuery = z.infer<typeof feedQuerySchema>;
 
 type FeedQueryResult = { ok: true; data: FeedQuery } | { ok: false; error: z.ZodError };
 
-/** The profile a page is read from, plus the index cursor when resuming. */
+/** The profile a page is read from, plus the log seq to resume after. */
 interface FeedScope {
   profileId: string;
-  cursor?: string;
+  after?: number;
 }
 
 const INVALID_CURSOR = { error: "Invalid files cursor" };
@@ -91,9 +97,9 @@ function describeFeedQueryError(error: z.ZodError): string {
 
 /**
  * Pins the whole pagination run to the active profile: a cursor naming any
- * other profile — or one that will not decode — is rejected, so a mid-
- * pagination active-profile change invalidates the page rather than silently
- * re-scoping the feed.
+ * other profile — or one this release cannot decode, including a cursor from an
+ * older internal format — is rejected, so a mid-pagination active-profile
+ * change invalidates the page rather than silently re-scoping the feed.
  */
 function resolveFeedScope(query: FeedQuery, activeProfileId: string): FeedScope | null {
   if (query.nextToken === undefined) {
@@ -108,7 +114,7 @@ function resolveFeedScope(query: FeedQuery, activeProfileId: string): FeedScope 
   if (decoded.profileId !== activeProfileId) {
     return null;
   }
-  return { profileId: activeProfileId, cursor: decoded.itemId };
+  return { profileId: activeProfileId, after: decoded.seq };
 }
 
 function presignTtlOptions(ttlSeconds: number | undefined): { presignTtlSeconds?: number } {
@@ -152,11 +158,12 @@ export function createFilesRouter(deps: FilesRouterDependencies): Hono<{
     }
 
     const result = await buildFeed({
+      changeLog: deps.changeLog,
       index: deps.index,
       objectStore: deps.objectStore,
       profileId: scope.profileId,
       limit: query.data.limit,
-      ...(scope.cursor === undefined ? {} : { cursor: scope.cursor }),
+      ...(scope.after === undefined ? {} : { after: scope.after }),
       ...presignTtlOptions(deps.presignTtlSeconds),
     });
     return c.json({ files: result.files, nextToken: result.nextToken });
