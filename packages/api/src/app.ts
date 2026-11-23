@@ -3,7 +3,6 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { authMiddleware, type AppVariables } from "./auth-middleware.js";
-import { onedriveMiddleware } from "./onedrive-middleware.js";
 import { createHandlers, registerRoutes } from "./routes.js";
 import { createSyncTriggerDeps, type SyncTriggerDeps } from "./sync-trigger.js";
 
@@ -43,11 +42,6 @@ export function createApp(
   });
 
   registerRoutes(app, createHandlers(syncTriggerDeps));
-
-  app.use("/onedrive/*", (c, next) =>
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-    onedriveMiddleware(c as unknown as Context<{ Variables: AppVariables }>, next),
-  );
 
   return app;
 }

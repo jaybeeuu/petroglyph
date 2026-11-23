@@ -2,8 +2,12 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { DynamoDBClient, CreateTableCommand } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { OAuthTokenResolver, type TokenRecord, type TokenRequestOutcome } from "@petroglyph/core";
-import { DynamoDBTokenStore } from "./token-store-ddb.js";
+import {
+  DynamoDBTokenStore,
+  OAuthTokenResolver,
+  type TokenRecord,
+  type TokenRequestOutcome,
+} from "@petroglyph/core";
 
 const TABLE_NAME = "refresh-tokens-int";
 

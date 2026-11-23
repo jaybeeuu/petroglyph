@@ -44,7 +44,7 @@ download returns `404`.
 
 - **Token vault keyed `(userId, provider)` = connection.** The credentialed unit is the
   user × provider grant, so `reconnectRequired` is grant-level — all profiles on a connection
-  fast-fail together. Per-profile token copies would rot under Microsoft's refresh-token rotation.
+  fast-fail together. Per-profile token copies would rot under Microsoft's refresh-token rotation. The vault is the only writer of a grant: a second copy goes stale on the first rotation, answers `invalid_grant`, and forces a reconnect.
 - **Events are per profile** (`onedrive://profiles/<profileId>`) — events are per job, tokens per
   connection.
 - **Subscription registry keyed `(profileId, provider)` = one Graph subscription per profile.** It is

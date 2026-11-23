@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBTokenStore } from "./token-store-ddb.js";
-import type { TokenRecord } from "@petroglyph/core";
+import type { TokenRecord } from "./token-store.js";
 
 const record: TokenRecord = {
   accessToken: "access-1",

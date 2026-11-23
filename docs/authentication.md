@@ -228,38 +228,38 @@ sequenceDiagram
 7. Plugin sends `{ code, state }` to `POST /onedrive/connect` on the cloud API (JWT-protected, so the user must be authenticated).
 8. Cloud API validates the state token against DynamoDB (`type='onedrive_state'`, TTL check) → 401 if invalid or expired. The state record is deleted immediately after lookup (one-time-use), and the PKCE `verifier` is read from it.
 9. Cloud API completes the PKCE token exchange with Microsoft using the code, retrieved verifier, and client secret (loaded from SSM), receiving an **access token** (TTL ~1 hour) and a **refresh token** (TTL up to 90 days with `offline_access`). Returns 502 if the exchange fails.
-10. `access_token`, `refresh_token`, and `expirySeconds` are written to **both** token stores: the connection-keyed `token_vaults` record (`userId` + `provider=onedrive`), which the Delivery 1 adapter resolves the grant from, and the legacy `refresh_tokens` record (`tokenHash=userId`) that the still-live pre-Delivery-3 readers (`onedriveMiddleware`, sync-worker, processor) use. Writing only the legacy record would leave a new consent invisible to the data path; the legacy write disappears with the old copies at Delivery 3.
+10. `access_token`, `refresh_token`, and `expirySeconds` are written to **one** store: the connection-keyed `token_vaults` record (`userId` + `provider=onedrive`). Every reader resolves the grant from that record — the adapter, the sync-worker, the processor and the API's lifecycle path — so a rotation is visible to all of them. No OneDrive token is written to the legacy `refresh_tokens` table, which survives only for the GitHub credential and the one-time OAuth state records.
 11. Cloud API attempts to register a **Microsoft Graph change notification subscription** for the user's OneDrive. The requested `expirationDateTime` is capped to Graph's maximum allowed window so registration does not fail due to an out-of-range expiry. Failure is still non-blocking — a warning is logged and the request continues.
 12. Cloud API upserts a **SyncProfile** in DynamoDB (`PK=userId`, `SK='default'`, `oneDriveConnected=true`).
 13. Returns `{ status: 'connected' }` to the plugin.
 
 ### Token Lifecycle
 
-Access tokens expire approximately every hour. The service uses **lazy refresh**: a Hono middleware (`onedriveMiddleware`) mounted on all `/onedrive/*` routes in the API Handler Lambda reads the access token and its expiry from the user's DynamoDB `refresh_tokens` record on every request. If the token is within **10 minutes** of expiry (or already expired) it proactively exchanges the refresh token with Microsoft and writes the new access token, refresh token, and expiry back to DynamoDB before the downstream handler runs.
-
-The refreshed (or current) access token is injected into the Hono context as `onedriveAccessToken` for downstream `/onedrive/*` handlers to use.
+Access tokens expire approximately every hour. Readers refresh **lazily** through the shared resolver in `@petroglyph/core` (`token-resolver`) over the connection vault: the adapter, the sync-worker, the processor and the API's lifecycle path each resolve the grant for `(userId, provider=onedrive)` when they need it. A token within **10 minutes** of expiry is exchanged with Microsoft and the rotated pair is written back to the vault row before the caller uses it. A `/onedrive/*` request itself no longer reads or refreshes a token.
 
 ```mermaid
 flowchart TD
-    A[/onedrive/* request] --> B[Read access-token + refresh-token + token-expiry from DynamoDB]
-    B -- read error --> Z[Inject undefined token\ncontinue to handler]
-    B --> C{Expiry within 10 min?}
-    C -- No --> G[Inject current access token\ncontinue to handler]
+    A[Reader needs a OneDrive grant] --> B[Read the token_vaults row for userId + provider=onedrive]
+    B -- no row --> Z[Reconnect required\nfast-fail]
+    B --> C{Expiry within 10 min, or forced?}
+    C -- No --> G[Return the stored access token]
     C -- Yes / already expired --> D[POST to Microsoft token endpoint]
     D --> E{Refresh succeeded?}
-    E -- Yes --> F[Write new tokens to DynamoDB\nInject new access token\ncontinue to handler]
-    E -- No: error --> W[Log error\nInject stale access token\ncontinue to handler]
+    E -- Yes --> F[Compare-and-set the rotated tokens\ninto the vault row, then return]
+    E -- No: invalid_grant --> W[Persist reconnectRequired: true\nfast-fail later resolves]
 ```
 
 ### Token Vault (connection-keyed)
 
-The Delivery 1 data path (OneDrive adapter) keeps OneDrive tokens in a **connection-keyed vault** instead of the per-user `refresh_tokens` storage above: the credentialed unit is the user×provider grant, shared by every sync profile on a connection, so records are keyed `(userId, provider)` in the `token_vaults` table (schema in §4). Key lifecycle rules (see `@petroglyph/core` `token-resolver`):
+The **connection-keyed vault** is the only store that holds a OneDrive grant: the credentialed unit is the user×provider grant, shared by every sync profile on a connection, so records are keyed `(userId, provider)` in the `token_vaults` table (schema in §4). `DynamoDBTokenStore` in `@petroglyph/core` is the only class that writes that row, and the adapter, the sync-worker, the processor and the API's lifecycle path all resolve through it. `POST /onedrive/connect` is the single blind writer, because it bootstraps the row after consent; every later write is a compare-and-set rotation.
+
+A single writer is a correctness constraint: Microsoft invalidates a refresh token whenever it rotates the pair, so a second copy of the grant is dead as soon as the other copy rotates. Its next use returns `invalid_grant`, which the resolver persists as a sticky `reconnectRequired` and forces a manual reconnect. Key lifecycle rules (see `@petroglyph/core` `token-resolver`):
 
 - Concurrent resolves on one connection coalesce into **one in-flight MS refresh**; writes use **compare-and-set** on `updatedAt` + `expirySeconds`, so a rotated-in copy never overwrites the winner while Microsoft rotates refresh tokens.
 - A dead grant (`invalid_grant`) persists `reconnectRequired: true` — subsequent resolves fast-fail until `POST /onedrive/connect` rewrites the record.
 - **No record for the connection ⇒ reconnect required** (treated the same as a dead grant).
 
-The legacy components' `refresh_tokens` storage is **DEPRECATED** (kept for rollback, not deleted) and dies with the api at 6.6.5. The adapter's Graph delta link is a connection-keyed row in `delta_states`, superseding the per-profile `delta_tokens` table used by the legacy sync path.
+The legacy `refresh_tokens` table is no longer a copy of the OneDrive grant. It survives for the GitHub credential (`tokenHash=sha256(refreshToken)`) and for the one-time OAuth state records, and a OneDrive rotation never writes to it. The adapter's Graph delta link is a connection-keyed row in `delta_states`, superseding the per-profile `delta_tokens` table used by the legacy sync path.
 
 ### Reconnection
 
@@ -272,13 +272,13 @@ If the refresh token expires or is revoked (e.g. user hasn't synced in 90 days, 
 
 Microsoft Graph change notification subscriptions expire every 3 days (maximum). Rather than a standing scheduled renewer, Petroglyph relies on Microsoft's **lifecycle notifications** to handle subscription state reactively.
 
-Microsoft sends lifecycle events to a dedicated `lifecycleNotificationUrl`, handled by the **Lifecycle Notification Lambda** (separate from the webhook receiver):
+Microsoft sends lifecycle events to a dedicated `lifecycleNotificationUrl`, handled by the `POST /onedrive/lifecycle` endpoint of the API Handler Lambda (separate from the webhook receiver):
 
-| Lifecycle event           | Action                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reauthorizationRequired` | Lambda reads the user's refresh token from DynamoDB, performs token refresh, stores rotated tokens back to DynamoDB, then calls `POST /subscriptions/{id}/reauthorize`. If reauthorization fails — e.g. 308 Permanent Redirect, a known Microsoft EU-datacenter issue for personal OneDrive — it falls back to deleting the subscription (`DELETE /subscriptions/{id}`, ignoring 404) and re-registering a fresh one, then marks the user connected. Only if the recreate also fails does it mark OneDrive as `reconnect_required` in DynamoDB. |
-| `subscriptionRemoved`     | Marks OneDrive as `reconnect_required` in DynamoDB immediately.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `missed`                  | Logs to CloudWatch; Processor Lambda will catch up on next manual sync.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Lifecycle event           | Action                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `reauthorizationRequired` | The handler resolves the grant through the same vault resolver the adapter uses, forced because Graph has asked for reauthorization even if the access token has not expired. The rotation writes back with compare-and-set, so the adapter reads the new pair. A dead grant persists `reconnectRequired: true` and fails the notification instead of writing a stale copy. The handler then calls `POST /subscriptions/{id}/reauthorize`. If reauthorization fails — e.g. 308 Permanent Redirect, a known Microsoft EU-datacenter issue for personal OneDrive — it falls back to deleting the subscription (`DELETE /subscriptions/{id}`, ignoring 404) and re-registering a fresh one, then marks the user connected. Only if the recreate also fails does it mark OneDrive as `reconnect_required` in DynamoDB. |
+| `subscriptionRemoved`     | Marks OneDrive as `reconnect_required` in DynamoDB immediately.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `missed`                  | Logs to CloudWatch; Processor Lambda will catch up on next manual sync.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 #### Microsoft Graph source of truth (verify before changing behavior)
 
@@ -368,7 +368,7 @@ On deletion, `activeProfileId` is cleared locally _before_ `loadProfiles()` is c
 
 ### `refresh_tokens`
 
-This table is dual-purpose: it holds both long-lived refresh tokens (issued after login) and short-lived OAuth state tokens (issued by `GET /onedrive/auth-url`). The `type` attribute discriminates between them.
+This table holds the GitHub credential (issued after login) and short-lived OAuth state tokens (issued by `GET /onedrive/auth-url`). It holds no OneDrive grant — those live in `token_vaults`. The `type` attribute discriminates between the two record kinds.
 
 | Attribute    | Type        | Description                                                                                    |
 | ------------ | ----------- | ---------------------------------------------------------------------------------------------- |
@@ -382,7 +382,7 @@ This table is dual-purpose: it holds both long-lived refresh tokens (issued afte
 
 ### `token_vaults`
 
-The adapter's connection-keyed token vault (Delivery 1). One record per (user, provider) OAuth grant; written with compare-and-set so concurrent refreshes never lose the winner.
+The connection-keyed token vault, and the only store for a OneDrive grant. One record per (user, provider); `DynamoDBTokenStore` is the only writer, and every rotation writes with compare-and-set so concurrent refreshes never lose the winner.
 
 | Attribute           | Type        | Description                                                         |
 | ------------------- | ----------- | ------------------------------------------------------------------- |
@@ -439,7 +439,7 @@ Parameters are namespaced by Terraform workspace under `/petroglyph/<workspace>/
 
 Every row is read by deployed code — [ops.md](ops.md#secrets) maps each live parameter to the service that reads it, and covers regeneration after a loss.
 
-> **Note:** Per-user OneDrive token state is stored in DynamoDB (`refresh_tokens` table). SSM stores only system-level configuration/secrets.
+> **Note:** Per-user OneDrive token state is stored in DynamoDB (`token_vaults` table). SSM stores only system-level configuration/secrets.
 
 ---
 

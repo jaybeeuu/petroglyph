@@ -4,7 +4,6 @@ import { verifyJwt } from "./jwt.js";
 export interface AppVariables {
   userId: string;
   username: string;
-  onedriveAccessToken: string | undefined;
 }
 
 /** The context every route handler receives: identity comes from the middleware. */

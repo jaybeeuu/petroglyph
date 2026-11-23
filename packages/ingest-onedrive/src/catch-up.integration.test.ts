@@ -9,10 +9,9 @@ import {
   SQSClient,
   type Message,
 } from "@aws-sdk/client-sqs";
-import type { TokenRecord } from "@petroglyph/core";
+import { DynamoDBTokenStore, type TokenRecord } from "@petroglyph/core";
 import { DEDUPE_WINDOW_SECONDS, createScheduledSweep } from "./catch-up.js";
 import { deltaTriggerSchema, type DeltaTrigger } from "@petroglyph/contracts";
-import { DynamoDBTokenStore } from "./tokens/token-store-ddb.js";
 
 const REGION = "eu-west-2";
 const CREDENTIALS = { accessKeyId: "test", secretAccessKey: "test" };

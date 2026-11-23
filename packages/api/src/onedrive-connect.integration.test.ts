@@ -92,7 +92,7 @@ describe("POST /onedrive/connect against LocalStack DynamoDB", () => {
     await Promise.all(tokenEndpoints.splice(0).map(closeServer));
   });
 
-  it("writes the connection row into the token vault and the legacy refresh_tokens row", async () => {
+  it("writes the connection row into the token vault and leaves no legacy copy", async () => {
     const tokens: MicrosoftTokenBody = {
       access_token: "ms-access-token",
       refresh_token: "ms-refresh-token",
@@ -149,12 +149,7 @@ describe("POST /onedrive/connect against LocalStack DynamoDB", () => {
         Key: { tokenHash: "user-42" },
       }),
     );
-    expect(legacyRow.Item).toMatchObject({
-      accessToken: "ms-access-token",
-      refreshToken: "ms-refresh-token",
-    });
-    expect(Number(legacyRow.Item?.["expirySeconds"])).toBeGreaterThanOrEqual(startedAt + 3600);
-    expect(Number(legacyRow.Item?.["expirySeconds"])).toBeLessThanOrEqual(finishedAt + 3600);
+    expect(legacyRow.Item).toBeUndefined();
   }, 60_000);
 
   async function makeToken(userId: string): Promise<string> {
